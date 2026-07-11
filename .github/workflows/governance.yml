@@ -1,0 +1,45 @@
+name: Governance
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  advisory:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: governance-workflow
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.5"
+      - name: Validate local governance configuration
+        run: |
+          mkdir -p governance-artifacts
+          go run ./cmd/codex-governance config check | tee governance-artifacts/summary.txt
+          if [[ -f governance/work-item.json && -f governance/offline-export.json ]]; then
+            go run ./cmd/codex-governance validate-work-item \
+              --work-item governance/work-item.json \
+              --offline-export governance/offline-export.json \
+              --base-sha "${{ github.event.pull_request.base.sha }}" \
+              --head-sha "${{ github.event.pull_request.head.sha }}" | tee -a governance-artifacts/summary.txt
+          else
+            echo "Work-item validation skipped: no local offline fixture" | tee -a governance-artifacts/summary.txt
+          fi
+          {
+            echo "## Governance advisory"
+            echo
+            echo "- Configuration: valid"
+            echo "- Work-item validation: opt-in; no Jira read or write performed"
+            echo "- Review budgets: advisory mode"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload redacted governance summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: governance-summary
+          path: governance-workflow/governance-artifacts/summary.txt
+          retention-days: 14

@@ -1,0 +1,43 @@
+{
+  "format_version": 1,
+  "governance_status": "pending-review",
+  "profile": "generic",
+  "source": {
+    "provider": "offline-export",
+    "story_key": "CG-1",
+    "story_url": "https://jira.example.test/browse/CG-1",
+    "subtask_key": "CG-2",
+    "subtask_url": "https://jira.example.test/browse/CG-2",
+    "captured_at": "2026-07-11T10:00:00Z",
+    "story_updated_at": "2026-07-11T10:00:00Z",
+    "subtask_updated_at": "2026-07-11T10:00:00Z",
+    "story_description_digest": "sha256:0286690202ec490afec9ff619b89ac0f28d221d7bdb45981b775e7623bd773fc",
+    "story_acceptance_criteria_digest": "sha256:f2794fdf8fec75d222d0d48a6c78f0e95feb31d5ff3f1cb7644793f7be31ea48",
+    "subtask_description_digest": "sha256:c981082368db22a50eeac5815d9e8d62c17494896e877f233e127220ce333e24",
+    "subtask_acceptance_criteria_digest": "sha256:354bfb2c87e5739e3bc1417435fcd9871e5dd0a9ebd89361d7f1a52e49ee5f84"
+  },
+  "scope": {
+    "phase": "offline-validation",
+    "change_class": "standard",
+    "allowed_paths": ["internal"],
+    "non_goals": ["Jira writes"],
+    "technical_acceptance_criteria": ["Validate offline exports"],
+    "validation_plan": ["go test ./..."],
+    "file_classification": {"generated_paths": [], "lockfile_paths": []},
+    "review_budget": {"max_changed_files": 5, "max_changed_lines": 50, "max_components": 1}
+  },
+  "git_range": {"base_sha": "0000000", "head_sha": "1111111"},
+  "decision": {"adr": "docs/decisions/ADR-0001.md"},
+  "links": {
+    "pull_request": "https://github.example.test/pull/1",
+    "ci_run": null,
+    "review_exception": null,
+    "agent_exception": null
+  },
+  "handoff": {
+    "status": "pending review",
+    "completed_work": "Offline validation implemented.",
+    "blocker": null,
+    "next_action": "Review the change."
+  }
+}

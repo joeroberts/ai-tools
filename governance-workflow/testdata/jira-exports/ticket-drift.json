@@ -1,0 +1,17 @@
+{
+  "captured_at": "2026-07-11T10:00:00Z",
+  "story": {
+    "key": "CG-1",
+    "url": "https://jira.example.test/browse/CG-1",
+    "updated_at": "2026-07-11T11:00:00Z",
+    "description": "Govern the implementation of codex-governance.",
+    "acceptance_criteria": "The CLI validates offline Jira work items and writes Jira updates."
+  },
+  "subtask": {
+    "key": "CG-2",
+    "url": "https://jira.example.test/browse/CG-2",
+    "updated_at": "2026-07-11T10:00:00Z",
+    "description": "Implement offline work-item validation.",
+    "acceptance_criteria": "Validation reports ticket drift and scope violations."
+  }
+}

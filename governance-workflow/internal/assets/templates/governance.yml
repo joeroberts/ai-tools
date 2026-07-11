@@ -1,0 +1,21 @@
+format_version: 1
+profile: generic
+jira:
+  project: ""
+  issue_key_pattern: "^[A-Z][A-Z0-9]+-[0-9]+$"
+  required_sections:
+    - Scope
+    - Non-Goals
+    - Technical Acceptance Criteria
+    - Validation Plan
+review_budget:
+  max_changed_files: 20
+  max_changed_lines: 800
+  max_components: 2
+ci:
+  provider: github-actions
+  mode: warn
+upstream:
+  release: ""
+  source_commit: ""
+  format_version: 0

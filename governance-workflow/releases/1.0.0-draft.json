@@ -1,0 +1,12 @@
+{
+  "release": "1.0.0-draft",
+  "source_commit": "7c764c6913183ac706c25e7ea8c34327fecb2dba",
+  "format_version": 1,
+  "compatibility_range": ">=1 <2",
+  "artifacts": {
+    "docs/design/canonical-spec.md": "sha256:fd53c397554a3e20b8dc4cf3565c574d05a93f5d27565c3772cdd58818333553",
+    "internal/assets/schemas/jira-work-item.schema.json": "sha256:4d82d192413929306c13634ef6064e971ef22f169bc6e3f976b5d3cec20f9d2f"
+  },
+  "changelog": "Initial Go CLI draft: configuration, offline work-item validation, local roadmap/sync reporting, advisory CI, and governed summary-only Ollama runtime.",
+  "migration_notes": "Draft only. Existing packet artifacts remain legacy records. Do not publish, tag, or apply this release until the worktree is committed and independently reverified."
+}
