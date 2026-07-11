@@ -1,0 +1,22 @@
+{
+  "name": "codex-governance",
+  "version": "0.1.0",
+  "description": "Routes Codex agents through the local codex-governance CLI.",
+  "author": {
+    "name": "Joe Roberts"
+  },
+  "homepage": "https://github.com/joeroberts/ai-tools/tree/main/tools/codex-governance",
+  "repository": "https://github.com/joeroberts/ai-tools",
+  "license": "MIT",
+  "keywords": ["governance", "workflow", "jira", "validation"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Codex Governance",
+    "shortDescription": "Route governed work through the local CLI.",
+    "longDescription": "Guides Codex agents to use deterministic codex-governance checks without duplicating governance logic.",
+    "developerName": "Joe Roberts",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": "Validate this governed work item with codex-governance."
+  }
+}
