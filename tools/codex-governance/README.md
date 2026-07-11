@@ -57,6 +57,12 @@ Go uses `GOBIN` when configured; otherwise it installs to the `bin` directory
 under the first `GOPATH` entry, usually `~/go/bin`. Persist the resolved
 `go_bin_dir` in your shell configuration if you need it in future terminals.
 
+Remove the installed binary with:
+
+```bash
+make uninstall
+```
+
 View the implementation roadmap locally:
 
 ```bash
