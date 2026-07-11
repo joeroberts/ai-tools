@@ -5,3 +5,7 @@ Place one plugin package in each child directory. Each package owns its
 
 Plugins route Codex agents to installed tools and concise workflow guidance;
 they must not duplicate a tool's validation or business logic.
+
+The repository marketplace registry is `../.agents/plugins/marketplace.json`.
+Add entries with relative `./plugins/<plugin-name>` sources and the required
+availability, authentication, and category policy fields.

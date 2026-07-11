@@ -21,6 +21,11 @@ support AI-assisted development workflows.
 - [`tools/codex-governance/`](tools/codex-governance/) provides the
   `codex-governance` Go CLI for deterministic governance checks, roadmap
   reporting, and local-model policy enforcement.
+- [`integrations/codex/plugins/codex-governance/`](integrations/codex/plugins/codex-governance/)
+  provides the optional Codex adoption layer for the CLI.
+
+Codex plugins are registered through the repository marketplace at
+`integrations/codex/.agents/plugins/marketplace.json`.
 
 ## Conventions
 
