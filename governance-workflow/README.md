@@ -38,6 +38,25 @@ make build
 go run ./cmd/codex-governance --help
 ```
 
+## Installation
+
+Add Go's configured binary directory to `PATH`, then install the CLI:
+
+```bash
+go_bin_dir="$(go env GOBIN)"
+if [ -z "$go_bin_dir" ]; then
+  go_bin_dir="$(go env GOPATH | cut -d: -f1)/bin"
+fi
+export PATH="$go_bin_dir:$PATH"
+
+make install
+codex-governance --help
+```
+
+Go uses `GOBIN` when configured; otherwise it installs to the `bin` directory
+under the first `GOPATH` entry, usually `~/go/bin`. Persist the resolved
+`go_bin_dir` in your shell configuration if you need it in future terminals.
+
 View the implementation roadmap locally:
 
 ```bash
