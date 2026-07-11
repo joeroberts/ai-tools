@@ -9,6 +9,9 @@ permissions:
 jobs:
   advisory:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: governance-workflow
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -38,5 +41,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: governance-summary
-          path: governance-artifacts/summary.txt
+          path: governance-workflow/governance-artifacts/summary.txt
           retention-days: 14
