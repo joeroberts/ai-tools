@@ -1,56 +1,69 @@
-# Governance Workflow Prompt Assets
+# codex-governance
 
-These assets help create `codex-governance`, a reusable toolkit for governed
-Codex-assisted engineering work.
+`codex-governance` is a Go CLI for Jira-backed governance of Codex-assisted
+engineering work. The completed initial implementation validates normalized
+offline Jira snapshots, ADR and PR links, explicit Git ranges, scoped diffs,
+review budgets, agent closure, release manifests, and governed local-model
+summary jobs.
+
+The toolkit is implemented as a Go CLI. A `Makefile` may expose developer
+shortcuts but does not contain governance logic.
 
 ## Files
 
-- `master-prompt.md`: starts the work and requires Codex to create a canonical
-  spec before implementation.
-- `canonical-spec.md`: full source-of-truth requirements for the toolkit.
-- `stage-1-spec-and-scaffold.md`: creates base structure and templates.
-- `stage-2-skill-and-references.md`: creates the Codex skill and prompt
-  references.
-- `stage-3-scripts-and-validation.md`: creates bootstrap/validation scripts and
-  smoke tests.
-- `stage-4-example-repo.md`: creates Terraform, Node fullstack, and
-  Python/Vue fullstack examples.
-- `stage-5-review-verification-polish.md`: runs the governed review and
-  verification loop.
-
-## Recommended Use
-
-1. Start a new Codex session in the repo where `codex-governance` should be
-   created.
-2. Paste `master-prompt.md`.
-3. When Codex asks for the canonical requirements, provide `canonical-spec.md`.
-4. Approve Stage 1 only.
-5. Continue one stage at a time using the staged prompt files.
+- `cmd/codex-governance/`: CLI entry point.
+- `internal/`: implementation packages and embedded runtime assets.
+- `testdata/`: deterministic Jira, work-item, and release-manifest fixtures.
+- `docs/design/`: north-star, canonical specification, and release contract.
+- `docs/implementation-plan/`: historical staged implementation prompts.
+- `docs/roadmaps/`: approved implementation roadmaps.
 
 ## Operating Model
 
-Use the full spec as the source of truth, but keep implementation prompts small.
-Each stage should have its own approval gate, validation, session handoff, and
-clear next-step proposal.
+Jira stories own product intent and acceptance criteria. Jira implementation
+subtasks own scoped technical work. Pull requests and CI own code and validation
+evidence. ADRs remain under `docs/decisions/` with the code.
 
-Do not allow push, publish, global install, remote PR updates, tags, releases,
-deploys, Terraform apply, cloud mutations, destructive commands, or secret
-access without explicit approval.
+The initial workflow reads Jira only. A Jira write, push, merge, publish,
+release, deployment, Terraform apply, cloud mutation, destructive command, or
+secret access always requires explicit approval.
 
-## Repo Profiles
+## Development
 
-The workflow is repo-agnostic, but validation is profile-specific. The toolkit
-must support at least:
+```bash
+make fmt
+make vet
+make test
+make build
+go run ./cmd/codex-governance --help
+```
 
-- `generic`: governance-only defaults for unknown repos.
-- `terraform-module`: Terraform formatting, validation, tests, security scans,
-  and optional release tag checks.
-- `node-fullstack-k8s`: npm workspace checks, TypeScript, Vitest, Prisma,
-  Helm/GitOps, image/runtime checks, and background worker coverage.
-- `python-vue-fullstack-k8s`: Python lint/test/coverage, schema checks, Vue
-  coverage/build, Helm/GitOps, and local app smoke checks.
+View the implementation roadmap locally:
 
-Bridge is the lightweight Node app adoption target. Execution Lens is the
-stronger mature app-governance reference. Profiles should add validation and
-artifact requirements without changing the shared roadmap, packet, ADR,
-evidence, and reviewer/verifier workflow.
+```bash
+go run ./cmd/codex-governance roadmap status \
+  --roadmap docs/roadmaps/go-cli-migration.yaml
+go run ./cmd/codex-governance roadmap check \
+  --roadmap docs/roadmaps/go-cli-migration.yaml
+```
+
+Phase 3 supports read-only validation from a normalized work item and an
+offline Jira export:
+
+```bash
+codex-governance validate-work-item \
+  --work-item work-item.json \
+  --offline-export jira-export.json \
+  --repo-root .
+```
+
+The local runtime records agent closure under `~/.codex-governance-runtime/`.
+It can initialize an owner-only Ollama policy, but Phase 5 permits only
+benchmark-approved summary tasks; code-edit tasks remain disabled.
+
+Release manifests are checked locally with `sync --check` or described with
+`sync --dry-run`. [releases/1.0.0-draft.json](releases/1.0.0-draft.json) is a
+local draft only: it is not published or adopted in `governance.yml`.
+
+The implementation initially supports only the `generic` profile. Terraform,
+Node/Kubernetes, and Python/Vue/Kubernetes profiles remain future work.

@@ -1,0 +1,11 @@
+{
+  "release": "1.0.0",
+  "source_commit": "abc1234",
+  "format_version": 1,
+  "compatibility_range": ">=1 <2",
+  "artifacts": {
+    "README.md": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "changelog": "Initial release fixture.",
+  "migration_notes": "No migration required."
+}

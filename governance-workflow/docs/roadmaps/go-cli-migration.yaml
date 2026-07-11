@@ -1,0 +1,63 @@
+id: go-cli-migration
+title: Go CLI Migration Roadmap
+status: complete
+phases:
+  - id: 1
+    name: Repository Foundation
+    status: complete
+    approved_by: user
+    completed_at: 2026-07-11
+    evidence:
+      - go test ./...
+      - go vet ./...
+      - go build ./cmd/codex-governance
+  - id: 2
+    name: Configuration And Assets
+    status: complete
+    approved_by: user
+    completed_at: 2026-07-11
+    evidence:
+      - go test ./...
+      - codex-governance init
+      - codex-governance config check
+  - id: 3
+    name: Work-Item Validation
+    status: complete
+    approved_by: user
+    completed_at: 2026-07-11
+    evidence:
+      - go test ./...
+      - codex-governance validate-work-item
+  - id: 4
+    name: Adoption And Synchronization
+    status: complete
+    approved_by: user
+    completed_at: 2026-07-11
+    evidence:
+      - go test ./...
+      - codex-governance roadmap status
+      - codex-governance roadmap check
+      - codex-governance sync --dry-run
+      - .github/workflows/governance.yml
+  - id: 5
+    name: Agent And Local-Model Runtime
+    status: complete
+    approved_by: user
+    completed_at: 2026-07-11
+    evidence:
+      - go test ./...
+      - codex-governance runtime check
+      - codex-governance ollama policy init
+      - benchmark-approved summary-task policy gate
+  - id: 6
+    name: Review And Hardening
+    status: complete
+    approved_by: user
+    completed_at: 2026-07-11
+    evidence:
+      - independent review and post-remediation verification
+      - go test ./...
+      - go vet ./...
+      - go build ./cmd/codex-governance
+      - git diff --check
+      - releases/1.0.0-draft.json (local draft only)
