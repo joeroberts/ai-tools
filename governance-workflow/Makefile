@@ -1,7 +1,10 @@
-.PHONY: build test vet fmt
+.PHONY: build install test vet fmt
 
 build:
 	go build ./cmd/codex-governance
+
+install:
+	go install ./cmd/codex-governance
 
 test:
 	go test ./...
