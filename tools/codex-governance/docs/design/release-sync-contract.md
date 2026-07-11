@@ -2,7 +2,7 @@
 
 ## Direction And Ownership
 
-`governance-workflow` is the upstream design source. A `codex-governance`
+`codex-governance` is the upstream design source. A `codex-governance`
 implementation repository is downstream. Changes flow upstream to downstream
 as versioned releases; implementation discoveries return upstream only as a
 proposed design change. Do not use bidirectional file synchronization.
