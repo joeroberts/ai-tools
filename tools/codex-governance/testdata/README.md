@@ -1,4 +1,6 @@
 # Test Data
 
 Fixture exports, repository snapshots, and expected validation results belong
-here. Phase 3 adds Jira work-item and Git-range fixtures.
+here. The ticket-plan fixture includes approved sources, a deterministic plan,
+and promoted constraints used by the local smoke check. Fixtures must not
+contain credentials, raw model prompts, or live Jira data.

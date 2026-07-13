@@ -35,7 +35,7 @@ artifacts, retry limits, approval, escalation, and Jira publication.
    - Require approved workflow state, dry-run support, idempotent result
      records, explicit write approval, and environment/secret-manager inputs.
 
-5. **End-To-End Verification And CI** - pending approval
+5. **End-To-End Verification And CI** - complete 2026-07-13
    - Add fixture-based tests, local smoke tests, documentation, and advisory CI
      coverage without exposing prompts or credentials.
 
