@@ -28,6 +28,25 @@ The initial workflow reads Jira only. A Jira write, push, merge, publish,
 release, deployment, Terraform apply, cloud mutation, destructive command, or
 secret access always requires explicit approval.
 
+## Ticket Planning
+
+Phase 1 validates a ticket-plan contract against the approved PRD,
+specification, and roadmap. It checks source digests, Markdown traceability,
+dependencies, bounded paths, ADR references, and workflow-state integrity.
+Hosted-manager dispatch, local worker review, stakeholder approval, and Jira
+publication remain unavailable until their respective roadmap phases are
+approved.
+
+```bash
+codex-governance jira plan validate \
+  --plan ticket-plan.json \
+  --repo-root .
+```
+
+The plan contract records source paths and SHA-256 digests, a Story, independent
+subtasks, traceability, phase, change class, review budget, allowed paths, and
+ADR rationale. It does not write Jira.
+
 ## Development
 
 ```bash

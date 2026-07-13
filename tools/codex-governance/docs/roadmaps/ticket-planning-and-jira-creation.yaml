@@ -1,0 +1,35 @@
+id: ticket-planning-and-jira-creation
+title: Ticket Planning And Governed Jira Creation
+status: in-progress
+phases:
+  - id: 1
+    name: Plan Contract And Workflow State
+    status: complete
+    approved_by: user
+    completed_at: 2026-07-13
+    evidence:
+      - make test
+      - make vet
+      - make build
+      - git diff --check
+      - go run ./cmd/codex-governance jira plan validate --plan testdata/ticket-plans/valid/plan.json --repo-root .
+  - id: 2
+    name: Hosted Manager And Local Workers
+    status: blocked
+    approved_by: user
+    evidence:
+      - docs/benchmarks/ticket-plan-review-2026-07-12.md
+      - testdata/ollama/ticket-plan-review-policy.yaml
+  - id: 3
+    name: Stakeholder Approval And Escalation
+    status: in-progress
+    approved_by: user
+    evidence: []
+  - id: 4
+    name: Governed Jira Publication
+    status: pending-approval
+    evidence: []
+  - id: 5
+    name: End-To-End Verification And CI
+    status: pending-approval
+    evidence: []
