@@ -39,6 +39,19 @@ func Evaluate(item workitem.Item, export jira.OfflineExport, repoRoot, baseSHA, 
 	return violations, nil
 }
 
+// EvaluateWorking validates a post-agent working tree after preflight has
+// already established the fresh ticket baseline. It intentionally reuses the
+// same structural, ADR, path, and review-budget checks as Git-range validation.
+func EvaluateWorking(item workitem.Item, repoRoot string) ([]Violation, error) {
+	violations := structuralViolations(item)
+	violations = append(violations, decisionViolations(item, repoRoot)...)
+	changes, err := gitdiff.WorkingChanges(repoRoot)
+	if err != nil {
+		return nil, err
+	}
+	return append(violations, scopeViolations(item, changes)...), nil
+}
+
 func structuralViolations(item workitem.Item) []Violation {
 	issues := item.Validate()
 	violations := make([]Violation, 0, len(issues)+1)

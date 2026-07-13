@@ -1,0 +1,58 @@
+id: implementation-agent-orchestration
+title: Implementation-Agent Orchestration Roadmap
+status: in-progress
+phases:
+  - id: 1
+    name: Discovery And Contract Approval
+    status: complete
+    approved_by: user
+    completed_at: 2026-07-13
+    evidence:
+      - docs/design/implementation-agent-prd.md
+      - docs/design/implementation-agent-spec.md
+      - docs/design/security-threat-model.md
+      - testdata/implementation-runs/README.md
+  - id: 2
+    name: Foundations
+    status: complete
+    approved_by: user
+    completed_at: 2026-07-13
+    evidence:
+      - internal/implementation/implementation.go
+      - internal/implementation/implementation_test.go
+      - internal/assets/schemas/implementation-run.schema.json
+      - codex-governance implementation preflight
+  - id: 3
+    name: Read-Only Orchestration
+    status: complete
+    approved_by: user
+    completed_at: 2026-07-13
+    evidence:
+      - internal/implementation/implementation.go
+      - internal/implementation/implementation_test.go
+      - fake adapter launch, status, cancel, result, and recovery tests
+  - id: 4
+    name: Controlled Codex Execution
+    status: complete
+    approved_by: user
+    completed_at: 2026-07-13
+    evidence:
+      - internal/worktree/worktree.go
+      - internal/implementation/headless_codex.go
+      - codex-governance implementation start --approve
+      - codex-governance implementation reconcile
+      - codex-governance implementation verify
+  - id: 5
+    name: Review And Remediation
+    status: complete
+    approved_by: user
+    completed_at: 2026-07-13
+    evidence:
+      - internal/implementation/assessment.go
+      - internal/implementation/review.go
+      - codex-governance implementation assess
+      - codex-governance implementation review|verification|remediate
+  - id: 6
+    name: Adoption And Hardening
+    status: in-progress
+    evidence: []
