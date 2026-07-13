@@ -32,7 +32,7 @@ func DefaultRoot() (string, error) {
 }
 
 func Record(root string, event Event) error {
-	if event.WorkItem == "" || event.AgentID == "" || !oneOf(event.Role, "manager", "ticket-analyst", "implementer", "reviewer", "verifier", "remediation-editor", "ollama") || !oneOf(event.State, "started", "completed", "closed") {
+	if event.WorkItem == "" || event.AgentID == "" || !oneOf(event.Role, "manager", "ticket-analyst", "implementer", "reviewer", "verifier", "remediation-editor", "ollama") || !oneOf(event.State, "started", "completed", "failed", "closed") {
 		return fmt.Errorf("invalid execution event")
 	}
 	open, err := OpenAgents(root, event.WorkItem)
@@ -52,8 +52,14 @@ func Record(root string, event Event) error {
 	if event.State == "completed" && event.ResultRef == "" {
 		return fmt.Errorf("completed agent requires result reference")
 	}
-	if event.State == "closed" && latest[event.AgentID].State != "completed" {
-		return fmt.Errorf("agent must complete before closure")
+	if event.State == "failed" && latest[event.AgentID].State != "started" {
+		return fmt.Errorf("agent must be started before failure")
+	}
+	if event.State == "failed" && event.ResultRef == "" {
+		return fmt.Errorf("failed agent requires result reference")
+	}
+	if event.State == "closed" && !oneOf(latest[event.AgentID].State, "completed", "failed") {
+		return fmt.Errorf("agent must complete or fail before closure")
 	}
 	if event.At.IsZero() {
 		event.At = time.Now().UTC()

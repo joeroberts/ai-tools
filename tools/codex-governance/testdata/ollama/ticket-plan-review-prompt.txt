@@ -1,0 +1,13 @@
+Review this draft ticket plan. Return concise findings labeled BLOCKING,
+IMPORTANT, or APPROVED. Do not rewrite the plan.
+
+Story: Add governed Jira ticket planning.
+Subtask A: "Implement it". Scope: "all files". Non-goals: none. Acceptance:
+"works". Validation: none. Allowed paths: "**". ADR: none.
+Subtask B: "Create Jira tickets". Depends on "missing-task". Scope: "write
+Jira". Acceptance: "tickets exist". Validation: "manual". Allowed paths:
+"internal". ADR: "No ADR needed: unknown".
+
+Expected blocking findings: missing field-level source traceability, unbounded
+scope/path, missing measurable validation, missing ADR rationale, and invalid
+dependency. A plan with these defects must not be approved.
