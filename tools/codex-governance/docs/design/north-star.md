@@ -92,6 +92,12 @@ need ADRs when they follow an existing decision.
 
 ## Agent Roles And Disagreements
 
+Ticket planning is orchestrated by the Go application: a manager prepares a
+structured plan from approved product sources, while fresh reviewer and verifier
+agents independently assess the plan. The application validates source digests,
+persists role evidence, and only marks the plan approved after both roles pass.
+Jira publication remains a separate explicitly approved action.
+
 Define manager, ticket analyst, implementer, reviewer, verifier, and
 remediation editor roles. Each directive specifies inputs, permitted actions,
 scope, expected structured output, terminal state, and closure criteria.

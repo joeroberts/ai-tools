@@ -10,21 +10,24 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
 type Policy struct {
-	Endpoint    string  `yaml:"endpoint"`
-	Models      []Model `yaml:"models"`
-	Fingerprint string  `yaml:"-"`
+	Endpoint              string  `yaml:"endpoint"`
+	RequestTimeoutSeconds int     `yaml:"request_timeout_seconds"`
+	Models                []Model `yaml:"models"`
+	Fingerprint           string  `yaml:"-"`
 }
 
 type Model struct {
 	Name              string   `yaml:"name"`
 	ID                string   `yaml:"id"`
 	BenchmarkApproved bool     `yaml:"benchmark_approved"`
+	BenchmarkOnly     bool     `yaml:"benchmark_only"`
 	AllowedRoles      []string `yaml:"allowed_roles"`
 	AllowedTaskTypes  []string `yaml:"allowed_task_types"`
 	MaxInputBytes     int      `yaml:"max_input_bytes"`
@@ -56,7 +59,10 @@ func LoadPolicy(path string) (Policy, error) {
 	if policy.Endpoint == "" {
 		policy.Endpoint = "http://127.0.0.1:11434"
 	}
-	if err := validateEndpoint(policy.Endpoint); err != nil {
+	if policy.RequestTimeoutSeconds == 0 {
+		policy.RequestTimeoutSeconds = 60
+	}
+	if err := policy.Validate(); err != nil {
 		return Policy{}, err
 	}
 	policy.Fingerprint = InputDigest(data)
@@ -92,10 +98,19 @@ func Run(client *http.Client, policy Policy, request Request) (string, error) {
 func (p Policy) Authorize(request Request) (Model, error) { return p.authorize(request) }
 
 func VerifyInstalled(client *http.Client, policy Policy, model Model) error {
+	if err := policy.Validate(); err != nil {
+		return err
+	}
+	if !policy.includes(model) {
+		return fmt.Errorf("model is not allowlisted by policy")
+	}
 	return verifyInstalled(client, policy.Endpoint, model)
 }
 
 func (p Policy) authorize(request Request) (Model, error) {
+	if err := p.Validate(); err != nil {
+		return Model{}, err
+	}
 	if request.TaskType == "code-edit" {
 		return Model{}, fmt.Errorf("code-edit tasks are disabled")
 	}
@@ -103,7 +118,8 @@ func (p Policy) authorize(request Request) (Model, error) {
 		if model.Name != request.Model {
 			continue
 		}
-		if !model.BenchmarkApproved || !contains(model.AllowedRoles, request.Role) || !contains(model.AllowedTaskTypes, request.TaskType) {
+		benchmarkRun := model.BenchmarkOnly && request.TaskType == "ticket-plan-benchmark"
+		if (!model.BenchmarkApproved && !benchmarkRun) || !contains(model.AllowedRoles, request.Role) || !contains(model.AllowedTaskTypes, request.TaskType) {
 			return Model{}, fmt.Errorf("model is not approved for this role and task")
 		}
 		if model.MaxInputBytes < 1 || len(request.Input) > model.MaxInputBytes {
@@ -112,6 +128,35 @@ func (p Policy) authorize(request Request) (Model, error) {
 		return model, nil
 	}
 	return Model{}, fmt.Errorf("model is not allowlisted")
+}
+
+// Validate applies policy invariants at every execution boundary so callers
+// cannot bypass local-endpoint and allowlist checks with a constructed Policy.
+func (p Policy) Validate() error {
+	if err := validateEndpoint(p.Endpoint); err != nil {
+		return err
+	}
+	if p.RequestTimeoutSeconds < 10 || p.RequestTimeoutSeconds > 600 {
+		return fmt.Errorf("Ollama request timeout must be between 10 and 600 seconds")
+	}
+	seen := map[string]bool{}
+	for _, model := range p.Models {
+		if model.Name == "" || !modelIDPattern.MatchString(model.ID) || seen[model.Name] ||
+			len(model.AllowedRoles) == 0 || len(model.AllowedTaskTypes) == 0 || model.MaxInputBytes < 1 {
+			return fmt.Errorf("Ollama policy contains an invalid model")
+		}
+		seen[model.Name] = true
+	}
+	return nil
+}
+
+func (p Policy) includes(target Model) bool {
+	for _, model := range p.Models {
+		if model.Name == target.Name && model.ID == target.ID {
+			return true
+		}
+	}
+	return false
 }
 
 func verifyInstalled(client *http.Client, endpoint string, model Model) error {
@@ -148,6 +193,8 @@ func validateEndpoint(raw string) error {
 	return nil
 }
 
+var modelIDPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
+
 func PolicyPath(root string) string { return filepath.Join(root, "policy.yaml") }
 
 func DefaultPolicy() []byte {
@@ -161,6 +208,12 @@ func InputDigest(input []byte) string {
 
 func DefaultClient() *http.Client {
 	return &http.Client{Timeout: 60 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+}
+
+func Client(policy Policy) *http.Client {
+	return &http.Client{Timeout: time.Duration(policy.RequestTimeoutSeconds) * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}}
 }

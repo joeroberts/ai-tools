@@ -28,6 +28,44 @@ The initial workflow reads Jira only. A Jira write, push, merge, publish,
 release, deployment, Terraform apply, cloud mutation, destructive command, or
 secret access always requires explicit approval.
 
+## Ticket Planning
+
+Phase 1 validates a ticket-plan contract against the approved PRD,
+specification, and roadmap. It checks source digests, Markdown traceability,
+dependencies, bounded paths, ADR references, and workflow-state integrity.
+Hosted-manager dispatch, local worker review, stakeholder approval, and Jira
+publication are separately governed. Jira publication requires an approved
+workflow state and exactly one of `--dry-run` or `--approve`. The write path
+reads `JIRA_BASE_URL`, `JIRA_EMAIL`, and `JIRA_API_TOKEN` from the environment;
+`governance.yml` never stores credentials. A private publication record is
+written before any Jira request and blocks automatic retries, including after a
+partial creation.
+
+```bash
+codex-governance jira plan validate \
+  --plan ticket-plan.json \
+  --repo-root .
+```
+
+The plan contract records source paths and SHA-256 digests, a Story, independent
+subtasks, traceability, phase, change class, review budget, allowed paths, and
+ADR rationale. It does not write Jira.
+
+## Verification And Advisory CI
+
+Run the governed local smoke check with:
+
+```bash
+make smoke-ticket-plan
+```
+
+It validates the checked-in plan fixture and exercises the approved-workflow
+publication dry run. It does not contact Jira, dispatch a model, read
+credentials, or create a publication record. The `Governance Advisory` GitHub
+Actions workflow runs this check with tests, vet, build, whitespace, and
+roadmap validation. It has read-only repository permissions and is advisory;
+it receives no Jira credentials or model prompts.
+
 ## Development
 
 ```bash

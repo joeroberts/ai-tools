@@ -1,0 +1,15 @@
+endpoint: http://127.0.0.1:11434
+request_timeout_seconds: 180
+models:
+  - name: gemma4:12b-mlx
+    id: 117d0d84cf2ab865feb59afc2cd30ff5d55f0035e05eb8d1b814f9688e3f3671
+    benchmark_approved: true
+    allowed_roles: [reviewer, verifier]
+    allowed_task_types: [ticket-plan-review]
+    max_input_bytes: 12000
+  - name: qwen3-coder:30b
+    id: 06c1097efce0431c2045fe7b2e5108366e43bee1b4603a7aded8f21689e90bca
+    benchmark_approved: true
+    allowed_roles: [reviewer, verifier]
+    allowed_task_types: [ticket-plan-review]
+    max_input_bytes: 12000

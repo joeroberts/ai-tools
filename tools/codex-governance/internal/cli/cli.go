@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 
+	"codex-governance/internal/agentplan"
 	"codex-governance/internal/config"
 	"codex-governance/internal/initializer"
 	"codex-governance/internal/jira"
@@ -14,6 +16,7 @@ import (
 	"codex-governance/internal/roadmap"
 	gruntime "codex-governance/internal/runtime"
 	"codex-governance/internal/syncer"
+	"codex-governance/internal/ticketplan"
 	"codex-governance/internal/validate"
 	"codex-governance/internal/workitem"
 )
@@ -27,7 +30,12 @@ Usage:
   codex-governance roadmap status --roadmap PATH [--format table|markdown|json]
   codex-governance roadmap check --roadmap PATH
   codex-governance sync --check|--dry-run --manifest PATH [--repo-root PATH]
-  codex-governance runtime agent start|complete|close --work-item KEY --agent-id ID --role ROLE [--result-ref REF]
+  codex-governance jira constraints draft|promote --output PATH [--prd PATH --spec PATH --roadmap PATH --repo-root PATH]
+  codex-governance jira plan generate --prd PATH --spec PATH --roadmap PATH --constraints PATH --output PATH --policy PATH --reviewer-model NAME --verifier-model NAME [--repo-root PATH] [--runtime-root PATH] [--codex-bin PATH] [--dry-run] [--verbose]
+  codex-governance jira plan validate --plan PATH [--repo-root PATH]
+  codex-governance jira plan approve --plan PATH --workflow PATH --approved-by ID --approve [--repo-root PATH]
+  codex-governance jira plan create --plan PATH --workflow PATH (--dry-run|--approve) [--result PATH --repo-root PATH]
+  codex-governance runtime agent start|complete|fail|close --work-item KEY --agent-id ID --role ROLE [--result-ref REF]
   codex-governance runtime check --work-item KEY
   codex-governance runtime cache clear [--runtime-root PATH]
   codex-governance ollama policy init [--runtime-root PATH]
@@ -57,6 +65,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	if args[0] == "sync" {
 		return runSync(args[1:], stdout, stderr)
 	}
+	if args[0] == "jira" {
+		return runJira(args[1:], stdout, stderr)
+	}
 	if args[0] == "runtime" {
 		return runRuntime(args[1:], stdout, stderr)
 	}
@@ -66,6 +77,265 @@ func Run(args []string, stdout, stderr io.Writer) int {
 
 	fmt.Fprintf(stderr, "unknown command: %s\n\n%s", args[0], usage)
 	return 2
+}
+
+func runJira(args []string, stdout, stderr io.Writer) int {
+	if len(args) < 2 {
+		fmt.Fprintln(stderr, "usage: codex-governance jira plan|constraints")
+		return 2
+	}
+	if args[0] == "constraints" {
+		return runJiraConstraints(args[1:], stdout, stderr)
+	}
+	if args[0] != "plan" {
+		fmt.Fprintln(stderr, "usage: codex-governance jira plan|constraints")
+		return 2
+	}
+	command := args[1]
+	if command == "generate" {
+		return runJiraPlanGenerate(args[2:], stdout, stderr)
+	}
+	if command != "validate" && command != "create" && command != "approve" {
+		fmt.Fprintln(stderr, "usage: codex-governance jira plan generate|validate|approve|create")
+		return 2
+	}
+	flags := flag.NewFlagSet("jira plan "+command, flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	path := flags.String("plan", "", "ticket plan JSON")
+	repoRoot := flags.String("repo-root", ".", "repository root")
+	dryRun := flags.Bool("dry-run", false, "report Jira writes without sending them")
+	approve := flags.Bool("approve", false, "explicitly authorize the requested action")
+	resultPath := flags.String("result", "", "creation result JSON")
+	workflowPath := flags.String("workflow", "", "persisted ticket-plan workflow state")
+	approvedBy := flags.String("approved-by", "", "stakeholder approving the ticket plan")
+	if err := flags.Parse(args[2:]); err != nil || *path == "" || flags.NArg() != 0 {
+		return 2
+	}
+	plan, err := ticketplan.Load(*path)
+	if err != nil {
+		fmt.Fprintf(stderr, "load ticket plan: %v\n", err)
+		return 2
+	}
+	issues := plan.ValidateAgainst(*repoRoot)
+	if len(issues) != 0 {
+		for _, issue := range issues {
+			fmt.Fprintf(stdout, "FAIL %s\n", issue)
+		}
+		return 1
+	}
+	if command == "validate" {
+		fmt.Fprintln(stdout, "PASS ticket plan is valid")
+		return 0
+	}
+	if command == "approve" {
+		if !*approve || *workflowPath == "" || *approvedBy == "" {
+			fmt.Fprintln(stderr, "jira plan approve requires --workflow, --approved-by, and --approve")
+			return 2
+		}
+		if err := ticketplan.Approve(*path, *workflowPath, *approvedBy); err != nil {
+			fmt.Fprintf(stderr, "approve ticket plan: %v\n", err)
+			return 1
+		}
+		fmt.Fprintln(stdout, "PASS ticket plan approved by stakeholder")
+		return 0
+	}
+	if plan.Status != "approved" {
+		fmt.Fprintln(stdout, "FAIL ticket plan must have status approved before creation")
+		return 1
+	}
+	if *workflowPath == "" {
+		fmt.Fprintln(stderr, "jira plan create requires --workflow")
+		return 2
+	}
+	state, err := ticketplan.LoadWorkflow(*workflowPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load workflow state: %v\n", err)
+		return 2
+	}
+	planDigest, err := ticketplan.FileDigest(*path)
+	if err != nil {
+		fmt.Fprintf(stderr, "digest ticket plan: %v\n", err)
+		return 2
+	}
+	if state.Status != "approved" || state.PlanDigest != planDigest {
+		fmt.Fprintln(stdout, "FAIL workflow state is not approved for this exact plan")
+		return 1
+	}
+	if *dryRun == *approve {
+		fmt.Fprintln(stderr, "jira plan create requires exactly one of --dry-run or --approve")
+		return 2
+	}
+	cfg, err := config.Load(filepath.Join(*repoRoot, "governance.yml"))
+	if err != nil || cfg.Jira.Project == "" {
+		fmt.Fprintln(stderr, "jira plan create requires governance.yml with jira.project")
+		return 2
+	}
+	if *dryRun {
+		fmt.Fprintf(stdout, "DRY RUN would create Story %q and %d subtasks in project %s\n", plan.Story.Summary, len(plan.Subtasks), cfg.Jira.Project)
+		return 0
+	}
+	if *resultPath == "" {
+		*resultPath = *path + ".result.json"
+	}
+	if _, err := os.Stat(*resultPath); err == nil {
+		fmt.Fprintf(stderr, "refusing to retry a recorded Jira publication: %s\n", *resultPath)
+		return 1
+	} else if !os.IsNotExist(err) {
+		fmt.Fprintf(stderr, "check Jira publication record: %v\n", err)
+		return 2
+	}
+	baseURL, email, token := os.Getenv("JIRA_BASE_URL"), os.Getenv("JIRA_EMAIL"), os.Getenv("JIRA_API_TOKEN")
+	if baseURL == "" || email == "" || token == "" {
+		fmt.Fprintln(stderr, "jira plan create requires JIRA_BASE_URL, JIRA_EMAIL, and JIRA_API_TOKEN")
+		return 2
+	}
+	digest, err := ticketplan.FileDigest(*path)
+	if err != nil {
+		fmt.Fprintf(stderr, "digest ticket plan: %v\n", err)
+		return 2
+	}
+	creation := jiraPublicationRecord{PlanDigest: digest, Status: "creating"}
+	if err := writeJiraPublicationRecord(*resultPath, creation); err != nil {
+		fmt.Fprintf(stderr, "write Jira publication record: %v\n", err)
+		return 2
+	}
+	story, subtasks, err := (jira.CreateClient{BaseURL: baseURL, Email: email, Token: token}).CreatePlan(cfg.Jira.Project, plan)
+	creation.Story, creation.Subtasks = story, subtasks
+	if err != nil {
+		creation.Status = "incomplete"
+		if writeErr := writeJiraPublicationRecord(*resultPath, creation); writeErr != nil {
+			fmt.Fprintf(stderr, "update Jira publication record: %v\n", writeErr)
+		}
+		fmt.Fprintf(stderr, "create Jira issues: %v\n", err)
+		return 1
+	}
+	creation.Status = "complete"
+	if err := writeJiraPublicationRecord(*resultPath, creation); err != nil {
+		fmt.Fprintf(stderr, "update Jira publication record: %v\n", err)
+		return 2
+	}
+	fmt.Fprintf(stdout, "PASS created Story %s and %d subtasks\n", story.Key, len(subtasks))
+	return 0
+}
+
+type jiraPublicationRecord struct {
+	PlanDigest string              `json:"plan_digest"`
+	Status     string              `json:"status"`
+	Story      jira.CreatedIssue   `json:"story,omitempty"`
+	Subtasks   []jira.CreatedIssue `json:"subtasks,omitempty"`
+}
+
+func writeJiraPublicationRecord(path string, record jiraPublicationRecord) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(data, '\n'), 0o600)
+}
+
+func runJiraConstraints(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || (args[0] != "draft" && args[0] != "promote") {
+		fmt.Fprintln(stderr, "usage: codex-governance jira constraints draft|promote")
+		return 2
+	}
+	flags := flag.NewFlagSet("jira constraints "+args[0], flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	output := flags.String("output", "", "constraints output JSON")
+	draft := flags.String("draft", "", "constraints draft JSON")
+	prd := flags.String("prd", "", "approved PRD Markdown")
+	spec := flags.String("spec", "", "approved specification Markdown")
+	roadmapPath := flags.String("roadmap", "", "approved roadmap Markdown")
+	repoRoot := flags.String("repo-root", ".", "repository root")
+	if err := flags.Parse(args[1:]); err != nil || *output == "" || flags.NArg() != 0 {
+		return 2
+	}
+	if args[0] == "promote" {
+		if *draft == "" {
+			return 2
+		}
+		if err := agentplan.PromoteConstraints(*draft, *output); err != nil {
+			fmt.Fprintf(stderr, "promote constraints: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "PASS promoted constraints: %s\n", *output)
+		return 0
+	}
+	if *prd == "" || *spec == "" || *roadmapPath == "" {
+		return 2
+	}
+	constraints, err := agentplan.DraftConstraints(agentplan.Request{PRDPath: *prd, SpecPath: *spec, RoadmapPath: *roadmapPath, RepoRoot: *repoRoot})
+	if err != nil {
+		fmt.Fprintf(stderr, "draft constraints: %v\n", err)
+		return 1
+	}
+	if err := agentplan.WriteConstraints(*output, constraints); err != nil {
+		fmt.Fprintf(stderr, "write constraints: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "PASS drafted constraints: %s\n", *output)
+	return 0
+}
+
+func runJiraPlanGenerate(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("jira plan generate", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	prd := flags.String("prd", "", "approved PRD Markdown")
+	spec := flags.String("spec", "", "approved specification Markdown")
+	roadmapPath := flags.String("roadmap", "", "approved roadmap Markdown")
+	output := flags.String("output", "", "generated ticket plan JSON")
+	constraints := flags.String("constraints", "", "approved per-subtask constraints JSON")
+	repoRoot := flags.String("repo-root", ".", "repository root")
+	runtimeRoot := flags.String("runtime-root", "", "owner-only runtime directory")
+	codexBin := flags.String("codex-bin", "codex", "hosted Codex executable")
+	policyPath := flags.String("policy", "", "owner-only local Ollama policy")
+	reviewerModel := flags.String("reviewer-model", "", "allowlisted local Ollama reviewer model")
+	verifierModel := flags.String("verifier-model", "", "allowlisted local Ollama verifier model")
+	dryRun := flags.Bool("dry-run", false, "show the governed dispatch without running agents")
+	verbose := flags.Bool("verbose", false, "report orchestration progress without printing agent content")
+	if err := flags.Parse(args); err != nil || *prd == "" || *spec == "" || *roadmapPath == "" || *constraints == "" || *output == "" || flags.NArg() != 0 {
+		return 2
+	}
+	if *dryRun {
+		fmt.Fprintf(stdout, "DRY RUN would dispatch hosted manager and local reviewer/verifier for %q\n", *output)
+		return 0
+	}
+	if *policyPath == "" || *reviewerModel == "" || *verifierModel == "" {
+		fmt.Fprintln(stderr, "jira plan generate requires --policy, --reviewer-model, and --verifier-model")
+		return 2
+	}
+	policy, err := ollama.LoadPolicy(*policyPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load Ollama policy: %v\n", err)
+		return 2
+	}
+	if *runtimeRoot == "" {
+		*runtimeRoot, err = gruntime.DefaultRoot()
+		if err != nil {
+			fmt.Fprintf(stderr, "resolve runtime root: %v\n", err)
+			return 2
+		}
+	}
+	request := agentplan.Request{
+		PRDPath: *prd, SpecPath: *spec, RoadmapPath: *roadmapPath, OutputPath: *output, ConstraintsPath: *constraints,
+		RepoRoot: *repoRoot, RuntimeRoot: *runtimeRoot,
+	}
+	if *verbose {
+		request.Progress = func(message string) { fmt.Fprintln(stderr, message) }
+	}
+	result, err := agentplan.Generate(request, agentplan.Runners{
+		Manager:  agentplan.CodexRunner{Binary: *codexBin, WorkDir: *repoRoot},
+		Reviewer: agentplan.OllamaRunner{Policy: policy, Model: *reviewerModel},
+		Verifier: agentplan.OllamaRunner{Policy: policy, Model: *verifierModel},
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "generate ticket plan: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "PASS ticket plan generated: %s (work item %s)\n", result.PlanPath, result.WorkItem)
+	return 0
 }
 
 func runInit(args []string, stdout, stderr io.Writer) int {
@@ -337,8 +607,8 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 		}
 		return 1
 	}
-	if args[0] != "agent" || len(args) < 2 || !oneOf(args[1], "start", "complete", "close") {
-		fmt.Fprintln(stderr, "usage: codex-governance runtime agent start|complete|close")
+	if args[0] != "agent" || len(args) < 2 || !oneOf(args[1], "start", "complete", "fail", "close") {
+		fmt.Fprintln(stderr, "usage: codex-governance runtime agent start|complete|fail|close")
 		return 2
 	}
 	flags := flag.NewFlagSet("runtime agent", flag.ContinueOnError)
@@ -357,7 +627,7 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return 2
 	}
-	states := map[string]string{"start": "started", "complete": "completed", "close": "closed"}
+	states := map[string]string{"start": "started", "complete": "completed", "fail": "failed", "close": "closed"}
 	if err := gruntime.Record(resolvedRoot, gruntime.Event{WorkItem: *workItem, AgentID: *agentID, Role: *role, State: states[args[1]], ResultRef: *resultRef, InputRef: *inputRef}); err != nil {
 		fmt.Fprintf(stderr, "record agent: %v\n", err)
 		return 2
@@ -427,7 +697,7 @@ func runOllama(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "authorize Ollama job: %v\n", err)
 		return 1
 	}
-	if err := ollama.VerifyInstalled(ollama.DefaultClient(), policy, allowedModel); err != nil {
+	if err := ollama.VerifyInstalled(ollama.Client(policy), policy, allowedModel); err != nil {
 		fmt.Fprintf(stderr, "verify Ollama model: %v\n", err)
 		return 1
 	}
@@ -436,7 +706,7 @@ func runOllama(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, entry.Summary)
 		return 0
 	}
-	output, err := ollama.Run(ollama.DefaultClient(), policy, request)
+	output, err := ollama.Run(ollama.Client(policy), policy, request)
 	if err != nil {
 		fmt.Fprintf(stderr, "run Ollama job: %v\n", err)
 		return 1

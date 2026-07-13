@@ -147,6 +147,17 @@ closure criteria.
 
 ## Agent Governance
 
+### Ticket Plan Orchestration
+
+The Go application owns ticket-plan orchestration. Given approved product
+sources, it dispatches a hosted Codex manager to create a structured draft
+plan, then dispatches independent policy-governed local Ollama reviewer and
+verifier roles against that plan. The application validates source digests and
+plan structure after each agent result and records every lifecycle transition
+in the runtime ledger. Agent approval promotes a plan only to
+`ready-for-approval`; a stakeholder must explicitly approve it before Jira
+creation. Agents do not write Jira.
+
 The manager coordinates work but cannot override policy checks, source drift,
 required CI failures, or human decision rights. A local runtime execution ledger
 outside the repository records work-item key, agent ID, role, inputs, result
