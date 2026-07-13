@@ -22,3 +22,6 @@ upstream:
 implementation:
   allowed_adapters: []
   local_code_edit_enabled: false
+signing:
+  format_version: 1
+  trusted_keys: []

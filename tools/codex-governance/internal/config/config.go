@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"regexp"
 
+	"codex-governance/internal/signature"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -20,6 +22,7 @@ type Config struct {
 	CI             CIConfig       `yaml:"ci"`
 	Upstream       Upstream       `yaml:"upstream"`
 	Implementation Implementation `yaml:"implementation"`
+	Signing        Signing        `yaml:"signing"`
 }
 
 type JiraConfig struct {
@@ -51,6 +54,20 @@ type Upstream struct {
 type Implementation struct {
 	AllowedAdapters      []string `yaml:"allowed_adapters"`
 	LocalCodeEditEnabled bool     `yaml:"local_code_edit_enabled"`
+}
+
+// Signing configures the repository's trusted public keys. An omitted section
+// is deny-by-default: no signed governance record is trusted.
+type Signing struct {
+	FormatVersion int          `yaml:"format_version"`
+	TrustedKeys   []TrustedKey `yaml:"trusted_keys"`
+}
+
+type TrustedKey struct {
+	KeyID     string `yaml:"key_id"`
+	Role      string `yaml:"role"`
+	Algorithm string `yaml:"algorithm"`
+	PublicKey string `yaml:"public_key"`
 }
 
 func Load(path string) (Config, error) {
@@ -106,6 +123,19 @@ func (c Config) Validate() error {
 	if c.Implementation.LocalCodeEditEnabled && !seenAdapters["local-llm"] {
 		return fmt.Errorf("local code edit requires the local-llm adapter")
 	}
+	if c.Signing.FormatVersion == 0 && len(c.Signing.TrustedKeys) == 0 {
+		return nil
+	}
+	if c.Signing.FormatVersion != signature.FormatVersion {
+		return fmt.Errorf("unsupported signing.format_version %d", c.Signing.FormatVersion)
+	}
+	keys := make([]signature.TrustedKey, 0, len(c.Signing.TrustedKeys))
+	for _, key := range c.Signing.TrustedKeys {
+		keys = append(keys, signature.TrustedKey{KeyID: key.KeyID, Role: key.Role, Algorithm: key.Algorithm, PublicKey: key.PublicKey})
+	}
+	if _, err := signature.NewRegistry(c.Signing.FormatVersion, keys); err != nil {
+		return fmt.Errorf("signing.trusted_keys is invalid: %w", err)
+	}
 	return nil
 }
 
@@ -116,4 +146,18 @@ func (c Config) AllowsAdapter(adapter string) bool {
 		}
 	}
 	return false
+}
+
+// TrustedKeyRegistry returns the configured trust policy for signed governance
+// records. An omitted signing section yields an empty deny-by-default registry.
+func (c Config) TrustedKeyRegistry() (signature.Registry, error) {
+	version := c.Signing.FormatVersion
+	if version == 0 {
+		version = signature.FormatVersion
+	}
+	keys := make([]signature.TrustedKey, 0, len(c.Signing.TrustedKeys))
+	for _, key := range c.Signing.TrustedKeys {
+		keys = append(keys, signature.TrustedKey{KeyID: key.KeyID, Role: key.Role, Algorithm: key.Algorithm, PublicKey: key.PublicKey})
+	}
+	return signature.NewRegistry(version, keys)
 }

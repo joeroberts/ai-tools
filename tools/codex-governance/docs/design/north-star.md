@@ -29,17 +29,58 @@ link or `No ADR needed` rationale, PR link, and concise handoff state.
 The initial workflow reads Jira only. Any Jira transition, comment, or field
 update requires explicit approval.
 
+## Work-Item Authority And Stop Behavior
+
+An approved Jira implementation subtask is captured in a versioned normalized
+work item that is the executable authority for one run. It binds ticket
+identity/revision/digests, the source baseline and mode, allowed paths,
+acceptance criteria, required commands, review budget, ADR references,
+permitted provider/task class, and local-commit and remote-publication
+permissions. Jira remains the human-readable record of intent.
+
+The control plane stops on a binding mismatch, missing or expired source
+evidence, out-of-scope or unexcepted over-budget diff, required-check failure,
+unavailable or unqualified provider, or incomplete audit evidence. It does not
+unblock that snapshot in place. A human resumes work only through a new signed,
+versioned rebaseline or exception record naming the prior run, changed fields,
+rationale, approver, expiry, and revised bounds.
+
+The Jira owner decides intent; the technical owner decides architecture or scope
+exceptions; and the repository owner authorizes local-commit policy and remote
+publication. The control plane verifies explicit records and never infers an
+approval.
+
+Rebaselines, exceptions, remote-publish authorizations, and offline exports use
+one common signed envelope: canonical JSON payload, SHA-256 payload digest,
+`key_id`, `algorithm`, signer role, issuance time, optional expiry, and
+signature. The initial algorithm is Ed25519 over the payload digest. A versioned
+repository policy maps trusted public keys to permitted roles and verifies key
+trust, role, expiry, signature, record version, and revocation at each gate.
+Private keys never enter the repository or runtime ledger; tests use ephemeral
+fixture keys only.
+
 ## Ticket Alignment And Drift
 
-At work-item creation, record the story/subtask key, URL, capture time, Jira
-revision or update timestamp, and digests of the description and acceptance
-criteria. Validate a fresh read at implementation, review, and closure gates.
+At work-item creation, the work item declares either `live-jira` or
+`offline-export` as its source mode. Record the story/subtask key, URL, capture
+time, Jira revision or update timestamp, and digests of the description and
+acceptance criteria. At implementation, review, and closure gates,
+`live-jira` validates a fresh read, while `offline-export` validates the
+snapshot's declared age and provenance against policy.
 
 If tracked ticket content changes, mark the work item `source-drift-blocked`.
 An agent may identify changed fields but cannot decide semantic alignment.
 A human must rebaseline the work, split it, approve an explicit exception, or
 stop it. The validator checks facts and field changes; it does not claim to
 prove that prose still has the same intent.
+
+An `offline-export` for a governed implementation run is a signed envelope
+from a configured trusted issuer key. It binds the ticket URL/key, capture time,
+Jira revision/update time, content digests, and export digest. Unsigned exports
+are test fixtures only. The initial maximum age is 24 hours, configurable per
+repository. A versioned trusted-key registry supports rotation and revocation;
+revoking an issuer immediately invalidates its exports. An unacceptable age or
+provenance fails closed.
 
 ## Pull Request Reviewability
 
@@ -104,7 +145,22 @@ scope, expected structured output, terminal state, and closure criteria.
 
 Implementation orchestration is adapter-first, with headless Codex as the
 initial adapter. Users may select a local LLM for code execution or remediation
-only after its policy entry and benchmark gate approve that role and task type.
+only after its policy entry and reproducible evaluation record approve that
+role and task type. Code-edit qualification binds the exact provider, model and
+pinned ID, adapter, tool-permission/config version, prompt/task-bundle schema
+and version, benchmark corpus and harness versions/hashes, role, task class,
+metrics, thresholds, evaluator identity, and approval. Qualification is
+separate for each role and task class. Initial code-edit eligibility is limited
+to `scoped-code-edit` and `finding-bound-remediation`; high-risk work remains
+ineligible pending a separate policy decision.
+
+The versioned corpus includes normal tasks and adversarial cases for forbidden
+paths, source drift, invalid output, validation failure, authorization attempts,
+and sensitive-data redaction. All safety-control cases must pass. Before any
+provider is enabled, a non-safety task-success threshold is derived from a
+versioned baseline corpus and recorded in policy. Requalify when any bound input
+changes, after a relevant incident, and on the defined recurring review date. A
+passing evaluation is scoped evidence rather than a general safety guarantee.
 One approved implementation subtask runs in one dedicated disposable Git
 worktree. A versioned task bundle supplies the normalized work item, fresh
 ticket baseline, allowed paths, commands, ADRs, and repository guidance. The
@@ -114,9 +170,33 @@ deterministic post-run checks.
 Local commits are permitted only when enabled by the approved work item and
 pre-commit gates pass. Pushing the exact resulting commit to a non-protected
 branch and creating its PR require a separate run-specific human authorization.
-That authorization is bounded to the work item, remote, branch, commit SHA,
-and expiry; it never permits force-pushes, merges, releases, tags, Jira writes,
-or unrelated remote actions.
+It binds the work item and run ID, repository identity, remote name and URL
+fingerprint, target ref, exact commit and expected base SHAs, approver identity,
+issuance time, expiry, and record version/digest. A single authorization may
+list both `push` and `create-pr`; each remains an explicit independently
+checked and consumed operation, and `create-pr` binds its target branch. It
+never permits force-pushes, protected/default-branch writes, merges, releases,
+tags, Jira writes, or unrelated remote actions. Changed remotes, refs, or SHAs,
+and expired, reused, or broadened records fail closed.
+
+The governance application enforces this workflow only where it controls the
+operation. It cannot prevent edits, commits, or publication by a user or a
+separate tool outside the governed path. Its evidence records demonstrate the
+governed actions it observed; they do not prove that bypasses never occurred.
+
+For testing, each run has an owner-only, structured, hash-linked event ledger
+outside the repository. Events record run/event IDs, UTC time, actor and role,
+CLI/schema version, state, relevant policy/evaluation/task-bundle/source
+digests, gate decision, and preceding-event hash. The ledger records redacted
+references plus digests and normalized outcomes for source checks, commands,
+diff/commit, adapter results, findings, exceptions, and authorization.
+
+Closure writes a final evidence manifest containing the terminal event hash.
+Missing, altered, or unverifiable required evidence escalates the run and
+prevents closure. This is tamper-evident within the governed local runtime, not
+tamper-proof against a party with filesystem control. Retain test evidence for
+the full test program; define production retention separately before
+distribution.
 
 The manager coordinates but cannot override policy checks, ticket drift,
 required CI failures, or human decision rights. It must persist/link each
@@ -180,9 +260,12 @@ bounded local-model summaries. Keys include all relevant inputs: ticket
 revision/digests, commit SHAs, command, policy version, toolchain identity, and
 model/prompt version.
 
-At each governance gate, force a fresh Jira read for drift detection. Cached
-data may reduce duplicate work within a job but cannot replace that read. Do
-not reuse cached reviews, approvals, ADR decisions, or release conclusions.
+At each governance gate, use the work item's declared source mode for drift
+detection. A `live-jira` mode requires a fresh Jira read. An `offline-export`
+mode fails closed unless policy accepts its declared age and provenance. Cached
+data may reduce duplicate work within a job but cannot replace either required
+validation. Do not reuse cached reviews, approvals, ADR decisions, or release
+conclusions.
 
 ## Phased Implementation
 
@@ -211,3 +294,21 @@ and schema contracts are versioned; downstream scripts and adapters are
 implementation-owned; merged files are never overwritten. See
 `release-sync-contract.md` for the required manifest, dry-run, compatibility,
 and migration behavior.
+
+## Distribution Readiness
+
+Do not distribute the implementation-agent control plane until all of the
+following are complete or an accountable owner records a time-bounded,
+published exception:
+
+- Audit evidence has defined integrity, approver-identity binding, retention,
+  tamper detection, and tamper-response behavior.
+- Tests cover bypass and failure paths, including changed remotes or refs,
+  rebases, stale tickets, altered task bundles, and expired or reused remote
+  authorizations.
+- Versioned policy and evaluation registries support provider revocation and
+  incident response; code-edit eligibility is checked at preflight.
+- Product and release language describes the enforcement boundary and avoids
+  claims that the CLI cannot substantiate.
+- Supported environments, compatibility and upgrade expectations, privacy and
+  local-data handling, and evidence-retention commitments are documented.
