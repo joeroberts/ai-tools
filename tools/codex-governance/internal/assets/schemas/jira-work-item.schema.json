@@ -10,9 +10,10 @@
     "profile": { "const": "generic" },
     "source": {
       "type": "object",
-      "required": ["provider", "story_key", "story_url", "subtask_key", "subtask_url", "captured_at", "story_updated_at", "subtask_updated_at", "story_description_digest", "story_acceptance_criteria_digest", "subtask_description_digest", "subtask_acceptance_criteria_digest"],
+      "required": ["story_key", "story_url", "subtask_key", "subtask_url", "captured_at", "story_updated_at", "subtask_updated_at", "story_description_digest", "story_acceptance_criteria_digest", "subtask_description_digest", "subtask_acceptance_criteria_digest"],
       "properties": {
-        "provider": { "enum": ["jira", "offline-export"] },
+        "mode": { "enum": ["live-jira", "offline-export"] },
+        "provider": { "enum": ["jira", "offline-export"], "deprecated": true },
         "story_key": { "type": "string", "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$" },
         "story_url": { "type": "string", "format": "uri" },
         "subtask_key": { "type": "string", "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$" },
@@ -25,6 +26,10 @@
         "subtask_description_digest": { "$ref": "#/$defs/digest" },
         "subtask_acceptance_criteria_digest": { "$ref": "#/$defs/digest" }
       },
+      "anyOf": [
+        { "required": ["mode"] },
+        { "required": ["provider"] }
+      ],
       "additionalProperties": false
     },
     "scope": {

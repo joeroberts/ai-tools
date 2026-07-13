@@ -3,7 +3,7 @@
   "governance_status": "pending-review",
   "profile": "generic",
   "source": {
-    "provider": "offline-export",
+    "mode": "offline-export",
     "story_key": "CG-1",
     "story_url": "https://jira.example.test/browse/CG-1",
     "subtask_key": "CG-2",

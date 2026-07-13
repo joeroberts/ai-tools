@@ -121,8 +121,9 @@ go run ./cmd/codex-governance roadmap check \
   --roadmap docs/roadmaps/go-cli-migration.yaml
 ```
 
-Phase 3 supports read-only validation from a normalized work item and an
-offline Jira export:
+Phase 3 supports read-only validation from a normalized work item and a signed
+offline Jira export. The export must be signed by an unrevoked configured
+`export-issuer` key and remain within `signing.offline_export_max_age`:
 
 ```bash
 codex-governance validate-work-item \

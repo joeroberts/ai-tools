@@ -53,6 +53,7 @@ ci:
 upstream: {}
 signing:
   format_version: 1
+  offline_export_max_age: 2h
   trusted_keys:
     - key_id: repository-owner-1
       role: repository-owner
@@ -68,5 +69,9 @@ signing:
 	}
 	if _, err := config.TrustedKeyRegistry(); err != nil {
 		t.Fatalf("TrustedKeyRegistry() error = %v", err)
+	}
+	age, err := config.OfflineExportMaxAge()
+	if err != nil || age.String() != "2h0m0s" {
+		t.Fatalf("OfflineExportMaxAge() = %v, %v", age, err)
 	}
 }

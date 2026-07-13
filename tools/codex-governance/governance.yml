@@ -25,3 +25,4 @@ implementation:
 signing:
   format_version: 1
   trusted_keys: []
+  offline_export_max_age: 24h

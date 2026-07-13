@@ -413,7 +413,7 @@ func runValidateWorkItem(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("validate-work-item", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	workItemPath := flags.String("work-item", "", "normalized work-item JSON")
-	offlineExportPath := flags.String("offline-export", "", "offline Jira export JSON")
+	offlineExportPath := flags.String("offline-export", "", "signed offline Jira export JSON")
 	repoRoot := flags.String("repo-root", ".", "repository root")
 	runtimeRootPath := flags.String("runtime-root", "", "runtime ledger root")
 	baseSHA := flags.String("base-sha", "", "Git base SHA")
@@ -439,9 +439,28 @@ func runValidateWorkItem(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "load work item: %v\n", err)
 		return 2
 	}
-	export, err := jira.LoadOfflineExport(*offlineExportPath)
+	if item.Source.Mode != "offline-export" {
+		fmt.Fprintln(stderr, "validate-work-item currently requires an offline-export source mode")
+		return 2
+	}
+	cfg, err := config.Load(filepath.Join(*repoRoot, "governance.yml"))
 	if err != nil {
-		fmt.Fprintf(stderr, "load offline export: %v\n", err)
+		fmt.Fprintf(stderr, "load governance config: %v\n", err)
+		return 2
+	}
+	registry, err := cfg.TrustedKeyRegistry()
+	if err != nil {
+		fmt.Fprintf(stderr, "load signing policy: %v\n", err)
+		return 2
+	}
+	maxAge, err := cfg.OfflineExportMaxAge()
+	if err != nil {
+		fmt.Fprintf(stderr, "load offline export policy: %v\n", err)
+		return 2
+	}
+	export, err := jira.LoadSignedOfflineExport(*offlineExportPath, registry, maxAge, time.Now().UTC())
+	if err != nil {
+		fmt.Fprintf(stderr, "load signed offline export: %v\n", err)
 		return 2
 	}
 	violations, err := validate.Evaluate(item, export, *repoRoot, *baseSHA, *headSHA)
