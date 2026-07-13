@@ -92,7 +92,7 @@ func TestRunUnknownCommand(t *testing.T) {
 func TestRunJiraPlanGenerateDryRun(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	code := Run([]string{"jira", "plan", "generate", "--prd", "prd.md", "--spec", "spec.md", "--roadmap", "roadmap.md", "--output", "plan.json", "--dry-run"}, &stdout, &stderr)
+	code := Run([]string{"jira", "plan", "generate", "--prd", "prd.md", "--spec", "spec.md", "--roadmap", "roadmap.md", "--constraints", "constraints.json", "--output", "plan.json", "--dry-run"}, &stdout, &stderr)
 	if code != 0 || !bytes.Contains(stdout.Bytes(), []byte("DRY RUN would dispatch hosted manager and local reviewer/verifier")) {
 		t.Fatalf("generate dry run = %d, stdout=%q, stderr=%q", code, stdout.String(), stderr.String())
 	}
@@ -101,7 +101,7 @@ func TestRunJiraPlanGenerateDryRun(t *testing.T) {
 func TestRunJiraPlanGenerateVerboseDryRun(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	code := Run([]string{"jira", "plan", "generate", "--prd", "prd.md", "--spec", "spec.md", "--roadmap", "roadmap.md", "--output", "plan.json", "--dry-run", "--verbose"}, &stdout, &stderr)
+	code := Run([]string{"jira", "plan", "generate", "--prd", "prd.md", "--spec", "spec.md", "--roadmap", "roadmap.md", "--constraints", "constraints.json", "--output", "plan.json", "--dry-run", "--verbose"}, &stdout, &stderr)
 	if code != 0 || !bytes.Contains(stdout.Bytes(), []byte("DRY RUN would dispatch hosted manager and local reviewer/verifier")) {
 		t.Fatalf("verbose generate dry run = %d, stderr=%q", code, stderr.String())
 	}

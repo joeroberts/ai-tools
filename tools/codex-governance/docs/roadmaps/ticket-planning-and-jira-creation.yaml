@@ -15,8 +15,9 @@ phases:
       - go run ./cmd/codex-governance jira plan validate --plan testdata/ticket-plans/valid/plan.json --repo-root .
   - id: 2
     name: Hosted Manager And Local Workers
-    status: blocked
+    status: complete
     approved_by: user
+    completed_at: 2026-07-13
     evidence:
       - docs/benchmarks/ticket-plan-review-2026-07-12.md
       - testdata/ollama/ticket-plan-review-policy.yaml

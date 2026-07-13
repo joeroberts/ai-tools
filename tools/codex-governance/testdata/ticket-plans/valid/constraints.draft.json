@@ -1,0 +1,44 @@
+{
+  "format_version": 1,
+  "sources": {
+    "prd": {
+      "path": "testdata/ticket-plans/valid/prd.md",
+      "digest": "sha256:628ad9eb3cc54f26d3d23a27ebb10bbc44b9fab56d6aabbaf3517109dcae35a3"
+    },
+    "spec": {
+      "path": "testdata/ticket-plans/valid/spec.md",
+      "digest": "sha256:400a079cc24b63e154de745ef7cdbab9f9797613eca3f2d7fe922f00e4bda52e"
+    },
+    "roadmap": {
+      "path": "testdata/ticket-plans/valid/roadmap.md",
+      "digest": "sha256:9ede82f123e2dee3e6474026ad214d85ea05ffbd6d68ad211c1f7b3843e51b35"
+    }
+  },
+  "path_pool": [
+    "internal/ticketplan"
+  ],
+  "review_budget": {
+    "max_changed_files": 5,
+    "max_changed_lines": 300,
+    "components": [
+      "ticketplan tests"
+    ]
+  },
+  "subtasks": [
+    {
+      "id": "contract-validation",
+      "allowed_paths": ["internal/ticketplan"],
+      "review_budget": {
+        "max_changed_files": 5,
+        "max_changed_lines": 300,
+        "components": ["ticketplan tests"]
+      },
+      "dependencies": [],
+      "traceability": {
+        "review_budget": [{"source": "spec", "section": "Budget", "excerpt": "Source evidence: Limit the fixture change to 5 changed files, 300 changed lines, and ticketplan tests"}],
+        "allowed_paths": [{"source": "spec", "section": "Scope", "excerpt": "Source evidence: Add deterministic ticket-plan contract validation in internal/ticketplan"}],
+        "dependencies": [{"source": "roadmap", "section": "Phase 1", "excerpt": "Source evidence: Phase 1 Plan Contract And Workflow State"}]
+      }
+    }
+  ]
+}

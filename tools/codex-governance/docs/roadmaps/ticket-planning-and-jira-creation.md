@@ -22,7 +22,7 @@ artifacts, retry limits, approval, escalation, and Jira publication.
      source-digest verification, and persisted workflow state.
    - Preserve current mixed work only where it satisfies this contract.
 
-2. **Hosted Manager And Local Workers** - blocked pending deterministic manager remediation
+2. **Hosted Manager And Local Workers** - complete 2026-07-13
    - Use hosted Codex only for the manager.
    - Route reviewer and verifier through allowlisted local Ollama models.
    - Require benchmark evidence and bounded task types before local execution.

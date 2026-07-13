@@ -21,6 +21,13 @@ The commands used the owner-only policy fixture at
 `codex-governance ollama run` command. Both results were cached only under a
 temporary local runtime directory.
 
+## End-To-End Smoke Run
+
+On 2026-07-13, a synthetic PRD, specification, roadmap, and approved
+per-subtask constraints template completed the governed flow: hosted manager,
+local reviewer, then local verifier. The manager used one bounded deterministic
+remediation cycle; all runtime agents closed and no Jira operation was invoked.
+
 ## Promotion Boundary
 
 The fixture is benchmark evidence, not an installed owner policy. Enabling

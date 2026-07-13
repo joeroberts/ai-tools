@@ -30,7 +30,8 @@ Usage:
   codex-governance roadmap status --roadmap PATH [--format table|markdown|json]
   codex-governance roadmap check --roadmap PATH
   codex-governance sync --check|--dry-run --manifest PATH [--repo-root PATH]
-  codex-governance jira plan generate --prd PATH --spec PATH --roadmap PATH --output PATH --policy PATH --reviewer-model NAME --verifier-model NAME [--repo-root PATH] [--runtime-root PATH] [--codex-bin PATH] [--dry-run] [--verbose]
+  codex-governance jira constraints draft|promote --output PATH [--prd PATH --spec PATH --roadmap PATH --repo-root PATH]
+  codex-governance jira plan generate --prd PATH --spec PATH --roadmap PATH --constraints PATH --output PATH --policy PATH --reviewer-model NAME --verifier-model NAME [--repo-root PATH] [--runtime-root PATH] [--codex-bin PATH] [--dry-run] [--verbose]
   codex-governance jira plan validate --plan PATH [--repo-root PATH]
   codex-governance runtime agent start|complete|fail|close --work-item KEY --agent-id ID --role ROLE [--result-ref REF]
   codex-governance runtime check --work-item KEY
@@ -77,8 +78,15 @@ func Run(args []string, stdout, stderr io.Writer) int {
 }
 
 func runJira(args []string, stdout, stderr io.Writer) int {
-	if len(args) < 2 || args[0] != "plan" {
-		fmt.Fprintln(stderr, "usage: codex-governance jira plan generate|validate")
+	if len(args) < 2 {
+		fmt.Fprintln(stderr, "usage: codex-governance jira plan|constraints")
+		return 2
+	}
+	if args[0] == "constraints" {
+		return runJiraConstraints(args[1:], stdout, stderr)
+	}
+	if args[0] != "plan" {
+		fmt.Fprintln(stderr, "usage: codex-governance jira plan|constraints")
 		return 2
 	}
 	command := args[1]
@@ -198,6 +206,49 @@ func runJira(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func runJiraConstraints(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || (args[0] != "draft" && args[0] != "promote") {
+		fmt.Fprintln(stderr, "usage: codex-governance jira constraints draft|promote")
+		return 2
+	}
+	flags := flag.NewFlagSet("jira constraints "+args[0], flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	output := flags.String("output", "", "constraints output JSON")
+	draft := flags.String("draft", "", "constraints draft JSON")
+	prd := flags.String("prd", "", "approved PRD Markdown")
+	spec := flags.String("spec", "", "approved specification Markdown")
+	roadmapPath := flags.String("roadmap", "", "approved roadmap Markdown")
+	repoRoot := flags.String("repo-root", ".", "repository root")
+	if err := flags.Parse(args[1:]); err != nil || *output == "" || flags.NArg() != 0 {
+		return 2
+	}
+	if args[0] == "promote" {
+		if *draft == "" {
+			return 2
+		}
+		if err := agentplan.PromoteConstraints(*draft, *output); err != nil {
+			fmt.Fprintf(stderr, "promote constraints: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "PASS promoted constraints: %s\n", *output)
+		return 0
+	}
+	if *prd == "" || *spec == "" || *roadmapPath == "" {
+		return 2
+	}
+	constraints, err := agentplan.DraftConstraints(agentplan.Request{PRDPath: *prd, SpecPath: *spec, RoadmapPath: *roadmapPath, RepoRoot: *repoRoot})
+	if err != nil {
+		fmt.Fprintf(stderr, "draft constraints: %v\n", err)
+		return 1
+	}
+	if err := agentplan.WriteConstraints(*output, constraints); err != nil {
+		fmt.Fprintf(stderr, "write constraints: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "PASS drafted constraints: %s\n", *output)
+	return 0
+}
+
 func runJiraPlanGenerate(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("jira plan generate", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -205,6 +256,7 @@ func runJiraPlanGenerate(args []string, stdout, stderr io.Writer) int {
 	spec := flags.String("spec", "", "approved specification Markdown")
 	roadmapPath := flags.String("roadmap", "", "approved roadmap Markdown")
 	output := flags.String("output", "", "generated ticket plan JSON")
+	constraints := flags.String("constraints", "", "approved per-subtask constraints JSON")
 	repoRoot := flags.String("repo-root", ".", "repository root")
 	runtimeRoot := flags.String("runtime-root", "", "owner-only runtime directory")
 	codexBin := flags.String("codex-bin", "codex", "hosted Codex executable")
@@ -213,7 +265,7 @@ func runJiraPlanGenerate(args []string, stdout, stderr io.Writer) int {
 	verifierModel := flags.String("verifier-model", "", "allowlisted local Ollama verifier model")
 	dryRun := flags.Bool("dry-run", false, "show the governed dispatch without running agents")
 	verbose := flags.Bool("verbose", false, "report orchestration progress without printing agent content")
-	if err := flags.Parse(args); err != nil || *prd == "" || *spec == "" || *roadmapPath == "" || *output == "" || flags.NArg() != 0 {
+	if err := flags.Parse(args); err != nil || *prd == "" || *spec == "" || *roadmapPath == "" || *constraints == "" || *output == "" || flags.NArg() != 0 {
 		return 2
 	}
 	if *dryRun {
@@ -237,7 +289,7 @@ func runJiraPlanGenerate(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	request := agentplan.Request{
-		PRDPath: *prd, SpecPath: *spec, RoadmapPath: *roadmapPath, OutputPath: *output,
+		PRDPath: *prd, SpecPath: *spec, RoadmapPath: *roadmapPath, OutputPath: *output, ConstraintsPath: *constraints,
 		RepoRoot: *repoRoot, RuntimeRoot: *runtimeRoot,
 	}
 	if *verbose {

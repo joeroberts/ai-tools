@@ -18,8 +18,8 @@ import (
 )
 
 type Request struct {
-	PRDPath, SpecPath, RoadmapPath, OutputPath, RepoRoot, RuntimeRoot string
-	Progress                                                          func(string)
+	PRDPath, SpecPath, RoadmapPath, OutputPath, RepoRoot, RuntimeRoot, ConstraintsPath string
+	Progress                                                                           func(string)
 }
 
 type Result struct{ PlanPath, WorkItem string }
@@ -97,17 +97,21 @@ func generateAfterPhase2Approval(request Request, runners Runners) (Result, erro
 	if err != nil {
 		return Result{}, err
 	}
+	constraints, err := LoadConstraints(request.ConstraintsPath, sources)
+	if err != nil {
+		return Result{}, fmt.Errorf("load approved constraints: %w", err)
+	}
 	key := sha256.Sum256([]byte(sources.PRD.Digest + sources.Spec.Digest + sources.Roadmap.Digest))
 	workItem := "ticket-plan:" + hex.EncodeToString(key[:8])
 	var plan ticketplan.Plan
 	feedback := ""
 	for cycle := 1; cycle <= 2; cycle++ {
 		progress(fmt.Sprintf("Dispatching Codex manager (cycle %d/2)", cycle))
-		prompt := masterPrompt(sources, catalog)
+		prompt := masterPrompt(sources, catalog, constraints)
 		if feedback != "" {
-			prompt = remediationPrompt(sources, catalog, feedback)
+			prompt = remediationPrompt(sources, catalog, constraints, feedback)
 		}
-		planBytes, err := runRole(request.RuntimeRoot, workItem, "manager", cycle, runners.Manager, prompt, planSchema())
+		planBytes, err := runRole(request.RuntimeRoot, workItem, "manager", cycle, runners.Manager, prompt, planSchema(len(constraints.Subtasks)))
 		if err != nil {
 			return Result{}, err
 		}
@@ -115,6 +119,9 @@ func generateAfterPhase2Approval(request Request, runners Runners) (Result, erro
 			return Result{}, fmt.Errorf("parse manager plan: %w", err)
 		}
 		plan.Sources, plan.Status = sources, "draft"
+		if err := ApplyConstraints(&plan, constraints); err != nil {
+			return Result{}, err
+		}
 		if issues := plan.ValidateAgainst(request.RepoRoot); len(issues) != 0 {
 			if err := saveValidationFindings(request.RuntimeRoot, workItem, cycle, issues); err != nil {
 				return Result{}, fmt.Errorf("save manager validation findings: %w", err)
@@ -381,17 +388,19 @@ func validReviewStatus(status string) bool {
 	return status == "approved" || status == "changes_requested" || status == "blocked"
 }
 
-func masterPrompt(s ticketplan.Sources, catalog string) string {
-	return fmt.Sprintf("You are the Codex manager. Create one story and independently reviewable subtasks from this verified source catalog. Return only a JSON ticket plan. For each traceability reference, select source exactly from prd, spec, or roadmap; select section exactly from the catalog; and copy its excerpt verbatim from that section. Every traced field must reuse at least two substantive words from its excerpt. Each allowed path must be an explicit clean repository-relative file path with no wildcards. Dependencies may contain only IDs of other generated subtasks, never phase names; a first subtask must have an empty dependency list. Because no decision directory is supplied, use ADR values exactly as 'No ADR needed: <specific rationale of at least 10 characters>'. Do not write files, Jira, or code.\n\n%s", catalog)
+func masterPrompt(s ticketplan.Sources, catalog string, constraints Constraints) string {
+	template, _ := json.Marshal(constraints)
+	return fmt.Sprintf("You are the Codex manager. Create a story and exactly %d independently reviewable subtasks from this verified source catalog. The subtasks must be in the same order as the approved constraints template; constrained IDs, budgets, paths, dependencies, and their traceability will be applied locally. Return only a JSON ticket plan. For each remaining traceability reference, select source exactly from prd, spec, or roadmap; select section exactly from the catalog; and copy its excerpt verbatim from that section. Do not write files, Jira, or code.\n\nAPPROVED CONSTRAINTS:\n%s\n\nSOURCE CATALOG:\n%s", len(constraints.Subtasks), template, catalog)
 }
-func remediationPrompt(s ticketplan.Sources, catalog, feedback string) string {
-	return fmt.Sprintf("You are the Codex manager revising a ticket plan. Resolve these deterministic validation findings:\n%s\nReturn only the full corrected JSON ticket plan. Apply the same catalog rules: source must be prd, spec, or roadmap; section and excerpt must be selected verbatim from the catalog; and every traced field must reuse at least two substantive words from its excerpt. Dependencies may contain only generated subtask IDs. Do not write files, Jira, or code.\n\n%s", feedback, catalog)
+func remediationPrompt(s ticketplan.Sources, catalog string, constraints Constraints, feedback string) string {
+	template, _ := json.Marshal(constraints)
+	return fmt.Sprintf("You are the Codex manager revising a ticket plan. Resolve these deterministic validation findings:\n%s\nReturn exactly %d subtasks in the same order as the approved constraints template. Apply the same catalog rules for narrative fields. Do not write files, Jira, or code.\n\nAPPROVED CONSTRAINTS:\n%s\n\nSOURCE CATALOG:\n%s", feedback, len(constraints.Subtasks), template, catalog)
 }
 func reviewPrompt(role string, plan []byte) string {
 	return fmt.Sprintf("You are an independent local %s. Review this ticket plan for source traceability, bounded scope, acceptance criteria, validation, allowed paths, and ADR references. Return only JSON matching {\"status\":\"approved|changes_requested|blocked\",\"summary\":\"concise finding summary\"}; use status approved only if it is ready. Do not write files or Jira. Plan: %s", role, plan)
 }
-func planSchema() string {
-	return `{
+func planSchema(subtaskCount int) string {
+	return fmt.Sprintf(`{
   "type":"object",
   "properties":{
     "format_version":{"type":"integer"},
@@ -407,7 +416,7 @@ func planSchema() string {
       "acceptance_criteria":{"type":"array","items":{"type":"string"}},
       "traceability":{"$ref":"#/$defs/story_traceability"}
     },"required":["summary","description","acceptance_criteria","traceability"],"additionalProperties":false},
-    "subtasks":{"type":"array","items":{"type":"object","properties":{
+    "subtasks":{"type":"array","minItems":%d,"maxItems":%d,"items":{"type":"object","properties":{
       "id":{"type":"string"},
       "summary":{"type":"string"},
 	      "phase":{"type":"string"},
@@ -433,7 +442,7 @@ func planSchema() string {
   "references":{"type":"array","minItems":1,"items":{"$ref":"#/$defs/reference"}},
   "story_traceability":{"type":"object","properties":{"summary":{"$ref":"#/$defs/references"},"description":{"$ref":"#/$defs/references"},"acceptance_criteria":{"$ref":"#/$defs/references"}},"required":["summary","description","acceptance_criteria"],"additionalProperties":false},
   "subtask_traceability":{"type":"object","properties":{"summary":{"$ref":"#/$defs/references"},"phase":{"$ref":"#/$defs/references"},"change_class":{"$ref":"#/$defs/references"},"review_budget":{"$ref":"#/$defs/references"},"scope":{"$ref":"#/$defs/references"},"non_goals":{"$ref":"#/$defs/references"},"acceptance_criteria":{"$ref":"#/$defs/references"},"validation_plan":{"$ref":"#/$defs/references"},"allowed_paths":{"$ref":"#/$defs/references"},"adr":{"$ref":"#/$defs/references"},"dependencies":{"$ref":"#/$defs/references"}},"required":["summary","phase","change_class","review_budget","scope","non_goals","acceptance_criteria","validation_plan","allowed_paths","adr","dependencies"],"additionalProperties":false}}
-}`
+}`, subtaskCount, subtaskCount)
 }
 func reviewSchema() string {
 	return `{"type":"object","properties":{"status":{"type":"string","enum":["approved","changes_requested","blocked"]},"summary":{"type":"string"}},"required":["status","summary"],"additionalProperties":false}`
