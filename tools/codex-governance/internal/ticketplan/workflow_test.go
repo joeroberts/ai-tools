@@ -18,7 +18,7 @@ func TestLoadWorkflowRejectsInvalidState(t *testing.T) {
 	}
 }
 
-func TestApproveDoesNotMutatePlanOrWorkflow(t *testing.T) {
+func TestApprovePromotesReadyPlanAndWorkflow(t *testing.T) {
 	root, plan := validPlan(t)
 	plan.Status = "ready-for-approval"
 	planPath := filepath.Join(root, "plan.json")
@@ -37,27 +37,16 @@ func TestApproveDoesNotMutatePlanOrWorkflow(t *testing.T) {
 	if err := SaveWorkflow(workflowPath, newWorkflowState(t, root, planPath, digest, "ready-for-approval")); err != nil {
 		t.Fatal(err)
 	}
-	beforePlan, err := os.ReadFile(planPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	beforeWorkflow, err := os.ReadFile(workflowPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := Approve(planPath, workflowPath); err == nil || !strings.Contains(err.Error(), "unavailable until Phase 3") {
+	if err := Approve(planPath, workflowPath, "stakeholder@example.test"); err != nil {
 		t.Fatalf("Approve() error = %v", err)
 	}
-	afterPlan, err := os.ReadFile(planPath)
-	if err != nil {
-		t.Fatal(err)
+	approvedPlan, err := Load(planPath)
+	if err != nil || approvedPlan.Status != "approved" {
+		t.Fatalf("approved plan = %#v, %v", approvedPlan, err)
 	}
-	afterWorkflow, err := os.ReadFile(workflowPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(afterPlan) != string(beforePlan) || string(afterWorkflow) != string(beforeWorkflow) {
-		t.Fatal("Approve() mutated the plan or workflow state")
+	approvedWorkflow, err := LoadWorkflow(workflowPath)
+	if err != nil || approvedWorkflow.Status != "approved" || approvedWorkflow.ApprovedBy != "stakeholder@example.test" || approvedWorkflow.ApprovedAt.IsZero() {
+		t.Fatalf("approved workflow = %#v, %v", approvedWorkflow, err)
 	}
 }
 
@@ -84,8 +73,14 @@ func TestApproveRejectsWorkflowForDifferentPlan(t *testing.T) {
 	if err := SaveWorkflow(workflowPath, newWorkflowState(t, root, otherPath, digest, "ready-for-approval")); err != nil {
 		t.Fatal(err)
 	}
-	if err := Approve(planPath, workflowPath); err == nil {
+	if err := Approve(planPath, workflowPath, "stakeholder"); err == nil {
 		t.Fatal("Approve accepted a workflow state for a different plan")
+	}
+}
+
+func TestApproveRequiresApprover(t *testing.T) {
+	if err := Approve("plan.json", "workflow.json", " "); err == nil || !strings.Contains(err.Error(), "approver is required") {
+		t.Fatalf("Approve() error = %v", err)
 	}
 }
 

@@ -127,6 +127,9 @@ func generateAfterPhase2Approval(request Request, runners Runners) (Result, erro
 				return Result{}, fmt.Errorf("save manager validation findings: %w", err)
 			}
 			if cycle == 2 {
+				if err := saveEscalation(request.RuntimeRoot, workItem, cycle, "manager validation did not converge", issues); err != nil {
+					return Result{}, fmt.Errorf("save stakeholder escalation: %w", err)
+				}
 				return Result{}, fmt.Errorf("ticket plan requires stakeholder escalation after two manager validation cycles: %v", issues)
 			}
 			progress("Manager plan failed deterministic validation; returning findings for remediation")
@@ -149,6 +152,9 @@ func generateAfterPhase2Approval(request Request, runners Runners) (Result, erro
 		}
 		progress("Reviewer requested changes; returning findings to the manager")
 		if cycle == 2 {
+			if err := saveEscalation(request.RuntimeRoot, workItem, cycle, "review did not converge", []string{review.Summary}); err != nil {
+				return Result{}, fmt.Errorf("save stakeholder escalation: %w", err)
+			}
 			return Result{}, fmt.Errorf("ticket plan requires stakeholder escalation after two review cycles: %s", review.Summary)
 		}
 		feedback = review.Summary
@@ -164,6 +170,9 @@ func generateAfterPhase2Approval(request Request, runners Runners) (Result, erro
 		return Result{}, fmt.Errorf("parse verifier result: %w", err)
 	}
 	if verification.Status != "approved" {
+		if err := saveEscalation(request.RuntimeRoot, workItem, 1, "verifier did not approve", []string{verification.Summary}); err != nil {
+			return Result{}, fmt.Errorf("save stakeholder escalation: %w", err)
+		}
 		return Result{}, fmt.Errorf("verifier did not approve ticket plan: %s", verification.Summary)
 	}
 	progress("Verifier approved the ticket plan; writing plan for stakeholder approval")
@@ -200,6 +209,26 @@ func saveValidationFindings(root, workItem string, cycle int, issues []string) e
 		return err
 	}
 	return os.WriteFile(filepath.Join(dir, fmt.Sprintf("manager-%d-validation.json", cycle)), append(data, '\n'), 0o600)
+}
+
+func saveEscalation(root, workItem string, cycle int, reason string, findings []string) error {
+	dir := filepath.Join(root, "ticket-plan-runs", strings.ReplaceAll(workItem, ":", "-"))
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	redacted := make([]string, 0, len(findings))
+	for _, finding := range findings {
+		redacted = append(redacted, gruntime.Redact(finding))
+	}
+	data, err := json.MarshalIndent(map[string]any{
+		"cycle":    cycle,
+		"reason":   gruntime.Redact(reason),
+		"findings": redacted,
+	}, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "stakeholder-escalation.json"), append(data, '\n'), 0o600)
 }
 
 func validateRunners(runners Runners) error {

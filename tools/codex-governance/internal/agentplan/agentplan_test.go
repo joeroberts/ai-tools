@@ -134,6 +134,22 @@ func TestSaveValidationFindingsUsesPrivateArtifact(t *testing.T) {
 	}
 }
 
+func TestSaveEscalationUsesPrivateRedactedArtifact(t *testing.T) {
+	root := t.TempDir()
+	if err := saveEscalation(root, "ticket-plan:1234", 2, "review did not converge", []string{"token=secret-value"}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "ticket-plan-runs", "ticket-plan-1234", "stakeholder-escalation.json")
+	data, err := os.ReadFile(path)
+	if err != nil || strings.Contains(string(data), "secret-value") || !strings.Contains(string(data), "[REDACTED]") {
+		t.Fatalf("escalation artifact = %q, %v", data, err)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("escalation artifact permissions = %v, %v", info.Mode().Perm(), err)
+	}
+}
+
 func TestBuildSourceCatalogUsesVerifiedNamedSections(t *testing.T) {
 	root := t.TempDir()
 	sources := ticketplan.Sources{}

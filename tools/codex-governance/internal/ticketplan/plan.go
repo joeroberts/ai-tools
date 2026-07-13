@@ -127,7 +127,7 @@ func (p Plan) Validate() []string {
 	if p.FormatVersion != 1 {
 		issues = append(issues, "format_version must be 1")
 	}
-	if !oneOf(p.Status, "draft", "needs-remediation", "ready-for-approval", "escalated") {
+	if !oneOf(p.Status, "draft", "needs-remediation", "ready-for-approval", "approved", "escalated") {
 		issues = append(issues, "status is invalid")
 	}
 	for name, source := range p.sourceMap() {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -17,6 +18,8 @@ type WorkflowState struct {
 	Status         string    `json:"status"`
 	UpdatedAt      time.Time `json:"updated_at"`
 	Findings       []string  `json:"findings,omitempty"`
+	ApprovedBy     string    `json:"approved_by,omitempty"`
+	ApprovedAt     time.Time `json:"approved_at,omitempty"`
 }
 
 func NewWorkflowState(repoRoot, planPath, planDigest, status string, sources Sources) (WorkflowState, error) {
@@ -76,8 +79,14 @@ func (s WorkflowState) Validate() error {
 	if s.PlanPath == "" || s.PlanDigest == "" || !digestPattern.MatchString(s.PlanDigest) {
 		return fmt.Errorf("workflow state requires a plan path and sha256 plan digest")
 	}
-	if !oneOf(s.Status, "draft", "needs-remediation", "ready-for-approval", "escalated") {
+	if !oneOf(s.Status, "draft", "needs-remediation", "ready-for-approval", "approved", "escalated") {
 		return fmt.Errorf("workflow state status is invalid")
+	}
+	if s.Status == "approved" && (s.ApprovedBy == "" || s.ApprovedAt.IsZero()) {
+		return fmt.Errorf("approved workflow state requires approver and approval time")
+	}
+	if s.Status != "approved" && (s.ApprovedBy != "" || !s.ApprovedAt.IsZero()) {
+		return fmt.Errorf("only an approved workflow state may include approval metadata")
 	}
 	plan, err := Load(s.PlanPath)
 	if err != nil {
@@ -121,11 +130,69 @@ func canonicalRepositoryRoot(repoRoot string) (string, error) {
 }
 
 func validTransition(from, to string) bool {
-	return from == to || (from == "draft" && oneOf(to, "needs-remediation", "ready-for-approval", "escalated")) || (from == "needs-remediation" && oneOf(to, "ready-for-approval", "escalated"))
+	return from == to || (from == "draft" && oneOf(to, "needs-remediation", "ready-for-approval", "escalated")) || (from == "needs-remediation" && oneOf(to, "ready-for-approval", "escalated")) || (from == "ready-for-approval" && oneOf(to, "approved", "escalated"))
 }
-func Approve(planPath, workflowPath string) error {
-	// The CLI keeps this action unavailable until Phase 3 approval is implemented.
-	return fmt.Errorf("ticket plan approval is unavailable until Phase 3 is approved")
+func Approve(planPath, workflowPath, approvedBy string) error {
+	approvedBy = strings.TrimSpace(approvedBy)
+	if approvedBy == "" {
+		return fmt.Errorf("approver is required")
+	}
+	plan, err := Load(planPath)
+	if err != nil {
+		return fmt.Errorf("load ticket plan: %w", err)
+	}
+	state, err := LoadWorkflow(workflowPath)
+	if err != nil {
+		return fmt.Errorf("load workflow state: %w", err)
+	}
+	if !samePath(planPath, state.PlanPath) {
+		return fmt.Errorf("workflow state references a different ticket plan")
+	}
+	if plan.Status != "ready-for-approval" || state.Status != "ready-for-approval" {
+		return fmt.Errorf("ticket plan must be ready-for-approval before approval")
+	}
+	if err := writeApprovedPlan(planPath, &plan); err != nil {
+		return err
+	}
+	digest, err := FileDigest(planPath)
+	if err != nil {
+		return fmt.Errorf("digest approved ticket plan: %w", err)
+	}
+	state.Status = "approved"
+	state.PlanDigest = digest
+	state.ApprovedBy = approvedBy
+	state.ApprovedAt = time.Now().UTC()
+	return writeWorkflow(workflowPath, state)
+}
+
+func writeApprovedPlan(path string, plan *Plan) error {
+	plan.Status = "approved"
+	if issues := plan.Validate(); len(issues) != 0 {
+		return fmt.Errorf("approved ticket plan is invalid: %v", issues)
+	}
+	data, err := json.MarshalIndent(plan, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Clean(path), append(data, '\n'), 0o644); err != nil {
+		return fmt.Errorf("write approved ticket plan: %w", err)
+	}
+	return nil
+}
+
+// writeWorkflow validates the final state without rereading the prior state.
+// Approval updates the plan digest and workflow status together, so a normal
+// SaveWorkflow transition check would observe an intentionally stale peer.
+func writeWorkflow(path string, state WorkflowState) error {
+	state.UpdatedAt = time.Now().UTC()
+	if err := state.Validate(); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Clean(path), append(data, '\n'), 0o600)
 }
 
 func samePath(left, right string) bool {

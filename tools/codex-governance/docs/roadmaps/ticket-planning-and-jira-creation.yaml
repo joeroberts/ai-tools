@@ -23,9 +23,15 @@ phases:
       - testdata/ollama/ticket-plan-review-policy.yaml
   - id: 3
     name: Stakeholder Approval And Escalation
-    status: in-progress
+    status: complete
     approved_by: user
-    evidence: []
+    completed_at: 2026-07-13
+    evidence:
+      - make test
+      - make vet
+      - make build
+      - git diff --check
+      - go run ./cmd/codex-governance roadmap check --roadmap docs/roadmaps/ticket-planning-and-jira-creation.yaml
   - id: 4
     name: Governed Jira Publication
     status: pending-approval
