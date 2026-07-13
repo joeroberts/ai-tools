@@ -3,7 +3,7 @@
   "$id": "https://example.invalid/codex-governance/implementation-run.schema.json",
   "title": "Implementation run",
   "type": "object",
-  "required": ["format_version", "id", "work_item_key", "adapter", "state", "base_sha", "branch", "task_bundle_digest", "created_at", "updated_at", "attempts", "review_cycles", "task_id", "process_id", "result_ref"],
+  "required": ["format_version", "id", "work_item_key", "adapter", "state", "base_sha", "branch", "task_bundle_digest", "created_at", "updated_at", "attempts", "review_cycles", "task_id", "process_id", "result_ref", "commit_sha"],
   "properties": {
     "format_version": {"const": 1},
     "id": {"type": "string", "pattern": "^run-[a-f0-9]{16}$"},
@@ -19,7 +19,9 @@
     "review_cycles": {"type": "integer", "minimum": 0},
     "task_id": {"type": "string"},
     "process_id": {"type": "integer", "minimum": 0},
-    "result_ref": {"type": "string"}
+    "result_ref": {"type": "string"},
+    "commit_sha": {"type": "string", "pattern": "^[a-f0-9]{0,64}$"},
+    "pull_request_url": {"type": "string"}
   },
   "additionalProperties": false
 }

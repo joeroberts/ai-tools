@@ -1,6 +1,6 @@
 id: implementation-agent-orchestration
 title: Implementation-Agent Orchestration Roadmap
-status: in-progress
+status: complete
 phases:
   - id: 1
     name: Discovery And Contract Approval
@@ -54,5 +54,13 @@ phases:
       - codex-governance implementation review|verification|remediate
   - id: 6
     name: Adoption And Hardening
-    status: in-progress
-    evidence: []
+    status: complete
+    approved_by: user
+    completed_at: 2026-07-13
+    evidence:
+      - internal/implementation/audit.go
+      - internal/implementation/publication.go
+      - internal/implementation/publication_test.go
+      - codex-governance implementation status|metrics|audit
+      - codex-governance implementation commit|authorize-publish|push|create-pr
+      - make smoke-implementation-agent

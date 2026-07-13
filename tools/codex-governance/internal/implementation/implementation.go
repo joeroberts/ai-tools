@@ -55,6 +55,8 @@ type Run struct {
 	TaskID           string    `json:"task_id"`
 	ProcessID        int       `json:"process_id"`
 	ResultRef        string    `json:"result_ref"`
+	CommitSHA        string    `json:"commit_sha"`
+	PullRequestURL   string    `json:"pull_request_url"`
 }
 
 type AdapterStatus string

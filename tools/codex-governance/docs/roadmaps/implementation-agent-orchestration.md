@@ -2,7 +2,7 @@
 
 ## Status
 
-`proposed`
+`complete`
 
 Structured phase state:
 [implementation-agent-orchestration.yaml](implementation-agent-orchestration.yaml).
@@ -17,11 +17,12 @@ explicit-approval boundaries.
 
 ## Approval Record
 
-- Approval status: approved for planning
+- Approval status: approved through Phase 6 implementation
 - Approving instruction: user approval on 2026-07-13
 - Approved scope: PRD, specification, and phased implementation roadmap
-- Not authorized: implementation, local commits, remote pushes, PR creation,
-  Jira writes, merges, releases, deployments, secrets, or cloud actions
+- Remote boundary: each push or pull-request creation still requires a
+  separately recorded, one-use authorization bound to the exact branch, SHA,
+  operation, and remote URL fingerprint.
 
 ## Phased Work
 
@@ -77,8 +78,12 @@ explicit-approval boundaries.
 - Phase 5 is complete: policy-gated independent reviewer and verifier
   assessments, owner-only result records, bounded review/verification cycles,
   and finding-bound remediation are implemented.
-- Phase 6 is in progress: operator UX, audit export, smoke coverage, local
-  commit gates, and separately authorized remote publication are next.
+- Phase 6 is complete: operator status and metrics, redacted audit export,
+  smoke coverage, local commit gates, and one-use remote push/pull-request
+  adapters are implemented. Remote publication is bound to the exact branch,
+  SHA, operation, and remote URL fingerprint; its authorization is consumed
+  before the remote side effect. Local-LLM code editing remains disabled until
+  its separate benchmark and policy gate pass.
 
 ## Cross-Phase Gates
 
