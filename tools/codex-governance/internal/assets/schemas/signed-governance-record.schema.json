@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/codex-governance/signed-governance-record.schema.json",
+  "title": "Signed governance record",
+  "type": "object",
+  "required": ["format_version", "payload", "payload_digest", "key_id", "algorithm", "signer_role", "issued_at", "signature"],
+  "properties": {
+    "format_version": { "const": 1 },
+    "payload": { "type": ["object", "array"] },
+    "payload_digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "key_id": { "type": "string", "minLength": 1 },
+    "algorithm": { "const": "ed25519" },
+    "signer_role": { "enum": ["jira-owner", "technical-owner", "repository-owner", "export-issuer"] },
+    "issued_at": { "type": "string", "format": "date-time" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "signature": { "type": "string", "minLength": 1 }
+  },
+  "additionalProperties": false
+}

@@ -9,6 +9,17 @@ summary jobs.
 The toolkit is implemented as a Go CLI. A `Makefile` may expose developer
 shortcuts but does not contain governance logic.
 
+## Enforcement Boundary
+
+`codex-governance` enforces policy only for the workflow and operations it
+controls. It can block a governed run, but it cannot prevent a user or another
+tool from editing, committing, or publishing outside that path. Its audit
+records provide evidence of observed governed actions; they are not proof that
+no bypass occurred. For the proposed implementation-agent extension,
+provider/model evaluation records qualify a specific, versioned code-editing
+configuration for a defined task scope; they do not guarantee safety for every
+repository or task.
+
 ## Files
 
 - `cmd/codex-governance/`: CLI entry point.

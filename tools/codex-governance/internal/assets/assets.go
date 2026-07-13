@@ -12,6 +12,12 @@ var JiraWorkItemSchema []byte
 //go:embed schemas/implementation-run.schema.json
 var ImplementationRunSchema []byte
 
+// SignedGovernanceRecordSchema is the common envelope for signed approvals
+// and trusted offline exports.
+//
+//go:embed schemas/signed-governance-record.schema.json
+var SignedGovernanceRecordSchema []byte
+
 // Templates contains the shared files written by the init command.
 //
 //go:embed templates/*

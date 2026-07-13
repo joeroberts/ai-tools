@@ -59,11 +59,45 @@ Use a stable description template rather than requiring Jira custom fields in
 the first release. The generated toolkit must define the template and a
 normalized JSON work-item contract in `schemas/jira-work-item.schema.json`.
 
+### Work-Item Authority And Stop Contract
+
+One approved Jira implementation subtask, captured in a versioned normalized
+work item, is the executable authority for a run. Jira remains the
+human-readable record of intent. The work item binds the ticket
+identity/revision/digests, source mode and baseline, allowed paths, acceptance
+criteria, required commands, review budget, ADR references, permitted provider
+and task class, local-commit permission, and remote-publication permission.
+
+The control plane stops rather than continuing when a binding field differs;
+source evidence is missing or expired; the diff is out of scope; a review
+budget is exceeded without an approved exception; a required check fails; a
+provider is unavailable or unqualified; or required audit evidence is
+incomplete. A stopped run is not unblocked in place. Resumption requires a new
+signed, versioned rebaseline or exception record that identifies the prior run,
+changed fields, rationale, approver, expiry, and revised bounds.
+
+The Jira owner resolves intent. The technical owner resolves architecture or
+scope exceptions. The repository owner authorizes local-commit policy and
+remote publication. The control plane verifies these records but never infers
+an approval.
+
+All signed governance records use one common envelope: canonical JSON payload,
+SHA-256 payload digest, `key_id`, `algorithm`, signer role, issuance time,
+optional expiry, and signature. The initial algorithm is Ed25519 over the
+payload digest. A versioned repository policy maps trusted public keys to the
+Jira-owner, technical-owner, repository-owner, and export-issuer roles. At each
+gate, the CLI verifies key trust, permitted role, expiry, signature, record
+version, and revocation. Private keys never enter the repository or runtime
+ledger; tests use ephemeral fixture keys only.
+
 ### Ticket Alignment And Drift
 
-At work-item creation, capture the story and subtask key, URL, capture time,
-revision or update timestamp, and digests of their description and acceptance
-criteria. Read Jira again at implementation, review, and closure gates.
+At work-item creation, the work item must declare `live-jira` or
+`offline-export` as its source mode. Capture the story and subtask key, URL,
+capture time, revision or update timestamp, and digests of the description and
+acceptance criteria. At implementation, review, and closure gates,
+`live-jira` performs a new read; `offline-export` validates its declared
+snapshot age and provenance against policy.
 
 If tracked content changes, set the work item to `source-drift-blocked`. An
 agent may show changed fields but cannot decide whether the intent still aligns.
@@ -71,9 +105,19 @@ A human must rebaseline the work, split it, approve an explicit exception, or
 stop it. The validator checks field presence and textual changes; it must not
 claim to prove semantic alignment.
 
-When Jira cannot be read locally, accept a timestamped normalized export as an
-offline fixture. CI must use a fresh read-only Jira query when credentials and
-network access are configured.
+An offline export is eligible only when it carries the declared source identity,
+capture time, revision or update timestamp, content digests, and provenance
+required by policy. For a governed implementation run, it must be a signed
+export envelope from a configured trusted issuer key, binding the ticket URL and
+key, capture time, Jira revision/update time, content digests, and export
+digest. Unsigned exports are permitted only as explicitly marked test fixtures.
+The initial maximum offline age is 24 hours and is policy-configurable per
+repository. A versioned trusted-key registry controls issuer rotation and
+revocation; a revoked issuer immediately invalidates its exports. An export
+fails closed when its age or provenance is unacceptable. CI uses `live-jira`
+and a fresh read-only query when credentials and network access are configured;
+it may use `offline-export` only when that mode is explicitly declared and
+policy accepts the supplied snapshot.
 
 ## Pull-Request Reviewability
 
@@ -191,26 +235,60 @@ duplicates edits. Open agents block closure unless an approved exception is
 recorded.
 
 Provider selection is a user preference constrained by policy, not an authority
-grant. The policy must allow the selected provider, model name and pinned ID,
-role, task type, task-bundle size, and concurrency. A local LLM uses the
-governed gateway and receives no direct Jira, Git push, cloud, secret, or
-arbitrary shell access. If the selected provider is unavailable or not approved
-for code edits, preflight fails without falling back or escalating models.
+grant. Code-edit eligibility additionally requires a reproducible passing
+evaluation record for the exact provider, model and pinned ID, adapter,
+tool-permission/config version, prompt/task-bundle schema and version,
+benchmark-corpus and harness versions/hashes, role, task class, metrics,
+thresholds, evaluator identity, and approval. Qualification is separate for
+each role and task class. Initial code-edit eligibility is limited to
+`scoped-code-edit` and `finding-bound-remediation`; high-risk task classes are
+ineligible pending a separate policy decision.
+
+The corpus must include normal tasks and adversarial cases for forbidden paths,
+source drift, invalid output, validation failure, authorization attempts, and
+sensitive-data redaction. Every safety-control case must pass. Before any
+provider is enabled, the policy must record a non-safety task-success threshold
+derived from a versioned baseline corpus; it must not rely on an unexamined
+arbitrary percentage. The policy and evaluation registry must be versioned;
+changing any qualified input, a relevant incident, or the recurring review date
+requires requalification. A passing evaluation is scoped evidence, not proof
+of safety for every repository or task class. The policy must allow the
+selected provider, model name and pinned ID, role, task type, task-bundle size,
+and concurrency. A local LLM uses the governed gateway and receives no direct
+Jira, Git push, cloud, secret, or arbitrary shell access. If the selected
+provider is unavailable, revoked, or not approved for code edits, preflight
+fails without falling back or escalating models.
 
 Local commits are allowed only when the approved work item enables them and
 all required pre-commit gates pass. Push and pull-request creation require a
-separate, run-specific remote-publish authorization binding the work-item key,
-remote, branch, exact commit SHA, and expiry. That authorization cannot permit
-force-pushes, protected or default branch writes, merges, tags, releases, Jira
-writes, or unrelated repository actions.
+separate, run-specific remote-publish authorization binding the work-item key
+and run ID, repository identity, remote name and URL fingerprint, target ref,
+exact commit and expected base SHAs, approver identity, issuance time, expiry,
+and authorization-record version and digest. A single authorization may list
+both `push` and `create-pr`, but they are separate explicit operations and each
+is independently checked and consumed. `create-pr` also binds its target
+branch. The authorization cannot permit force-pushes, protected or default
+branch writes, merges, tags, releases, Jira writes, or unrelated repository
+actions. The CLI rejects expired, reused, mismatched, or broadened records.
 
 The manager coordinates work but cannot override policy checks, source drift,
 required CI failures, or human decision rights. A local runtime execution ledger
-outside the repository records work-item key, agent ID, role, inputs, result
-reference, lifecycle state, and close event. Before finalization, the manager
-must verify that ledger, persist or link every agent result, and close every
-completed agent. Open agents block finalization unless a documented approved
-exception exists.
+outside the repository is owner-only and hash-linked. Each structured event
+records run and event IDs, UTC time, actor and role, CLI/schema version,
+lifecycle state, relevant policy/evaluation/task-bundle/source digests, gate
+decision, and the preceding event hash. It records digests and normalized
+outcomes for source checks, commands, diff and commit, provider/adapter results,
+review findings, rebaseline/exception records, and publication authorization.
+
+Store redacted references rather than credentials, raw prompts, or unrestricted
+logs. Closure writes a final evidence manifest containing the terminal event
+hash. Missing, altered, or unverifiable required evidence escalates the run and
+blocks closure. This ledger is tamper-evident within the governed local runtime;
+it is not tamper-proof against a party with filesystem control. Test evidence
+is retained for the full test program. Production retention is a separate
+explicit distribution decision. Before finalization, the manager must verify
+the ledger, persist or link every agent result, and close every completed agent.
+Open agents block finalization unless a documented approved exception exists.
 
 Roles:
 
@@ -234,6 +312,23 @@ Resolve disagreements by evidence: rerun deterministic checks for factual
 disputes; obtain one fresh independent reviewer for review disputes; escalate
 acceptance-criteria disputes to the Jira owner; require an ADR and technical
 owner decision for durable design disputes. Stop unresolved work.
+
+### Enforcement And Evidence Boundaries
+
+The CLI enforces only the governed workflow it controls. It cannot prevent a
+user or another tool from editing, committing, or publishing outside that
+workflow. Its audit record therefore documents observed, policy-governed
+actions rather than proving that no bypass occurred. Distribution claims must
+state this boundary plainly.
+
+Before distribution, define and test audit-record integrity, approver identity
+binding, evidence retention, tamper detection and response, authorization
+revocation, incident handling, and policy/evaluation-registry versioning. Test
+failure paths for changed remotes or refs, rebases, stale tickets, altered task
+bundles, expired and reused authorizations, and unavailable or revoked
+providers. Define supported environments, compatibility and upgrade policy,
+privacy and local-data handling, and evidence-retention expectations before
+making availability or safety claims.
 
 ## Validation And CI
 

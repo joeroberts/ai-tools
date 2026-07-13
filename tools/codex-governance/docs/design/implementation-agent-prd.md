@@ -36,8 +36,10 @@ produce a governed result or an actionable escalation.
 
 - Use an adapter-first execution boundary; headless Codex is the first adapter.
 - Let a user choose an approved local LLM for code execution or remediation.
-  The selection is available only when its pinned model, provider, role, task
-  type, and benchmark result are allowed by the local policy.
+  The selection is available only when its exact provider/model/adapter/config
+  stack and versioned evaluation record are allowed by local policy for that
+  role and task class. Initial eligibility is limited to `scoped-code-edit` and
+  `finding-bound-remediation`; high-risk work is ineligible.
 - Run one primary subtask in one dedicated disposable Git worktree.
 - Supply a versioned task bundle containing the normalized work item, fresh
   ticket baseline, allowed paths, required commands, ADRs, and repository
@@ -54,7 +56,10 @@ produce a governed result or an actionable escalation.
 - Allow a local commit only when the work item enables it and pre-commit gates
   pass.
 - Require a separate remote-publish authorization for push and PR creation.
-  It must bind the work item, remote, branch, exact commit SHA, and expiry.
+  One authorization may explicitly permit both operations; it must bind the
+  work item and run, remote identity, target ref, exact commit and base SHAs,
+  approver, expiry, and PR target branch, and each operation is checked
+  independently.
 
 ## Hard Boundaries
 

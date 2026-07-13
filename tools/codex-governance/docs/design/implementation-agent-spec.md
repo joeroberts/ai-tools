@@ -12,8 +12,11 @@ conflict exists.
 The Go CLI is the governance control plane. Execution providers implement an
 adapter interface; headless Codex is the first provider. A user may choose a
 local-LLM provider for code execution or remediation only if the governed local
-model policy authorizes its pinned model, role, task type, bundle size, and
-concurrency. Adapters execute work but cannot approve policy, alter work-item
+model policy authorizes its exact provider/model/adapter/config stack, role,
+task class, bundle size, and concurrency, and preflight verifies its passing
+versioned qualification record. Initial code-edit eligibility is limited to
+`scoped-code-edit` and `finding-bound-remediation`; high-risk work is
+ineligible. Adapters execute work but cannot approve policy, alter work-item
 intent, or perform remote actions outside an authorization verified by the
 control plane.
 
@@ -40,10 +43,40 @@ An `implementation-run` is a versioned, immutable-at-start record containing:
 - command outcomes, diff SHA, commit SHA, agent task ID, and redacted summary;
 - remote-publish authorization, if granted, and resulting PR URL or identifier.
 
+For `offline-export` source mode, the run additionally records the signed export
+envelope, issuer-key identity and registry version, ticket URL/key, capture
+time, Jira revision/update time, content and export digests, and policy age
+limit. Governed runs accept only envelopes signed by a configured, unrevoked
+issuer key; unsigned exports are test fixtures only. The default maximum age is
+24 hours, configurable per repository. Preflight rejects expired, unverifiable,
+or revoked-issuer exports.
+
+The owner-only runtime ledger is structured and hash-linked. Each event records
+run and event IDs, UTC time, actor and role, CLI/schema version, lifecycle
+state, relevant policy/evaluation/task-bundle/source digests, gate decision,
+and preceding-event hash. It records redacted references plus digests and
+normalized outcomes for source checks, commands, diff/commit, adapter results,
+findings, rebaseline/exception records, and publication authorization.
+
+Closure writes a final evidence manifest containing the terminal event hash.
+Missing, altered, or unverifiable required evidence escalates the run and
+blocks closure. The ledger is tamper-evident within the governed local runtime,
+not tamper-proof against a party with filesystem control. Retain test evidence
+for the full test program; establish production retention before distribution.
+
 The task bundle is versioned and includes only the normalized work item, fresh
 ticket baseline, allowed paths, required commands, ADR references, repository
 guidance, and a structured-result schema. It must not include credentials or
 unbounded local logs.
+
+All signed governance records use a common envelope: canonical JSON payload,
+SHA-256 payload digest, `key_id`, `algorithm`, signer role, issuance time,
+optional expiry, and signature. The initial algorithm is Ed25519 over the
+payload digest. A versioned repository policy maps trusted public keys to the
+Jira-owner, technical-owner, repository-owner, and export-issuer roles. The CLI
+verifies key trust, role, expiry, signature, record version, and revocation at
+each gate. Private keys are never stored in the repository or runtime ledger;
+tests use ephemeral fixture keys only.
 
 ## State Machine
 
@@ -110,11 +143,14 @@ The local commit command is available only from `ready-to-commit`, only in the
 run worktree, and only when the approved work item enables local commits.
 
 A remote-publish authorization is a signed or locally auditable record with a
-work-item key, repository identity, remote name and URL fingerprint, branch,
-exact commit SHA, expiry, approver identity, and allowed operations (`push`,
-`create-pr`). The CLI must reject expired, mismatched, broadened, or reused
-authorizations. It must reject force-pushes and protected/default-branch
-targets. Push and PR creation must each be explicit allowed operations.
+work-item key and run ID, repository identity, remote name and URL fingerprint,
+target ref, exact commit SHA and expected base SHA, approver identity, issuance
+time, expiry, record version and digest, and allowed operations (`push`,
+`create-pr`). One record may authorize both operations, but each is explicit,
+independently verified, and consumed separately; `create-pr` also binds its PR
+target branch. The CLI must reject expired, mismatched, broadened, or reused
+authorizations, including changed remotes, refs, and SHAs. It must reject
+force-pushes and protected/default-branch targets.
 
 ## Security And Data Handling
 
@@ -129,6 +165,19 @@ behavior as reviewer and verifier. Their `code-edit` authorization is separate
 from `ticket-plan-review`: it must demonstrate scoped patch generation,
 forbidden-path rejection, deterministic validation, and redaction before it is
 enabled. The existing review benchmark alone does not authorize code edits.
+
+## Evaluation Qualification
+
+Each qualification record binds provider, exact model ID/revision, adapter
+version, tool-permission/config version, prompt/task-bundle schema and version,
+benchmark-corpus and harness versions/hashes, role, task class, metrics,
+thresholds, evaluator identity, and approval. Qualification is not inherited
+across roles or task classes. The corpus includes normal tasks and adversarial
+cases for forbidden paths, source drift, invalid output, validation failure,
+authorization attempts, and sensitive-data redaction. All safety-control cases
+must pass. A versioned baseline corpus determines the recorded non-safety
+task-success threshold before any provider is enabled. Any bound-input change,
+relevant incident, or scheduled review requires requalification.
 
 ## Required Tests
 

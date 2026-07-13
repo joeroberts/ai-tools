@@ -79,6 +79,58 @@ is not yet assigned; add it before ticket-backed validation is enabled.
    - Resolve blocking findings, document accepted caveats, and prepare a local
      release manifest without publishing it.
 
+## Pre-Test Governance Contracts
+
+Before implementation-agent testing, implement and test the approved
+work-item authority and stop contract: binding fields, fail-closed conditions,
+signed/versioned rebaseline and exception records, and the separate decision
+rights of the Jira owner, technical owner, and repository owner. Also implement
+and test a remote-publish record that can explicitly authorize both `push` and
+`create-pr` as separately verified, separately consumed operations.
+
+Before enabling code-edit provider testing, implement and test the evaluation
+qualification contract: separate role/task-class records; exact bound stack and
+corpus/harness versions; normal and adversarial corpus cases; 100% passing
+safety controls; a baseline-derived non-safety success threshold; and
+requalification after bound-input changes, incidents, or scheduled review.
+
+Before implementation-agent testing, implement and test the audit-evidence
+contract: owner-only structured hash-linked events, redacted artifact
+references, a terminal evidence manifest, fail-closed closure verification, and
+test-program retention. Production retention remains a pre-distribution gate.
+
+Before governed offline-export testing, implement and test signed export
+envelopes, a versioned trusted-key registry with rotation and revocation, a
+24-hour default maximum age configurable per repository, and rejection of
+unsigned, expired, unverifiable, or revoked-issuer exports. Unsigned exports
+remain test fixtures only.
+
+Before testing any signed governance decision, implement and test the shared
+Ed25519 envelope, canonical payload encoding, trusted public-key/role mapping,
+key revocation, and verification of role, expiry, signature, and record version
+at every gate. Private keys are excluded from repositories and runtime ledgers;
+tests use ephemeral fixture keys.
+
+## Pre-Distribution Release Gate
+
+The completed migration phases do not authorize distribution of the
+implementation-agent control plane. Distribution is blocked until each gate is
+complete or an accountable owner records a time-bounded, published exception.
+
+- Define and implement audit-evidence integrity, approver-identity binding,
+  retention, tamper detection, and tamper response.
+- Test changed remotes or refs, rebases, stale tickets, altered task bundles,
+  expired and reused authorizations, and unavailable or revoked providers.
+- Establish versioned policy and evaluation registries, provider revocation,
+  and incident handling. Code-edit eligibility must be checked at preflight
+  against the exact qualified provider, model, adapter, prompt/task-bundle, and
+  benchmark-corpus versions.
+- Review all product and release language so it describes an opt-in governed
+  workflow and makes no guarantee that the CLI cannot enforce outside that
+  workflow.
+- Publish support boundaries, supported-environment and compatibility policy,
+  privacy and local-data handling, and evidence-retention commitments.
+
 ## Scope Boundaries
 
 This roadmap does not authorize Jira writes, pushes, merges, releases,
@@ -135,7 +187,12 @@ state. Neither command reads Jira or modifies repository files.
 
 - Jira API authentication and provider details remain intentionally deferred;
   offline exports are the first validation path.
+- Source-mode policy must define the maximum acceptable age and required
+  provenance for an explicitly declared `offline-export`; `live-jira` requires
+  a fresh read at each governance gate.
 - Review-budget defaults require observed repository metrics before enforcement.
 - Local Ollama models must pass benchmark gates before code-edit authority.
 - The release/versioning scheme must remain compatible with repositories that
   adopt the CLI later.
+- Distribution remains blocked by the pre-distribution release gate above;
+  release readiness is distinct from completion of the migration phases.
