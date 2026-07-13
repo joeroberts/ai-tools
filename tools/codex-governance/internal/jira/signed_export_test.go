@@ -22,7 +22,7 @@ func TestLoadSignedOfflineExport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSignedOfflineExport() error = %v", err)
 	}
-	if loaded != export {
+	if loaded.Export != export || loaded.Evidence.IssuerKeyID != "fixture-issuer" || loaded.Evidence.TrustedKeyRegistryVersion != signature.FormatVersion {
 		t.Fatalf("LoadSignedOfflineExport() = %#v", loaded)
 	}
 }

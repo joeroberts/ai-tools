@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"syscall"
@@ -15,6 +16,7 @@ import (
 	"codex-governance/internal/config"
 	"codex-governance/internal/jira"
 	gruntime "codex-governance/internal/runtime"
+	"codex-governance/internal/signature"
 	"codex-governance/internal/validate"
 	"codex-governance/internal/workitem"
 	"codex-governance/internal/worktree"
@@ -40,23 +42,24 @@ const (
 )
 
 type Run struct {
-	FormatVersion    int       `json:"format_version"`
-	ID               string    `json:"id"`
-	WorkItemKey      string    `json:"work_item_key"`
-	Adapter          string    `json:"adapter"`
-	State            string    `json:"state"`
-	BaseSHA          string    `json:"base_sha"`
-	Branch           string    `json:"branch"`
-	TaskBundleDigest string    `json:"task_bundle_digest"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
-	Attempts         int       `json:"attempts"`
-	ReviewCycles     int       `json:"review_cycles"`
-	TaskID           string    `json:"task_id"`
-	ProcessID        int       `json:"process_id"`
-	ResultRef        string    `json:"result_ref"`
-	CommitSHA        string    `json:"commit_sha"`
-	PullRequestURL   string    `json:"pull_request_url"`
+	FormatVersion    int                        `json:"format_version"`
+	ID               string                     `json:"id"`
+	WorkItemKey      string                     `json:"work_item_key"`
+	Adapter          string                     `json:"adapter"`
+	State            string                     `json:"state"`
+	BaseSHA          string                     `json:"base_sha"`
+	Branch           string                     `json:"branch"`
+	TaskBundleDigest string                     `json:"task_bundle_digest"`
+	CreatedAt        time.Time                  `json:"created_at"`
+	UpdatedAt        time.Time                  `json:"updated_at"`
+	Attempts         int                        `json:"attempts"`
+	ReviewCycles     int                        `json:"review_cycles"`
+	TaskID           string                     `json:"task_id"`
+	ProcessID        int                        `json:"process_id"`
+	ResultRef        string                     `json:"result_ref"`
+	CommitSHA        string                     `json:"commit_sha"`
+	PullRequestURL   string                     `json:"pull_request_url"`
+	SourceEvidence   jira.OfflineExportEvidence `json:"source_evidence"`
 }
 
 type AdapterStatus string
@@ -197,13 +200,15 @@ func Reconcile(run *Run, adapter Adapter, resultPath string) error {
 }
 
 type TaskBundle struct {
-	FormatVersion  int                `json:"format_version"`
-	WorkItem       workitem.Item      `json:"work_item"`
-	TicketBaseline jira.OfflineExport `json:"ticket_baseline"`
-	AllowedPaths   []string           `json:"allowed_paths"`
-	Commands       []string           `json:"commands"`
-	ADR            string             `json:"adr"`
-	Guidance       string             `json:"guidance"`
+	FormatVersion  int                        `json:"format_version"`
+	WorkItem       workitem.Item              `json:"work_item"`
+	TicketBaseline jira.OfflineExport         `json:"ticket_baseline"`
+	AllowedPaths   []string                   `json:"allowed_paths"`
+	Commands       []string                   `json:"commands"`
+	ADR            string                     `json:"adr"`
+	Guidance       string                     `json:"guidance"`
+	SourceEvidence jira.OfflineExportEvidence `json:"source_evidence"`
+	SourceEnvelope signature.Envelope         `json:"source_envelope"`
 }
 
 type PreflightRequest struct {
@@ -221,14 +226,14 @@ type PreflightResult struct {
 	BundlePath string
 }
 
-func NewRun(item workitem.Item, adapter, bundleDigest string) (Run, error) {
+func NewRun(item workitem.Item, adapter, bundleDigest string, evidence jira.OfflineExportEvidence) (Run, error) {
 	if item.Source.SubtaskKey == "" || item.GitRange.BaseSHA == "" || adapter == "" || bundleDigest == "" {
 		return Run{}, fmt.Errorf("implementation run inputs are incomplete")
 	}
 	now := time.Now().UTC()
 	idSource := strings.Join([]string{item.Source.SubtaskKey, item.GitRange.BaseSHA, adapter, bundleDigest}, "\x00")
 	sum := sha256.Sum256([]byte(idSource))
-	return Run{FormatVersion: FormatVersion, ID: "run-" + hex.EncodeToString(sum[:8]), WorkItemKey: item.Source.SubtaskKey, Adapter: adapter, State: StatePreflight, BaseSHA: item.GitRange.BaseSHA, Branch: "", TaskBundleDigest: bundleDigest, CreatedAt: now, UpdatedAt: now}, nil
+	return Run{FormatVersion: FormatVersion, ID: "run-" + hex.EncodeToString(sum[:8]), WorkItemKey: item.Source.SubtaskKey, Adapter: adapter, State: StatePreflight, BaseSHA: item.GitRange.BaseSHA, Branch: "", TaskBundleDigest: bundleDigest, CreatedAt: now, UpdatedAt: now, SourceEvidence: evidence}, nil
 }
 
 func (r *Run) Transition(next string) error {
@@ -271,12 +276,12 @@ func allowedTransition(current, next string) bool {
 	}
 }
 
-func BuildTaskBundle(item workitem.Item, baseline jira.OfflineExport, repoRoot string) (TaskBundle, error) {
+func BuildTaskBundle(item workitem.Item, baseline jira.OfflineExport, envelope signature.Envelope, evidence jira.OfflineExportEvidence, repoRoot string) (TaskBundle, error) {
 	guidance, err := readGuidance(repoRoot)
 	if err != nil {
 		return TaskBundle{}, err
 	}
-	return TaskBundle{FormatVersion: FormatVersion, WorkItem: item, TicketBaseline: baseline, AllowedPaths: append([]string(nil), item.Scope.AllowedPaths...), Commands: append([]string(nil), item.Scope.ValidationPlan...), ADR: item.Decision.ADR, Guidance: guidance}, nil
+	return TaskBundle{FormatVersion: FormatVersion, WorkItem: item, TicketBaseline: baseline, AllowedPaths: append([]string(nil), item.Scope.AllowedPaths...), Commands: append([]string(nil), item.Scope.ValidationPlan...), ADR: item.Decision.ADR, Guidance: guidance, SourceEvidence: evidence, SourceEnvelope: envelope}, nil
 }
 
 func WriteTaskBundle(path string, bundle TaskBundle) (string, error) {
@@ -287,10 +292,11 @@ func WriteTaskBundle(path string, bundle TaskBundle) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(filepath.Clean(path), append(data, '\n'), 0o600); err != nil {
+	stored := append(data, '\n')
+	if err := os.WriteFile(filepath.Clean(path), stored, 0o600); err != nil {
 		return "", err
 	}
-	return digest(data), nil
+	return digest(stored), nil
 }
 
 func SaveRun(path string, run Run) error {
@@ -336,6 +342,41 @@ func LoadTaskBundle(path string) (TaskBundle, error) {
 		return TaskBundle{}, fmt.Errorf("task bundle is incomplete")
 	}
 	return bundle, nil
+}
+
+// VerifyDispatchReadiness rechecks the immutable task bundle and its signed
+// source evidence under the current repository policy before worktree creation
+// or adapter dispatch.
+func VerifyDispatchReadiness(run Run, bundle TaskBundle, bundlePath string, cfg config.Config, now time.Time) error {
+	data, err := os.ReadFile(filepath.Clean(bundlePath))
+	if err != nil {
+		return err
+	}
+	if digest(data) != run.TaskBundleDigest {
+		return fmt.Errorf("task bundle digest does not match implementation run")
+	}
+	if bundle.WorkItem.Source.Mode != "offline-export" {
+		return fmt.Errorf("implementation dispatch currently requires an offline-export source mode")
+	}
+	if bundle.SourceEvidence != run.SourceEvidence {
+		return fmt.Errorf("task bundle source evidence does not match implementation run")
+	}
+	registry, err := cfg.TrustedKeyRegistry()
+	if err != nil {
+		return fmt.Errorf("load signing policy: %w", err)
+	}
+	maxAge, err := cfg.OfflineExportMaxAge()
+	if err != nil {
+		return fmt.Errorf("load offline export policy: %w", err)
+	}
+	signedExport, err := jira.VerifySignedOfflineExport(bundle.SourceEnvelope, registry, maxAge, now)
+	if err != nil {
+		return err
+	}
+	if signedExport.Evidence != bundle.SourceEvidence || !reflect.DeepEqual(signedExport.Export, bundle.TicketBaseline) {
+		return fmt.Errorf("task bundle source evidence does not match its signed export")
+	}
+	return nil
 }
 
 // StartHeadless creates the disposable worktree and starts an explicitly
@@ -386,11 +427,22 @@ func Preflight(request PreflightRequest) (PreflightResult, error) {
 	if err != nil {
 		return PreflightResult{}, err
 	}
-	baseline, err := jira.LoadOfflineExport(request.OfflineExportPath)
-	if err != nil {
-		return PreflightResult{}, err
+	if item.Source.Mode != "offline-export" {
+		return PreflightResult{}, fmt.Errorf("implementation preflight currently requires an offline-export source mode")
 	}
-	violations, err := validate.Evaluate(item, baseline, request.RepoRoot, "", "")
+	registry, err := cfg.TrustedKeyRegistry()
+	if err != nil {
+		return PreflightResult{}, fmt.Errorf("load signing policy: %w", err)
+	}
+	maxAge, err := cfg.OfflineExportMaxAge()
+	if err != nil {
+		return PreflightResult{}, fmt.Errorf("load offline export policy: %w", err)
+	}
+	signedExport, err := jira.LoadSignedOfflineExport(request.OfflineExportPath, registry, maxAge, time.Now().UTC())
+	if err != nil {
+		return PreflightResult{}, fmt.Errorf("load signed offline export: %w", err)
+	}
+	violations, err := validate.Evaluate(item, signedExport.Export, request.RepoRoot, "", "")
 	if err != nil {
 		return PreflightResult{}, err
 	}
@@ -408,7 +460,7 @@ func Preflight(request PreflightRequest) (PreflightResult, error) {
 		}
 		return PreflightResult{}, fmt.Errorf("preflight failed: %s", strings.Join(messages, "; "))
 	}
-	bundle, err := BuildTaskBundle(item, baseline, request.RepoRoot)
+	bundle, err := BuildTaskBundle(item, signedExport.Export, signedExport.Envelope, signedExport.Evidence, request.RepoRoot)
 	if err != nil {
 		return PreflightResult{}, err
 	}
@@ -416,7 +468,7 @@ func Preflight(request PreflightRequest) (PreflightResult, error) {
 	if err != nil {
 		return PreflightResult{}, err
 	}
-	run, err := NewRun(item, request.Adapter, bundleDigest)
+	run, err := NewRun(item, request.Adapter, bundleDigest, signedExport.Evidence)
 	if err != nil {
 		return PreflightResult{}, err
 	}

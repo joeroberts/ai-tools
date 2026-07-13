@@ -20,6 +20,22 @@ type OfflineExport struct {
 	Subtask    Issue  `json:"subtask"`
 }
 
+// OfflineExportEvidence records the policy-verified provenance of a governed
+// offline export without retaining its full signed envelope in the run ledger.
+type OfflineExportEvidence struct {
+	EnvelopeDigest            string `json:"envelope_digest"`
+	IssuerKeyID               string `json:"issuer_key_id"`
+	TrustedKeyRegistryVersion int    `json:"trusted_key_registry_version"`
+	CapturedAt                string `json:"captured_at"`
+	AppliedMaxAge             string `json:"applied_max_age"`
+}
+
+type SignedOfflineExport struct {
+	Export   OfflineExport
+	Envelope signature.Envelope
+	Evidence OfflineExportEvidence
+}
+
 type Issue struct {
 	Key                string `json:"key"`
 	URL                string `json:"url"`
@@ -53,44 +69,69 @@ func LoadOfflineExport(path string) (OfflineExport, error) {
 // LoadSignedOfflineExport loads a governed offline export. Raw exports are
 // intentionally not accepted here: governed runs require a configured,
 // unrevoked export-issuer key and an export within the policy age limit.
-func LoadSignedOfflineExport(path string, registry signature.Registry, maxAge time.Duration, now time.Time) (OfflineExport, error) {
+func LoadSignedOfflineExport(path string, registry signature.Registry, maxAge time.Duration, now time.Time) (SignedOfflineExport, error) {
 	if maxAge <= 0 {
-		return OfflineExport{}, fmt.Errorf("offline export maximum age must be positive")
+		return SignedOfflineExport{}, fmt.Errorf("offline export maximum age must be positive")
 	}
 	data, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
-		return OfflineExport{}, err
+		return SignedOfflineExport{}, err
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	var envelope signature.Envelope
 	if err := decoder.Decode(&envelope); err != nil {
-		return OfflineExport{}, fmt.Errorf("parse signed offline Jira export: %w", err)
+		return SignedOfflineExport{}, fmt.Errorf("parse signed offline Jira export: %w", err)
 	}
 	if err := requireEOF(decoder); err != nil {
-		return OfflineExport{}, fmt.Errorf("parse signed offline Jira export: %w", err)
+		return SignedOfflineExport{}, fmt.Errorf("parse signed offline Jira export: %w", err)
+	}
+	return VerifySignedOfflineExport(envelope, registry, maxAge, now)
+}
+
+// VerifySignedOfflineExport rechecks an in-memory signed envelope against the
+// current key registry and age policy before a governed dispatch.
+func VerifySignedOfflineExport(envelope signature.Envelope, registry signature.Registry, maxAge time.Duration, now time.Time) (SignedOfflineExport, error) {
+	if maxAge <= 0 {
+		return SignedOfflineExport{}, fmt.Errorf("offline export maximum age must be positive")
 	}
 	if err := registry.Verify(envelope, []string{"export-issuer"}, now); err != nil {
-		return OfflineExport{}, fmt.Errorf("verify signed offline Jira export: %w", err)
+		return SignedOfflineExport{}, fmt.Errorf("verify signed offline Jira export: %w", err)
 	}
 	var export OfflineExport
 	payloadDecoder := json.NewDecoder(bytes.NewReader(envelope.Payload))
 	payloadDecoder.DisallowUnknownFields()
 	if err := payloadDecoder.Decode(&export); err != nil {
-		return OfflineExport{}, fmt.Errorf("parse signed offline Jira export payload: %w", err)
+		return SignedOfflineExport{}, fmt.Errorf("parse signed offline Jira export payload: %w", err)
 	}
 	if err := requireEOF(payloadDecoder); err != nil {
-		return OfflineExport{}, fmt.Errorf("parse signed offline Jira export payload: %w", err)
+		return SignedOfflineExport{}, fmt.Errorf("parse signed offline Jira export payload: %w", err)
 	}
 	if err := validateOfflineExport(export); err != nil {
-		return OfflineExport{}, err
+		return SignedOfflineExport{}, err
 	}
 	capturedAt, _ := time.Parse(time.RFC3339, export.CapturedAt)
 	age := now.Sub(capturedAt)
 	if age < 0 || age > maxAge {
-		return OfflineExport{}, fmt.Errorf("signed offline Jira export is outside the policy age limit")
+		return SignedOfflineExport{}, fmt.Errorf("signed offline Jira export is outside the policy age limit")
 	}
-	return export, nil
+	envelopeDigest, err := digestEnvelope(envelope)
+	if err != nil {
+		return SignedOfflineExport{}, err
+	}
+	return SignedOfflineExport{Export: export, Envelope: envelope, Evidence: OfflineExportEvidence{EnvelopeDigest: envelopeDigest, IssuerKeyID: envelope.KeyID, TrustedKeyRegistryVersion: registry.Version, CapturedAt: export.CapturedAt, AppliedMaxAge: maxAge.String()}}, nil
+}
+
+func digestEnvelope(envelope signature.Envelope) (string, error) {
+	data, err := json.Marshal(envelope)
+	if err != nil {
+		return "", err
+	}
+	canonical, err := signature.Canonicalize(data)
+	if err != nil {
+		return "", err
+	}
+	return signature.Digest(canonical), nil
 }
 
 func requireEOF(decoder *json.Decoder) error {
@@ -118,5 +159,10 @@ func validateOfflineExport(export OfflineExport) error {
 
 func Digest(value string) string {
 	sum := sha256.Sum256([]byte(value))
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func DigestBytes(value []byte) string {
+	sum := sha256.Sum256(value)
 	return "sha256:" + hex.EncodeToString(sum[:])
 }

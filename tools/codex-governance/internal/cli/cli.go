@@ -458,12 +458,12 @@ func runValidateWorkItem(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "load offline export policy: %v\n", err)
 		return 2
 	}
-	export, err := jira.LoadSignedOfflineExport(*offlineExportPath, registry, maxAge, time.Now().UTC())
+	signedExport, err := jira.LoadSignedOfflineExport(*offlineExportPath, registry, maxAge, time.Now().UTC())
 	if err != nil {
 		fmt.Fprintf(stderr, "load signed offline export: %v\n", err)
 		return 2
 	}
-	violations, err := validate.Evaluate(item, export, *repoRoot, *baseSHA, *headSHA)
+	violations, err := validate.Evaluate(item, signedExport.Export, *repoRoot, *baseSHA, *headSHA)
 	if err != nil {
 		fmt.Fprintf(stderr, "validate work item: %v\n", err)
 		return 2
@@ -722,7 +722,7 @@ func runImplementation(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("implementation preflight", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	workItem := flags.String("work-item", "", "normalized work-item JSON")
-	offlineExport := flags.String("offline-export", "", "offline Jira export JSON")
+	offlineExport := flags.String("offline-export", "", "signed offline Jira export JSON")
 	adapter := flags.String("adapter", "", "execution adapter name")
 	bundleOutput := flags.String("bundle-output", "", "private task-bundle output path")
 	runOutput := flags.String("run-output", "", "private implementation-run output path")
@@ -776,6 +776,10 @@ func runImplementationStart(args []string, stdout, stderr io.Writer) int {
 	cfg, err := config.Load(filepath.Join(*repoRoot, "governance.yml"))
 	if err != nil || !cfg.AllowsAdapter(run.Adapter) {
 		fmt.Fprintln(stderr, "headless execution adapter is not allowed by governance config")
+		return 1
+	}
+	if err := implementation.VerifyDispatchReadiness(run, bundle, *bundlePath, cfg, time.Now().UTC()); err != nil {
+		fmt.Fprintf(stderr, "verify implementation source evidence: %v\n", err)
 		return 1
 	}
 	runtimeRoot, err := runtimeRoot(*runtimeRootPath)

@@ -43,13 +43,13 @@ An `implementation-run` is a versioned, immutable-at-start record containing:
 - command outcomes, diff SHA, commit SHA, agent task ID, and redacted summary;
 - remote-publish authorization, if granted, and resulting PR URL or identifier.
 
-For `offline-export` source mode, the run additionally records the signed export
-envelope, issuer-key identity and registry version, ticket URL/key, capture
-time, Jira revision/update time, content and export digests, and policy age
-limit. Governed runs accept only envelopes signed by a configured, unrevoked
-issuer key; unsigned exports are test fixtures only. The default maximum age is
-24 hours, configurable per repository. Preflight rejects expired, unverifiable,
-or revoked-issuer exports.
+For `offline-export` source mode, the private task bundle retains the signed
+export envelope. The run records its envelope digest, issuer-key identity and
+registry version, capture time, and applied policy age limit. Governed runs
+accept only envelopes signed by a configured, unrevoked issuer key; unsigned
+exports are test fixtures only. The default maximum age is 24 hours,
+configurable per repository. Preflight and adapter dispatch reject expired,
+unverifiable, revoked-issuer, or bundle-mismatched source evidence.
 
 The owner-only runtime ledger is structured and hash-linked. Each event records
 run and event IDs, UTC time, actor and role, CLI/schema version, lifecycle
