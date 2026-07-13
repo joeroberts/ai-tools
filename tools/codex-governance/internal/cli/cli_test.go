@@ -88,3 +88,60 @@ func TestRunUnknownCommand(t *testing.T) {
 		t.Fatal("Run() wrote no error output")
 	}
 }
+
+func TestRunJiraPlanGenerateDryRun(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"jira", "plan", "generate", "--prd", "prd.md", "--spec", "spec.md", "--roadmap", "roadmap.md", "--output", "plan.json", "--dry-run"}, &stdout, &stderr)
+	if code != 0 || !bytes.Contains(stdout.Bytes(), []byte("DRY RUN would dispatch hosted manager and local reviewer/verifier")) {
+		t.Fatalf("generate dry run = %d, stdout=%q, stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestRunJiraPlanGenerateVerboseDryRun(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"jira", "plan", "generate", "--prd", "prd.md", "--spec", "spec.md", "--roadmap", "roadmap.md", "--output", "plan.json", "--dry-run", "--verbose"}, &stdout, &stderr)
+	if code != 0 || !bytes.Contains(stdout.Bytes(), []byte("DRY RUN would dispatch hosted manager and local reviewer/verifier")) {
+		t.Fatalf("verbose generate dry run = %d, stderr=%q", code, stderr.String())
+	}
+}
+
+func TestRunJiraPlanCommandsRespectRemainingPhaseBoundaries(t *testing.T) {
+	for _, command := range [][]string{
+		{"jira", "plan", "approve", "--plan", "plan.json"},
+		{"jira", "plan", "create", "--plan", "plan.json"},
+	} {
+		var stderr bytes.Buffer
+		if code := Run(command, &bytes.Buffer{}, &stderr); code != 1 {
+			t.Fatalf("Run(%v) = %d, stderr=%q", command, code, stderr.String())
+		}
+		if !bytes.Contains(stderr.Bytes(), []byte("unavailable until Phase")) {
+			t.Fatalf("Run(%v) stderr=%q", command, stderr.String())
+		}
+	}
+}
+
+func TestRunJiraPlanValidateChecksCurrentSources(t *testing.T) {
+	plan := filepath.Join("..", "..", "testdata", "ticket-plans", "valid.json")
+	var stdout bytes.Buffer
+	if code := Run([]string{"jira", "plan", "validate", "--plan", plan, "--repo-root", t.TempDir()}, &stdout, &bytes.Buffer{}); code != 1 {
+		t.Fatalf("validate = %d, stdout=%q", code, stdout.String())
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte("prd source is unavailable")) {
+		t.Fatalf("validate stdout=%q", stdout.String())
+	}
+}
+
+func TestRunJiraPlanValidateValidFixture(t *testing.T) {
+	plan := filepath.Join("..", "..", "testdata", "ticket-plans", "valid", "plan.json")
+	root := filepath.Join("..", "..")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if code := Run([]string{"jira", "plan", "validate", "--plan", plan, "--repo-root", root}, &stdout, &stderr); code != 0 {
+		t.Fatalf("validate = %d, stdout=%q, stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte("PASS ticket plan is valid")) {
+		t.Fatalf("validate stdout=%q", stdout.String())
+	}
+}
