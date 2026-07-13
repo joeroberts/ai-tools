@@ -158,6 +158,52 @@ in the runtime ledger. Agent approval promotes a plan only to
 `ready-for-approval`; a stakeholder must explicitly approve it before Jira
 creation. Agents do not write Jira.
 
+### Implementation-Agent Orchestration
+
+The Go application is the governance control plane for implementation of one
+approved Jira implementation subtask. It uses an adapter-first execution model;
+headless Codex is the initial adapter, and a policy-approved local LLM may be
+selected for code execution or remediation after its benchmark gate passes. The
+application performs deterministic preflight, builds a versioned task bundle,
+dispatches and reconciles the agent, and records lifecycle evidence. It does
+not delegate policy decisions to the implementation agent.
+
+Each run uses a dedicated disposable Git worktree and may change only the
+primary subtask's approved paths and review budget. Its task bundle contains
+the normalized work item, fresh ticket baseline, allowed paths, required
+commands, relevant ADRs, and repository guidance. The agent cannot change
+ticket intent, work-item approval state, or acceptance criteria.
+
+The lifecycle is `preflight` -> `queued` -> `running` ->
+`implementation-complete` -> `review` -> `verification` -> `remediation` or
+`escalated` -> `ready-to-commit` -> `locally-committed` ->
+`ready-for-remote-approval` -> `pushed` -> `PR-created` -> `closed`.
+
+`escalated` is terminal until a human supplies a new approved action. The
+review and verification loop is limited to two normal cycles. Remediation must
+name the finding IDs it addresses and remain within approved paths; a third
+cycle requires explicit human approval and unused policy budget.
+
+The application records immutable local result references, commit and diff
+SHAs, command outcomes, adapter task IDs, and redacted summaries. After a host
+restart it reconciles an in-flight task and never silently re-dispatches it or
+duplicates edits. Open agents block closure unless an approved exception is
+recorded.
+
+Provider selection is a user preference constrained by policy, not an authority
+grant. The policy must allow the selected provider, model name and pinned ID,
+role, task type, task-bundle size, and concurrency. A local LLM uses the
+governed gateway and receives no direct Jira, Git push, cloud, secret, or
+arbitrary shell access. If the selected provider is unavailable or not approved
+for code edits, preflight fails without falling back or escalating models.
+
+Local commits are allowed only when the approved work item enables them and
+all required pre-commit gates pass. Push and pull-request creation require a
+separate, run-specific remote-publish authorization binding the work-item key,
+remote, branch, exact commit SHA, and expiry. That authorization cannot permit
+force-pushes, protected or default branch writes, merges, tags, releases, Jira
+writes, or unrelated repository actions.
+
 The manager coordinates work but cannot override policy checks, source drift,
 required CI failures, or human decision rights. A local runtime execution ledger
 outside the repository records work-item key, agent ID, role, inputs, result

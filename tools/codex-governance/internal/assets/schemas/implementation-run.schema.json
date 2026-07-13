@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/codex-governance/implementation-run.schema.json",
+  "title": "Implementation run",
+  "type": "object",
+  "required": ["format_version", "id", "work_item_key", "adapter", "state", "base_sha", "branch", "task_bundle_digest", "created_at", "updated_at", "attempts", "review_cycles", "task_id", "process_id", "result_ref", "commit_sha"],
+  "properties": {
+    "format_version": {"const": 1},
+    "id": {"type": "string", "pattern": "^run-[a-f0-9]{16}$"},
+    "work_item_key": {"type": "string", "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$"},
+    "adapter": {"type": "string", "minLength": 1},
+    "state": {"enum": ["preflight", "queued", "running", "implementation-complete", "review", "verification", "remediation", "ready-to-commit", "locally-committed", "ready-for-remote-approval", "pushed", "PR-created", "escalated", "closed"]},
+    "base_sha": {"type": "string", "pattern": "^[a-f0-9]{7,64}$"},
+    "branch": {"type": "string"},
+    "task_bundle_digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "updated_at": {"type": "string", "format": "date-time"},
+    "attempts": {"type": "integer", "minimum": 0},
+    "review_cycles": {"type": "integer", "minimum": 0},
+    "task_id": {"type": "string"},
+    "process_id": {"type": "integer", "minimum": 0},
+    "result_ref": {"type": "string"},
+    "commit_sha": {"type": "string", "pattern": "^[a-f0-9]{0,64}$"},
+    "pull_request_url": {"type": "string"}
+  },
+  "additionalProperties": false
+}

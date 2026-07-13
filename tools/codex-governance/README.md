@@ -124,6 +124,14 @@ The local runtime records agent closure under `~/.codex-governance-runtime/`.
 It can initialize an owner-only Ollama policy, but Phase 5 permits only
 benchmark-approved summary tasks; code-edit tasks remain disabled.
 
+The proposed implementation-agent extension is documented in
+[`docs/design/implementation-agent-prd.md`](docs/design/implementation-agent-prd.md),
+[`docs/design/implementation-agent-spec.md`](docs/design/implementation-agent-spec.md),
+and its companion roadmap. It is not implemented by the current CLI. It will
+use adapter-first orchestration with headless Codex as the first adapter. A
+user may select a local LLM only after its policy and code-edit benchmark gates
+pass. Push and pull-request creation require separate, run-specific approval.
+
 Release manifests are checked locally with `sync --check` or described with
 `sync --dry-run`. [releases/1.0.0-draft.json](releases/1.0.0-draft.json) is a
 local draft only: it is not published or adopted in `governance.yml`.

@@ -7,9 +7,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"codex-governance/internal/agentplan"
 	"codex-governance/internal/config"
+	"codex-governance/internal/implementation"
 	"codex-governance/internal/initializer"
 	"codex-governance/internal/jira"
 	"codex-governance/internal/ollama"
@@ -38,6 +41,20 @@ Usage:
   codex-governance runtime agent start|complete|fail|close --work-item KEY --agent-id ID --role ROLE [--result-ref REF]
   codex-governance runtime check --work-item KEY
   codex-governance runtime cache clear [--runtime-root PATH]
+  codex-governance implementation preflight --work-item PATH --offline-export PATH --adapter NAME --bundle-output PATH --run-output PATH [--repo-root PATH] [--runtime-root PATH]
+  codex-governance implementation start --run PATH --bundle PATH --approve [--repo-root PATH] [--runtime-root PATH] [--codex-bin PATH]
+  codex-governance implementation reconcile --run PATH
+  codex-governance implementation verify --run PATH --bundle PATH [--repo-root PATH]
+  codex-governance implementation review|verification --run PATH --assessment PATH
+  codex-governance implementation remediate --run PATH --assessment PATH --finding ID [--finding ID ...]
+  codex-governance implementation assess --role reviewer|verifier --model NAME --policy PATH --bundle PATH --worktree PATH --output PATH
+  codex-governance implementation status --run PATH [--format table|json]
+  codex-governance implementation metrics --run PATH
+  codex-governance implementation audit --run PATH --output PATH
+  codex-governance implementation commit --run PATH --worktree PATH --branch NAME --message TEXT --approve
+  codex-governance implementation authorize-publish --output PATH --worktree PATH --work-item KEY --remote NAME --branch NAME --sha SHA --operation push|create-pr --approver ID --expires-at RFC3339 --approve
+  codex-governance implementation push --run PATH --authorization PATH --worktree PATH --approve
+  codex-governance implementation create-pr --run PATH --authorization PATH --worktree PATH --title TEXT [--body TEXT] --approve
   codex-governance ollama policy init [--runtime-root PATH]
   codex-governance ollama run --model NAME --role ROLE --task-type TYPE --input PATH [--policy PATH]
 
@@ -70,6 +87,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 	if args[0] == "runtime" {
 		return runRuntime(args[1:], stdout, stderr)
+	}
+	if args[0] == "implementation" {
+		return runImplementation(args[1:], stdout, stderr)
 	}
 	if args[0] == "ollama" {
 		return runOllama(args[1:], stdout, stderr)
@@ -635,6 +655,526 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintln(stdout, "PASS agent event recorded")
 	return 0
 }
+
+func runImplementation(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || !oneOf(args[0], "preflight", "start", "reconcile", "verify", "review", "verification", "remediate", "assess", "status", "metrics", "audit", "commit", "authorize-publish", "push", "create-pr") {
+		fmt.Fprintln(stderr, "usage: codex-governance implementation preflight|start|reconcile|verify|review|verification|remediate|assess|status|metrics|audit|commit|authorize-publish|push|create-pr")
+		return 2
+	}
+	if args[0] == "start" {
+		return runImplementationStart(args[1:], stdout, stderr)
+	}
+	if args[0] == "reconcile" {
+		return runImplementationReconcile(args[1:], stdout, stderr)
+	}
+	if args[0] == "verify" {
+		return runImplementationVerify(args[1:], stdout, stderr)
+	}
+	if args[0] == "review" || args[0] == "verification" {
+		return runImplementationAssessment(args[0], args[1:], stdout, stderr)
+	}
+	if args[0] == "remediate" {
+		return runImplementationRemediate(args[1:], stdout, stderr)
+	}
+	if args[0] == "assess" {
+		return runImplementationAssess(args[1:], stdout, stderr)
+	}
+	if args[0] == "status" {
+		return runImplementationStatus(args[1:], stdout, stderr)
+	}
+	if args[0] == "metrics" {
+		return runImplementationMetrics(args[1:], stdout, stderr)
+	}
+	if args[0] == "audit" {
+		return runImplementationAudit(args[1:], stdout, stderr)
+	}
+	if args[0] == "commit" {
+		return runImplementationCommit(args[1:], stdout, stderr)
+	}
+	if args[0] == "authorize-publish" {
+		return runImplementationAuthorizePublish(args[1:], stdout, stderr)
+	}
+	if args[0] == "push" {
+		return runImplementationPush(args[1:], stdout, stderr)
+	}
+	if args[0] == "create-pr" {
+		return runImplementationCreatePR(args[1:], stdout, stderr)
+	}
+	flags := flag.NewFlagSet("implementation preflight", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	workItem := flags.String("work-item", "", "normalized work-item JSON")
+	offlineExport := flags.String("offline-export", "", "offline Jira export JSON")
+	adapter := flags.String("adapter", "", "execution adapter name")
+	bundleOutput := flags.String("bundle-output", "", "private task-bundle output path")
+	runOutput := flags.String("run-output", "", "private implementation-run output path")
+	repoRoot := flags.String("repo-root", ".", "repository root")
+	runtimeRootPath := flags.String("runtime-root", "", "runtime root")
+	if err := flags.Parse(args[1:]); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	if *workItem == "" || *offlineExport == "" || *adapter == "" || *bundleOutput == "" || *runOutput == "" || flags.NArg() != 0 {
+		return 2
+	}
+	runtimeRoot, err := runtimeRoot(*runtimeRootPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "resolve runtime root: %v\n", err)
+		return 2
+	}
+	result, err := implementation.Preflight(implementation.PreflightRequest{WorkItemPath: *workItem, OfflineExportPath: *offlineExport, RepoRoot: *repoRoot, RuntimeRoot: runtimeRoot, Adapter: *adapter, BundlePath: *bundleOutput, RunPath: *runOutput})
+	if err != nil {
+		fmt.Fprintf(stderr, "implementation preflight: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "PASS implementation preflight %s %s\n", result.Run.ID, result.BundlePath)
+	return 0
+}
+
+func runImplementationStart(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("implementation start", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	runPath := flags.String("run", "", "implementation-run JSON")
+	bundlePath := flags.String("bundle", "", "task-bundle JSON")
+	approve := flags.Bool("approve", false, "explicitly authorize local agent execution")
+	repoRoot := flags.String("repo-root", ".", "repository root")
+	runtimeRootPath := flags.String("runtime-root", "", "runtime root")
+	codexBin := flags.String("codex-bin", "codex", "headless Codex binary")
+	if err := flags.Parse(args); err != nil || !*approve || *runPath == "" || *bundlePath == "" || flags.NArg() != 0 {
+		return 2
+	}
+	run, err := implementation.LoadRun(*runPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load implementation run: %v\n", err)
+		return 2
+	}
+	bundle, err := implementation.LoadTaskBundle(*bundlePath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load task bundle: %v\n", err)
+		return 2
+	}
+	cfg, err := config.Load(filepath.Join(*repoRoot, "governance.yml"))
+	if err != nil || !cfg.AllowsAdapter(run.Adapter) {
+		fmt.Fprintln(stderr, "headless execution adapter is not allowed by governance config")
+		return 1
+	}
+	runtimeRoot, err := runtimeRoot(*runtimeRootPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "resolve runtime root: %v\n", err)
+		return 2
+	}
+	if err := implementation.StartHeadless(&run, bundle, *repoRoot, runtimeRoot, *codexBin); err != nil {
+		fmt.Fprintf(stderr, "start implementation: %v\n", err)
+		return 1
+	}
+	if err := implementation.SaveRun(*runPath, run); err != nil {
+		fmt.Fprintf(stderr, "save implementation run: %v\n", err)
+		return 2
+	}
+	fmt.Fprintf(stdout, "PASS implementation started %s\n", run.TaskID)
+	return 0
+}
+
+func runImplementationReconcile(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("implementation reconcile", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	runPath := flags.String("run", "", "implementation-run JSON")
+	if err := flags.Parse(args); err != nil || *runPath == "" || flags.NArg() != 0 {
+		return 2
+	}
+	run, err := implementation.LoadRun(*runPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load implementation run: %v\n", err)
+		return 2
+	}
+	if err := implementation.ReconcilePersisted(&run); err != nil {
+		fmt.Fprintf(stderr, "reconcile implementation: %v\n", err)
+		return 1
+	}
+	if err := implementation.SaveRun(*runPath, run); err != nil {
+		fmt.Fprintf(stderr, "save implementation run: %v\n", err)
+		return 2
+	}
+	fmt.Fprintf(stdout, "PASS implementation state %s\n", run.State)
+	return 0
+}
+
+func runImplementationVerify(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("implementation verify", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	runPath := flags.String("run", "", "implementation-run JSON")
+	bundlePath := flags.String("bundle", "", "task-bundle JSON")
+	repoRoot := flags.String("repo-root", ".", "disposable worktree root")
+	if err := flags.Parse(args); err != nil || *runPath == "" || *bundlePath == "" || flags.NArg() != 0 {
+		return 2
+	}
+	run, err := implementation.LoadRun(*runPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load implementation run: %v\n", err)
+		return 2
+	}
+	if run.State != implementation.StateImplementationComplete {
+		fmt.Fprintln(stderr, "implementation run is not ready for verification")
+		return 1
+	}
+	bundle, err := implementation.LoadTaskBundle(*bundlePath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load task bundle: %v\n", err)
+		return 2
+	}
+	violations, err := validate.EvaluateWorking(bundle.WorkItem, *repoRoot)
+	if err != nil {
+		fmt.Fprintf(stderr, "verify implementation working tree: %v\n", err)
+		return 1
+	}
+	if len(violations) != 0 {
+		for _, violation := range violations {
+			fmt.Fprintf(stdout, "FAIL %s: %s\n", violation.Code, violation.Message)
+		}
+		return 1
+	}
+	if err := run.Transition(implementation.StateReview); err != nil {
+		fmt.Fprintf(stderr, "advance implementation run: %v\n", err)
+		return 1
+	}
+	if err := implementation.SaveRun(*runPath, run); err != nil {
+		fmt.Fprintf(stderr, "save implementation run: %v\n", err)
+		return 2
+	}
+	fmt.Fprintln(stdout, "PASS implementation working tree is within scope")
+	return 0
+}
+
+func runImplementationAssessment(kind string, args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("implementation "+kind, flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	runPath := flags.String("run", "", "implementation-run JSON")
+	assessmentPath := flags.String("assessment", "", "owner-only assessment JSON")
+	if err := flags.Parse(args); err != nil || *runPath == "" || *assessmentPath == "" || flags.NArg() != 0 {
+		return 2
+	}
+	run, err := implementation.LoadRun(*runPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load implementation run: %v\n", err)
+		return 2
+	}
+	assessment, err := implementation.LoadAssessment(*assessmentPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load assessment: %v\n", err)
+		return 2
+	}
+	if kind == "review" {
+		err = implementation.ApplyReview(&run, assessment)
+	} else {
+		err = implementation.ApplyVerification(&run, assessment)
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "apply %s: %v\n", kind, err)
+		return 1
+	}
+	if err := implementation.SaveRun(*runPath, run); err != nil {
+		fmt.Fprintf(stderr, "save implementation run: %v\n", err)
+		return 2
+	}
+	fmt.Fprintf(stdout, "PASS implementation state %s\n", run.State)
+	return 0
+}
+
+func runImplementationRemediate(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("implementation remediate", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	runPath := flags.String("run", "", "implementation-run JSON")
+	assessmentPath := flags.String("assessment", "", "owner-only assessment JSON")
+	var findingIDs multiString
+	flags.Var(&findingIDs, "finding", "actionable finding ID to remediate (repeatable)")
+	if err := flags.Parse(args); err != nil || *runPath == "" || *assessmentPath == "" || len(findingIDs) == 0 || flags.NArg() != 0 {
+		return 2
+	}
+	run, err := implementation.LoadRun(*runPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load implementation run: %v\n", err)
+		return 2
+	}
+	assessment, err := implementation.LoadAssessment(*assessmentPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load assessment: %v\n", err)
+		return 2
+	}
+	if err := implementation.ApplyRemediation(&run, assessment, findingIDs); err != nil {
+		fmt.Fprintf(stderr, "apply remediation: %v\n", err)
+		return 1
+	}
+	if err := implementation.SaveRun(*runPath, run); err != nil {
+		fmt.Fprintf(stderr, "save implementation run: %v\n", err)
+		return 2
+	}
+	fmt.Fprintln(stdout, "PASS remediation is bound to named findings")
+	return 0
+}
+
+func runImplementationAssess(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("implementation assess", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	role := flags.String("role", "", "reviewer or verifier")
+	model := flags.String("model", "", "pinned policy model name")
+	policyPath := flags.String("policy", "", "owner-only Ollama policy")
+	bundlePath := flags.String("bundle", "", "task-bundle JSON")
+	worktreePath := flags.String("worktree", "", "disposable worktree")
+	outputPath := flags.String("output", "", "owner-only assessment JSON")
+	if err := flags.Parse(args); err != nil || *role == "" || *model == "" || *policyPath == "" || *bundlePath == "" || *worktreePath == "" || *outputPath == "" || flags.NArg() != 0 {
+		return 2
+	}
+	policy, err := ollama.LoadPolicy(*policyPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load Ollama policy: %v\n", err)
+		return 2
+	}
+	bundle, err := implementation.LoadTaskBundle(*bundlePath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load task bundle: %v\n", err)
+		return 2
+	}
+	assessment, err := implementation.GenerateAssessment(implementation.AssessmentRequest{Role: *role, Model: *model, Policy: policy, Bundle: bundle, Worktree: *worktreePath, OutputPath: *outputPath})
+	if err != nil {
+		fmt.Fprintf(stderr, "generate assessment: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "PASS %s assessment recorded with %d findings\n", *role, len(assessment.Findings))
+	return 0
+}
+
+func runImplementationStatus(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("implementation status", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	runPath := flags.String("run", "", "implementation-run JSON")
+	format := flags.String("format", "table", "table or json")
+	if err := flags.Parse(args); err != nil || *runPath == "" || flags.NArg() != 0 {
+		return 2
+	}
+	run, err := implementation.LoadRun(*runPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load implementation run: %v\n", err)
+		return 2
+	}
+	if *format == "json" {
+		data, _ := json.MarshalIndent(run, "", "  ")
+		fmt.Fprintln(stdout, string(data))
+		return 0
+	}
+	if *format != "table" {
+		fmt.Fprintln(stderr, "status format must be table or json")
+		return 2
+	}
+	fmt.Fprintf(stdout, "RUN        STATE        WORK ITEM  ADAPTER\n%s  %-11s  %-9s  %s\n", run.ID, run.State, run.WorkItemKey, run.Adapter)
+	return 0
+}
+
+func runImplementationMetrics(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("implementation metrics", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	runPath := flags.String("run", "", "implementation-run JSON")
+	if err := flags.Parse(args); err != nil || *runPath == "" || flags.NArg() != 0 {
+		return 2
+	}
+	run, err := implementation.LoadRun(*runPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load implementation run: %v\n", err)
+		return 2
+	}
+	data, err := json.MarshalIndent(implementation.RunMetrics(run, time.Now().UTC()), "", "  ")
+	if err != nil {
+		fmt.Fprintf(stderr, "encode implementation metrics: %v\n", err)
+		return 2
+	}
+	fmt.Fprintln(stdout, string(data))
+	return 0
+}
+
+func runImplementationAudit(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("implementation audit", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	runPath := flags.String("run", "", "implementation-run JSON")
+	outputPath := flags.String("output", "", "owner-only audit JSON")
+	if err := flags.Parse(args); err != nil || *runPath == "" || *outputPath == "" || flags.NArg() != 0 {
+		return 2
+	}
+	run, err := implementation.LoadRun(*runPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load implementation run: %v\n", err)
+		return 2
+	}
+	if err := implementation.ExportAudit(*outputPath, run); err != nil {
+		fmt.Fprintf(stderr, "export implementation audit: %v\n", err)
+		return 1
+	}
+	fmt.Fprintln(stdout, "PASS implementation audit exported")
+	return 0
+}
+
+func runImplementationCommit(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("implementation commit", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	runPath := flags.String("run", "", "implementation-run JSON")
+	worktreePath := flags.String("worktree", "", "disposable worktree")
+	branch := flags.String("branch", "", "new codex/* branch")
+	message := flags.String("message", "", "local commit message")
+	approve := flags.Bool("approve", false, "explicitly authorize local commit")
+	if err := flags.Parse(args); err != nil || !*approve || *runPath == "" || *worktreePath == "" || *branch == "" || *message == "" || flags.NArg() != 0 {
+		return 2
+	}
+	run, err := implementation.LoadRun(*runPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load implementation run: %v\n", err)
+		return 2
+	}
+	if err := implementation.Commit(&run, *worktreePath, *branch, *message); err != nil {
+		fmt.Fprintf(stderr, "create local commit: %v\n", err)
+		return 1
+	}
+	if err := implementation.SaveRun(*runPath, run); err != nil {
+		fmt.Fprintf(stderr, "save implementation run: %v\n", err)
+		return 2
+	}
+	fmt.Fprintf(stdout, "PASS local commit %s\n", run.CommitSHA)
+	return 0
+}
+
+func runImplementationAuthorizePublish(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("implementation authorize-publish", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	output := flags.String("output", "", "owner-only authorization JSON")
+	worktreePath := flags.String("worktree", "", "disposable worktree containing the approved remote")
+	workItem := flags.String("work-item", "", "work item key")
+	remote := flags.String("remote", "", "approved remote name")
+	branch := flags.String("branch", "", "approved codex/* branch")
+	sha := flags.String("sha", "", "exact local commit SHA")
+	approver := flags.String("approver", "", "human approver ID")
+	expiresAt := flags.String("expires-at", "", "RFC3339 expiration")
+	approve := flags.Bool("approve", false, "explicitly create this one-use authorization")
+	operation := flags.String("operation", "", "exactly one of push or create-pr")
+	if err := flags.Parse(args); err != nil || !*approve || *output == "" || *worktreePath == "" || *workItem == "" || *remote == "" || *branch == "" || *sha == "" || *approver == "" || *expiresAt == "" || *operation == "" || flags.NArg() != 0 {
+		return 2
+	}
+	expires, err := time.Parse(time.RFC3339, *expiresAt)
+	if err != nil {
+		fmt.Fprintln(stderr, "expires-at must be RFC3339")
+		return 2
+	}
+	remoteURL, err := implementation.RemoteURL(*worktreePath, *remote)
+	if err != nil {
+		fmt.Fprintf(stderr, "read approved remote: %v\n", err)
+		return 1
+	}
+	auth := implementation.RemoteAuthorization{FormatVersion: implementation.FormatVersion, WorkItemKey: *workItem, Remote: *remote, RemoteFingerprint: implementation.RemoteFingerprint(remoteURL), Branch: *branch, CommitSHA: *sha, Operation: *operation, Approver: *approver, ExpiresAt: expires}
+	if err := implementation.SaveAuthorization(*output, auth); err != nil {
+		fmt.Fprintf(stderr, "save authorization: %v\n", err)
+		return 1
+	}
+	fmt.Fprintln(stdout, "PASS remote publication authorization recorded")
+	return 0
+}
+
+func runImplementationPush(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("implementation push", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	runPath := flags.String("run", "", "implementation-run JSON")
+	authorizationPath := flags.String("authorization", "", "one-use remote publication authorization JSON")
+	worktreePath := flags.String("worktree", "", "disposable worktree")
+	approve := flags.Bool("approve", false, "explicitly execute this already authorized push")
+	if err := flags.Parse(args); err != nil || !*approve || *runPath == "" || *authorizationPath == "" || *worktreePath == "" || flags.NArg() != 0 {
+		return 2
+	}
+	run, err := implementation.LoadRun(*runPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load implementation run: %v\n", err)
+		return 2
+	}
+	authorization, err := implementation.LoadAuthorization(*authorizationPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load remote authorization: %v\n", err)
+		return 2
+	}
+	remoteURL, err := implementation.RemoteURL(*worktreePath, authorization.Remote)
+	if err != nil {
+		fmt.Fprintf(stderr, "read approved remote: %v\n", err)
+		return 1
+	}
+	if err := implementation.PreparePush(&run, authorization, remoteURL); err != nil {
+		fmt.Fprintf(stderr, "validate remote publication: %v\n", err)
+		return 1
+	}
+	if err := implementation.SaveRun(*runPath, run); err != nil {
+		fmt.Fprintf(stderr, "persist pre-push state: %v\n", err)
+		return 2
+	}
+	if err := implementation.ConsumeAuthorization(*authorizationPath, authorization); err != nil {
+		fmt.Fprintf(stderr, "consume remote authorization: %v\n", err)
+		return 1
+	}
+	if err := implementation.Push(&run, authorization, *worktreePath); err != nil {
+		fmt.Fprintf(stderr, "push implementation branch: %v\n", err)
+		return 1
+	}
+	if err := implementation.SaveRun(*runPath, run); err != nil {
+		fmt.Fprintf(stderr, "persist pushed state: %v\n", err)
+		return 2
+	}
+	fmt.Fprintf(stdout, "PASS pushed %s\n", run.CommitSHA)
+	return 0
+}
+
+func runImplementationCreatePR(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("implementation create-pr", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	runPath := flags.String("run", "", "implementation-run JSON")
+	authorizationPath := flags.String("authorization", "", "one-use remote publication authorization JSON")
+	worktreePath := flags.String("worktree", "", "disposable worktree")
+	title := flags.String("title", "", "pull request title")
+	body := flags.String("body", "", "pull request body")
+	approve := flags.Bool("approve", false, "explicitly execute this already authorized pull request creation")
+	if err := flags.Parse(args); err != nil || !*approve || *runPath == "" || *authorizationPath == "" || *worktreePath == "" || *title == "" || flags.NArg() != 0 {
+		return 2
+	}
+	run, err := implementation.LoadRun(*runPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load implementation run: %v\n", err)
+		return 2
+	}
+	authorization, err := implementation.LoadAuthorization(*authorizationPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load remote authorization: %v\n", err)
+		return 2
+	}
+	remoteURL, err := implementation.RemoteURL(*worktreePath, authorization.Remote)
+	if err != nil {
+		fmt.Fprintf(stderr, "read approved remote: %v\n", err)
+		return 1
+	}
+	if err := implementation.ValidatePublication(run, authorization, "create-pr", remoteURL); err != nil {
+		fmt.Fprintf(stderr, "validate pull request authorization: %v\n", err)
+		return 1
+	}
+	if err := implementation.ConsumeAuthorization(*authorizationPath, authorization); err != nil {
+		fmt.Fprintf(stderr, "consume pull request authorization: %v\n", err)
+		return 1
+	}
+	if err := implementation.CreatePullRequest(&run, authorization, *worktreePath, *title, *body); err != nil {
+		fmt.Fprintf(stderr, "create pull request: %v\n", err)
+		return 1
+	}
+	if err := implementation.SaveRun(*runPath, run); err != nil {
+		fmt.Fprintf(stderr, "persist pull request state: %v\n", err)
+		return 2
+	}
+	fmt.Fprintf(stdout, "PASS pull request created %s\n", run.PullRequestURL)
+	return 0
+}
+
+type multiString []string
+
+func (values *multiString) String() string         { return strings.Join(*values, ",") }
+func (values *multiString) Set(value string) error { *values = append(*values, value); return nil }
 
 func runOllama(args []string, stdout, stderr io.Writer) int {
 	if len(args) >= 2 && args[0] == "policy" && args[1] == "init" {

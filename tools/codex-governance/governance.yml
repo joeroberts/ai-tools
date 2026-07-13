@@ -19,3 +19,6 @@ upstream:
   release: ""
   source_commit: ""
   format_version: 0
+implementation:
+  allowed_adapters: []
+  local_code_edit_enabled: false

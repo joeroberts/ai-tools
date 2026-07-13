@@ -102,6 +102,22 @@ Define manager, ticket analyst, implementer, reviewer, verifier, and
 remediation editor roles. Each directive specifies inputs, permitted actions,
 scope, expected structured output, terminal state, and closure criteria.
 
+Implementation orchestration is adapter-first, with headless Codex as the
+initial adapter. Users may select a local LLM for code execution or remediation
+only after its policy entry and benchmark gate approve that role and task type.
+One approved implementation subtask runs in one dedicated disposable Git
+worktree. A versioned task bundle supplies the normalized work item, fresh
+ticket baseline, allowed paths, commands, ADRs, and repository guidance. The
+governance application owns preflight, lifecycle evidence, reconciliation, and
+deterministic post-run checks.
+
+Local commits are permitted only when enabled by the approved work item and
+pre-commit gates pass. Pushing the exact resulting commit to a non-protected
+branch and creating its PR require a separate run-specific human authorization.
+That authorization is bounded to the work item, remote, branch, commit SHA,
+and expiry; it never permits force-pushes, merges, releases, tags, Jira writes,
+or unrelated remote actions.
+
 The manager coordinates but cannot override policy checks, ticket drift,
 required CI failures, or human decision rights. It must persist/link each
 agent result, verify completion criteria, close the agent immediately, and

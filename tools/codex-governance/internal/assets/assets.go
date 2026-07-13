@@ -7,6 +7,11 @@ import "embed"
 //go:embed schemas/jira-work-item.schema.json
 var JiraWorkItemSchema []byte
 
+// ImplementationRunSchema is the persisted dry-run execution contract.
+//
+//go:embed schemas/implementation-run.schema.json
+var ImplementationRunSchema []byte
+
 // Templates contains the shared files written by the init command.
 //
 //go:embed templates/*
