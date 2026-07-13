@@ -121,8 +121,9 @@ go run ./cmd/codex-governance roadmap check \
   --roadmap docs/roadmaps/go-cli-migration.yaml
 ```
 
-Phase 3 supports read-only validation from a normalized work item and an
-offline Jira export:
+Phase 3 supports read-only validation from a normalized work item and a signed
+offline Jira export. The export must be signed by an unrevoked configured
+`export-issuer` key and remain within `signing.offline_export_max_age`:
 
 ```bash
 codex-governance validate-work-item \
@@ -138,10 +139,14 @@ benchmark-approved summary tasks; code-edit tasks remain disabled.
 The proposed implementation-agent extension is documented in
 [`docs/design/implementation-agent-prd.md`](docs/design/implementation-agent-prd.md),
 [`docs/design/implementation-agent-spec.md`](docs/design/implementation-agent-spec.md),
-and its companion roadmap. It is not implemented by the current CLI. It will
-use adapter-first orchestration with headless Codex as the first adapter. A
+and its companion roadmap. It is not complete in the current CLI. It will use
+adapter-first orchestration with headless Codex as the first adapter. A
 user may select a local LLM only after its policy and code-edit benchmark gates
-pass. Push and pull-request creation require separate, run-specific approval.
+pass. Its current preflight foundation requires a signed, policy-fresh offline
+export; immediately before adapter dispatch it rechecks the current signing
+policy and bundle digest. The private task bundle retains the envelope, while
+the run records its provenance. Push and pull-request creation require
+separate, run-specific approval.
 
 Release manifests are checked locally with `sync --check` or described with
 `sync --dry-run`. [releases/1.0.0-draft.json](releases/1.0.0-draft.json) is a

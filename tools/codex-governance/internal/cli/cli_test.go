@@ -52,6 +52,24 @@ func TestRunValidateHelp(t *testing.T) {
 	}
 }
 
+func TestRunValidateWorkItemRejectsUnsignedExport(t *testing.T) {
+	root := t.TempDir()
+	if code := Run([]string{"init", "--repo-root", root}, &bytes.Buffer{}, &bytes.Buffer{}); code != 0 {
+		t.Fatalf("init returned %d", code)
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{
+		"validate-work-item",
+		"--work-item", filepath.Join("..", "..", "testdata", "work-items", "valid.json"),
+		"--offline-export", filepath.Join("..", "..", "testdata", "jira-exports", "valid.json"),
+		"--repo-root", root,
+	}, &stdout, &stderr)
+	if code != 2 || !strings.Contains(stderr.String(), "load signed offline export") {
+		t.Fatalf("validate unsigned export = %d, stdout=%q, stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
 func TestRunRoadmapStatus(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

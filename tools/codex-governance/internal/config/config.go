@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"time"
 
 	"codex-governance/internal/signature"
 
@@ -59,8 +60,9 @@ type Implementation struct {
 // Signing configures the repository's trusted public keys. An omitted section
 // is deny-by-default: no signed governance record is trusted.
 type Signing struct {
-	FormatVersion int          `yaml:"format_version"`
-	TrustedKeys   []TrustedKey `yaml:"trusted_keys"`
+	FormatVersion       int          `yaml:"format_version"`
+	TrustedKeys         []TrustedKey `yaml:"trusted_keys"`
+	OfflineExportMaxAge string       `yaml:"offline_export_max_age"`
 }
 
 type TrustedKey struct {
@@ -129,6 +131,9 @@ func (c Config) Validate() error {
 	if c.Signing.FormatVersion != signature.FormatVersion {
 		return fmt.Errorf("unsupported signing.format_version %d", c.Signing.FormatVersion)
 	}
+	if _, err := c.OfflineExportMaxAge(); err != nil {
+		return err
+	}
 	keys := make([]signature.TrustedKey, 0, len(c.Signing.TrustedKeys))
 	for _, key := range c.Signing.TrustedKeys {
 		keys = append(keys, signature.TrustedKey{KeyID: key.KeyID, Role: key.Role, Algorithm: key.Algorithm, PublicKey: key.PublicKey})
@@ -160,4 +165,18 @@ func (c Config) TrustedKeyRegistry() (signature.Registry, error) {
 		keys = append(keys, signature.TrustedKey{KeyID: key.KeyID, Role: key.Role, Algorithm: key.Algorithm, PublicKey: key.PublicKey})
 	}
 	return signature.NewRegistry(version, keys)
+}
+
+// OfflineExportMaxAge returns the maximum permitted age for a signed offline
+// Jira export. The default is 24 hours when no repository-specific value is
+// configured.
+func (c Config) OfflineExportMaxAge() (time.Duration, error) {
+	if c.Signing.OfflineExportMaxAge == "" {
+		return 24 * time.Hour, nil
+	}
+	age, err := time.ParseDuration(c.Signing.OfflineExportMaxAge)
+	if err != nil || age <= 0 {
+		return 0, fmt.Errorf("signing.offline_export_max_age must be a positive duration")
+	}
+	return age, nil
 }

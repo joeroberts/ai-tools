@@ -27,7 +27,8 @@ type Item struct {
 }
 
 type Source struct {
-	Provider                        string `json:"provider"`
+	Mode                            string `json:"mode"`
+	Provider                        string `json:"provider,omitempty"`
 	StoryKey                        string `json:"story_key"`
 	StoryURL                        string `json:"story_url"`
 	SubtaskKey                      string `json:"subtask_key"`
@@ -113,6 +114,12 @@ func Load(path string) (Item, error) {
 	if err := decoder.Decode(&item); err != nil {
 		return Item{}, fmt.Errorf("parse work item: %w", err)
 	}
+	if item.Source.Mode == "" && item.Source.Provider != "" {
+		item.Source.Mode = legacySourceMode(item.Source.Provider)
+	}
+	if item.Source.Provider != "" && item.Source.Mode != legacySourceMode(item.Source.Provider) {
+		return Item{}, fmt.Errorf("parse work item: source.provider conflicts with source.mode")
+	}
 	return item, nil
 }
 
@@ -127,7 +134,7 @@ func (i Item) Validate() []string {
 	if !oneOf(i.GovernanceStatus, "ready", "in-implementation", "pending-review", "pending-verification", "source-drift-blocked", "blocked", "closed") {
 		issues = append(issues, "governance_status is invalid")
 	}
-	if !oneOf(i.Source.Provider, "jira", "offline-export") || i.Source.StoryKey == "" || i.Source.SubtaskKey == "" || i.Source.StoryURL == "" || i.Source.SubtaskURL == "" {
+	if !oneOf(i.Source.Mode, "live-jira", "offline-export") || i.Source.StoryKey == "" || i.Source.SubtaskKey == "" || i.Source.StoryURL == "" || i.Source.SubtaskURL == "" {
 		issues = append(issues, "source identity is incomplete")
 	}
 	for _, value := range []string{i.Source.CapturedAt, i.Source.StoryUpdatedAt, i.Source.SubtaskUpdatedAt} {
@@ -195,4 +202,15 @@ func oneOf(value string, values ...string) bool {
 		}
 	}
 	return false
+}
+
+func legacySourceMode(provider string) string {
+	switch provider {
+	case "jira":
+		return "live-jira"
+	case "offline-export":
+		return "offline-export"
+	default:
+		return ""
+	}
 }

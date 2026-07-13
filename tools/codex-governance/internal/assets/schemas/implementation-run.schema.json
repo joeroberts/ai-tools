@@ -21,7 +21,19 @@
     "process_id": {"type": "integer", "minimum": 0},
     "result_ref": {"type": "string"},
     "commit_sha": {"type": "string", "pattern": "^[a-f0-9]{0,64}$"},
-    "pull_request_url": {"type": "string"}
+    "pull_request_url": {"type": "string"},
+    "source_evidence": {
+      "type": "object",
+      "required": ["envelope_digest", "issuer_key_id", "trusted_key_registry_version", "captured_at", "applied_max_age"],
+      "properties": {
+        "envelope_digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+        "issuer_key_id": {"type": "string", "minLength": 1},
+        "trusted_key_registry_version": {"type": "integer", "minimum": 1},
+        "captured_at": {"type": "string", "format": "date-time"},
+        "applied_max_age": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    }
   },
   "additionalProperties": false
 }
