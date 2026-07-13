@@ -34,8 +34,16 @@ phases:
       - go run ./cmd/codex-governance roadmap check --roadmap docs/roadmaps/ticket-planning-and-jira-creation.yaml
   - id: 4
     name: Governed Jira Publication
-    status: pending-approval
-    evidence: []
+    status: complete
+    approved_by: user
+    completed_at: 2026-07-13
+    evidence:
+      - make test
+      - make vet
+      - make build
+      - git diff --check
+      - internal/cli TestRunJiraPlanCreateDryRunUsesApprovedWorkflowWithoutWritingRecord
+      - internal/jira TestCreatePlanPostsStoryAndSubtasks
   - id: 5
     name: End-To-End Verification And CI
     status: pending-approval

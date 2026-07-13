@@ -14,15 +14,15 @@ type CreateClient struct {
 	BaseURL, Email, Token string
 	HTTPClient            *http.Client
 }
-type CreatedIssue struct{ Key, URL string }
-
-const phase4PendingMessage = "Jira plan creation is unavailable until Phase 4 is approved"
-
-func (c CreateClient) CreatePlan(project string, plan ticketplan.Plan) (CreatedIssue, []CreatedIssue, error) {
-	return CreatedIssue{}, nil, fmt.Errorf("%s", phase4PendingMessage)
+type CreatedIssue struct {
+	Key string `json:"key"`
+	URL string `json:"url"`
 }
 
-// createPlanAfterPhase4Approval is reserved for the Phase 4 workflow gate.
+func (c CreateClient) CreatePlan(project string, plan ticketplan.Plan) (CreatedIssue, []CreatedIssue, error) {
+	return c.createPlanAfterPhase4Approval(project, plan)
+}
+
 func (c CreateClient) createPlanAfterPhase4Approval(project string, plan ticketplan.Plan) (CreatedIssue, []CreatedIssue, error) {
 	story, err := c.create(project, "Story", plan.Story.Summary, plan.Story.Description, "")
 	if err != nil {

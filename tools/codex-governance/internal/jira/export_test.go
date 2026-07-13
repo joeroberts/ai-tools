@@ -1,7 +1,9 @@
 package jira
 
 import (
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 
@@ -18,18 +20,33 @@ func TestLoadOfflineExport(t *testing.T) {
 	}
 }
 
-func TestCreatePlanIsUnavailableBeforePhase4WithoutSendingRequest(t *testing.T) {
-	called := false
-	client := CreateClient{HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-		called = true
-		return nil, nil
-	})}}
-	_, _, err := client.CreatePlan("CG", ticketplan.Plan{})
-	if err == nil || err.Error() != phase4PendingMessage {
+func TestCreatePlanPostsStoryAndSubtasks(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		requests++
+		if request.Method != http.MethodPost || request.URL.Path != "/rest/api/3/issue" {
+			t.Fatalf("request = %s %s", request.Method, request.URL.Path)
+		}
+		if username, password, ok := request.BasicAuth(); !ok || username != "owner@example.test" || password != "test-token" {
+			t.Fatalf("basic auth = %q %q %t", username, password, ok)
+		}
+		_, _ = io.ReadAll(request.Body)
+		response.Header().Set("Content-Type", "application/json")
+		if requests == 1 {
+			_, _ = response.Write([]byte(`{"key":"CG-1","self":"ignored"}`))
+			return
+		}
+		_, _ = response.Write([]byte(`{"key":"CG-2","self":"ignored"}`))
+	}))
+	defer server.Close()
+
+	plan := ticketplan.Plan{Story: ticketplan.Story{Summary: "Story", Description: "Story description"}, Subtasks: []ticketplan.Subtask{{Summary: "Subtask", Scope: "bounded", NonGoals: []string{"none"}, AcceptanceCriteria: []string{"done"}, ValidationPlan: []string{"test"}, ADR: "No ADR needed: follows current design"}}}
+	story, subtasks, err := (CreateClient{BaseURL: server.URL, Email: "owner@example.test", Token: "test-token"}).CreatePlan("CG", plan)
+	if err != nil {
 		t.Fatalf("CreatePlan() error = %v", err)
 	}
-	if called {
-		t.Fatal("CreatePlan sent an HTTP request before Phase 4 approval")
+	if requests != 2 || story.Key != "CG-1" || len(subtasks) != 1 || subtasks[0].Key != "CG-2" {
+		t.Fatalf("CreatePlan() = %#v, %#v; requests=%d", story, subtasks, requests)
 	}
 }
 

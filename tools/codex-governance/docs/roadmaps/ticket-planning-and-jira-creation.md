@@ -31,7 +31,7 @@ artifacts, retry limits, approval, escalation, and Jira publication.
    - Add explicit plan approval, two-cycle remediation, redacted findings, and
      stakeholder escalation artifacts.
 
-4. **Governed Jira Publication** - pending approval
+4. **Governed Jira Publication** - complete 2026-07-13
    - Require approved workflow state, dry-run support, idempotent result
      records, explicit write approval, and environment/secret-manager inputs.
 

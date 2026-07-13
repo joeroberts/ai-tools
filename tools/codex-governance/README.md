@@ -34,8 +34,12 @@ Phase 1 validates a ticket-plan contract against the approved PRD,
 specification, and roadmap. It checks source digests, Markdown traceability,
 dependencies, bounded paths, ADR references, and workflow-state integrity.
 Hosted-manager dispatch, local worker review, stakeholder approval, and Jira
-publication remain unavailable until their respective roadmap phases are
-approved.
+publication are separately governed. Jira publication requires an approved
+workflow state and exactly one of `--dry-run` or `--approve`. The write path
+reads `JIRA_BASE_URL`, `JIRA_EMAIL`, and `JIRA_API_TOKEN` from the environment;
+`governance.yml` never stores credentials. A private publication record is
+written before any Jira request and blocks automatic retries, including after a
+partial creation.
 
 ```bash
 codex-governance jira plan validate \

@@ -33,6 +33,8 @@ Usage:
   codex-governance jira constraints draft|promote --output PATH [--prd PATH --spec PATH --roadmap PATH --repo-root PATH]
   codex-governance jira plan generate --prd PATH --spec PATH --roadmap PATH --constraints PATH --output PATH --policy PATH --reviewer-model NAME --verifier-model NAME [--repo-root PATH] [--runtime-root PATH] [--codex-bin PATH] [--dry-run] [--verbose]
   codex-governance jira plan validate --plan PATH [--repo-root PATH]
+  codex-governance jira plan approve --plan PATH --workflow PATH --approved-by ID --approve [--repo-root PATH]
+  codex-governance jira plan create --plan PATH --workflow PATH (--dry-run|--approve) [--result PATH --repo-root PATH]
   codex-governance runtime agent start|complete|fail|close --work-item KEY --agent-id ID --role ROLE [--result-ref REF]
   codex-governance runtime check --work-item KEY
   codex-governance runtime cache clear [--runtime-root PATH]
@@ -93,14 +95,6 @@ func runJira(args []string, stdout, stderr io.Writer) int {
 	if command == "generate" {
 		return runJiraPlanGenerate(args[2:], stdout, stderr)
 	}
-	if command == "approve" {
-		fmt.Fprintln(stderr, "jira plan approve is unavailable until Phase 3 is approved")
-		return 1
-	}
-	if command == "create" {
-		fmt.Fprintln(stderr, "jira plan create is unavailable until Phase 4 is approved")
-		return 1
-	}
 	if command != "validate" && command != "create" && command != "approve" {
 		fmt.Fprintln(stderr, "usage: codex-governance jira plan generate|validate|approve|create")
 		return 2
@@ -110,9 +104,10 @@ func runJira(args []string, stdout, stderr io.Writer) int {
 	path := flags.String("plan", "", "ticket plan JSON")
 	repoRoot := flags.String("repo-root", ".", "repository root")
 	dryRun := flags.Bool("dry-run", false, "report Jira writes without sending them")
-	approve := flags.Bool("approve", false, "authorize Jira issue creation")
+	approve := flags.Bool("approve", false, "explicitly authorize the requested action")
 	resultPath := flags.String("result", "", "creation result JSON")
 	workflowPath := flags.String("workflow", "", "persisted ticket-plan workflow state")
+	approvedBy := flags.String("approved-by", "", "stakeholder approving the ticket plan")
 	if err := flags.Parse(args[2:]); err != nil || *path == "" || flags.NArg() != 0 {
 		return 2
 	}
@@ -133,11 +128,11 @@ func runJira(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	if command == "approve" {
-		if !*approve || *workflowPath == "" {
-			fmt.Fprintln(stderr, "jira plan approve requires --workflow and --approve")
+		if !*approve || *workflowPath == "" || *approvedBy == "" {
+			fmt.Fprintln(stderr, "jira plan approve requires --workflow, --approved-by, and --approve")
 			return 2
 		}
-		if err := ticketplan.Approve(*path, *workflowPath); err != nil {
+		if err := ticketplan.Approve(*path, *workflowPath, *approvedBy); err != nil {
 			fmt.Fprintf(stderr, "approve ticket plan: %v\n", err)
 			return 1
 		}
@@ -170,40 +165,75 @@ func runJira(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "jira plan create requires exactly one of --dry-run or --approve")
 		return 2
 	}
-	if *dryRun {
-		fmt.Fprintf(stdout, "DRY RUN would create Story %q and %d subtasks\n", plan.Story.Summary, len(plan.Subtasks))
-		return 0
-	}
 	cfg, err := config.Load(filepath.Join(*repoRoot, "governance.yml"))
 	if err != nil || cfg.Jira.Project == "" {
 		fmt.Fprintln(stderr, "jira plan create requires governance.yml with jira.project")
 		return 2
 	}
+	if *dryRun {
+		fmt.Fprintf(stdout, "DRY RUN would create Story %q and %d subtasks in project %s\n", plan.Story.Summary, len(plan.Subtasks), cfg.Jira.Project)
+		return 0
+	}
 	if *resultPath == "" {
 		*resultPath = *path + ".result.json"
 	}
 	if _, err := os.Stat(*resultPath); err == nil {
-		fmt.Fprintf(stderr, "refusing to overwrite existing creation result: %s\n", *resultPath)
+		fmt.Fprintf(stderr, "refusing to retry a recorded Jira publication: %s\n", *resultPath)
 		return 1
+	} else if !os.IsNotExist(err) {
+		fmt.Fprintf(stderr, "check Jira publication record: %v\n", err)
+		return 2
 	}
 	baseURL, email, token := os.Getenv("JIRA_BASE_URL"), os.Getenv("JIRA_EMAIL"), os.Getenv("JIRA_API_TOKEN")
 	if baseURL == "" || email == "" || token == "" {
 		fmt.Fprintln(stderr, "jira plan create requires JIRA_BASE_URL, JIRA_EMAIL, and JIRA_API_TOKEN")
 		return 2
 	}
-	story, subtasks, err := (jira.CreateClient{BaseURL: baseURL, Email: email, Token: token}).CreatePlan(cfg.Jira.Project, plan)
+	digest, err := ticketplan.FileDigest(*path)
 	if err != nil {
+		fmt.Fprintf(stderr, "digest ticket plan: %v\n", err)
+		return 2
+	}
+	creation := jiraPublicationRecord{PlanDigest: digest, Status: "creating"}
+	if err := writeJiraPublicationRecord(*resultPath, creation); err != nil {
+		fmt.Fprintf(stderr, "write Jira publication record: %v\n", err)
+		return 2
+	}
+	story, subtasks, err := (jira.CreateClient{BaseURL: baseURL, Email: email, Token: token}).CreatePlan(cfg.Jira.Project, plan)
+	creation.Story, creation.Subtasks = story, subtasks
+	if err != nil {
+		creation.Status = "incomplete"
+		if writeErr := writeJiraPublicationRecord(*resultPath, creation); writeErr != nil {
+			fmt.Fprintf(stderr, "update Jira publication record: %v\n", writeErr)
+		}
 		fmt.Fprintf(stderr, "create Jira issues: %v\n", err)
 		return 1
 	}
-	digest, _ := ticketplan.FileDigest(*path)
-	result, _ := json.MarshalIndent(map[string]any{"plan_digest": digest, "story": story, "subtasks": subtasks}, "", "  ")
-	if err := os.WriteFile(*resultPath, result, 0o600); err != nil {
-		fmt.Fprintf(stderr, "write creation result: %v\n", err)
+	creation.Status = "complete"
+	if err := writeJiraPublicationRecord(*resultPath, creation); err != nil {
+		fmt.Fprintf(stderr, "update Jira publication record: %v\n", err)
 		return 2
 	}
 	fmt.Fprintf(stdout, "PASS created Story %s and %d subtasks\n", story.Key, len(subtasks))
 	return 0
+}
+
+type jiraPublicationRecord struct {
+	PlanDigest string              `json:"plan_digest"`
+	Status     string              `json:"status"`
+	Story      jira.CreatedIssue   `json:"story,omitempty"`
+	Subtasks   []jira.CreatedIssue `json:"subtasks,omitempty"`
+}
+
+func writeJiraPublicationRecord(path string, record jiraPublicationRecord) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(data, '\n'), 0o600)
 }
 
 func runJiraConstraints(args []string, stdout, stderr io.Writer) int {
