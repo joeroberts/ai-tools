@@ -24,6 +24,8 @@ type Request struct {
 
 type Result struct{ PlanPath, WorkItem string }
 
+var marshalDecomposition = json.MarshalIndent
+
 type Runner interface {
 	Run(context.Context, string, string, string) ([]byte, error)
 }
@@ -75,6 +77,45 @@ func (r CodexRunner) Run(ctx context.Context, role, prompt, schema string) ([]by
 
 func Generate(request Request, runners Runners) (Result, error) {
 	return generateAfterPhase2Approval(request, runners)
+}
+
+// Decompose produces a manager-only draft before per-subtask constraints are
+// assigned. It deliberately does not dispatch reviewer or verifier roles.
+func Decompose(request Request, manager Runner) (Result, error) {
+	if !isCodexRunner(manager) {
+		return Result{}, fmt.Errorf("manager runner must be a hosted CodexRunner")
+	}
+	sources, err := loadSources(request)
+	if err != nil {
+		return Result{}, err
+	}
+	catalog, err := buildSourceCatalog(request.RepoRoot, sources)
+	if err != nil {
+		return Result{}, err
+	}
+	key := sha256.Sum256([]byte(sources.PRD.Digest + sources.Spec.Digest + sources.Roadmap.Digest))
+	workItem := "ticket-plan:" + hex.EncodeToString(key[:8])
+	planBytes, err := runRole(request.RuntimeRoot, workItem, "manager", 1, manager, decompositionPrompt(sources, catalog), planSchemaRange(1, 8))
+	if err != nil {
+		return Result{}, err
+	}
+	var plan ticketplan.Plan
+	if err := json.Unmarshal(planBytes, &plan); err != nil {
+		return Result{}, fmt.Errorf("parse manager decomposition: %w", err)
+	}
+	plan.Sources, plan.Status = sources, "draft"
+	if err := writeDecomposition(request.OutputPath, plan); err != nil {
+		return Result{}, err
+	}
+	return Result{PlanPath: request.OutputPath, WorkItem: workItem}, nil
+}
+
+func writeDecomposition(path string, plan ticketplan.Plan) error {
+	data, err := marshalDecomposition(plan, "", "  ")
+	if err != nil {
+		return fmt.Errorf("serialize manager decomposition: %w", err)
+	}
+	return writePrivateFile(path, append(data, '\n'))
 }
 
 // generateAfterPhase2Approval performs orchestration after the public phase
@@ -421,6 +462,9 @@ func masterPrompt(s ticketplan.Sources, catalog string, constraints Constraints)
 	template, _ := json.Marshal(constraints)
 	return fmt.Sprintf("You are the Codex manager. Create a story and exactly %d independently reviewable subtasks from this verified source catalog. The subtasks must be in the same order as the approved constraints template; constrained IDs, budgets, paths, dependencies, and their traceability will be applied locally. Return only a JSON ticket plan. For each remaining traceability reference, select source exactly from prd, spec, or roadmap; select section exactly from the catalog; and copy its excerpt verbatim from that section. Do not write files, Jira, or code.\n\nAPPROVED CONSTRAINTS:\n%s\n\nSOURCE CATALOG:\n%s", len(constraints.Subtasks), template, catalog)
 }
+func decompositionPrompt(s ticketplan.Sources, catalog string) string {
+	return fmt.Sprintf("You are the Codex manager. Create a story and between one and eight independently reviewable subtasks from this verified source catalog. This is a decomposition draft: do not claim approval and do not write files, Jira, or code. Return only a JSON ticket plan. For every traceability reference, select source exactly from prd, spec, or roadmap; and copy its excerpt verbatim. Every traced field value must be explicitly supported by its cited excerpt; use only allowed-path strings and review-budget components from the catalog, use a phase value present in its cited excerpt, and copy the Architecture Decision wording exactly for an ADR rationale without inserting or changing whitespace.\n\nSOURCE CATALOG:\n%s", catalog)
+}
 func remediationPrompt(s ticketplan.Sources, catalog string, constraints Constraints, feedback string) string {
 	template, _ := json.Marshal(constraints)
 	return fmt.Sprintf("You are the Codex manager revising a ticket plan. Resolve these deterministic validation findings:\n%s\nReturn exactly %d subtasks in the same order as the approved constraints template. Apply the same catalog rules for narrative fields. Do not write files, Jira, or code.\n\nAPPROVED CONSTRAINTS:\n%s\n\nSOURCE CATALOG:\n%s", feedback, len(constraints.Subtasks), template, catalog)
@@ -429,6 +473,10 @@ func reviewPrompt(role string, plan []byte) string {
 	return fmt.Sprintf("You are an independent local %s. Review this ticket plan for source traceability, bounded scope, acceptance criteria, validation, allowed paths, and ADR references. Return only JSON matching {\"status\":\"approved|changes_requested|blocked\",\"summary\":\"concise finding summary\"}; use status approved only if it is ready. Do not write files or Jira. Plan: %s", role, plan)
 }
 func planSchema(subtaskCount int) string {
+	return planSchemaRange(subtaskCount, subtaskCount)
+}
+
+func planSchemaRange(minSubtasks, maxSubtasks int) string {
 	return fmt.Sprintf(`{
   "type":"object",
   "properties":{
@@ -471,7 +519,7 @@ func planSchema(subtaskCount int) string {
   "references":{"type":"array","minItems":1,"items":{"$ref":"#/$defs/reference"}},
   "story_traceability":{"type":"object","properties":{"summary":{"$ref":"#/$defs/references"},"description":{"$ref":"#/$defs/references"},"acceptance_criteria":{"$ref":"#/$defs/references"}},"required":["summary","description","acceptance_criteria"],"additionalProperties":false},
   "subtask_traceability":{"type":"object","properties":{"summary":{"$ref":"#/$defs/references"},"phase":{"$ref":"#/$defs/references"},"change_class":{"$ref":"#/$defs/references"},"review_budget":{"$ref":"#/$defs/references"},"scope":{"$ref":"#/$defs/references"},"non_goals":{"$ref":"#/$defs/references"},"acceptance_criteria":{"$ref":"#/$defs/references"},"validation_plan":{"$ref":"#/$defs/references"},"allowed_paths":{"$ref":"#/$defs/references"},"adr":{"$ref":"#/$defs/references"},"dependencies":{"$ref":"#/$defs/references"}},"required":["summary","phase","change_class","review_budget","scope","non_goals","acceptance_criteria","validation_plan","allowed_paths","adr","dependencies"],"additionalProperties":false}}
-}`, subtaskCount, subtaskCount)
+}`, minSubtasks, maxSubtasks)
 }
 func reviewSchema() string {
 	return `{"type":"object","properties":{"status":{"type":"string","enum":["approved","changes_requested","blocked"]},"summary":{"type":"string"}},"required":["status","summary"],"additionalProperties":false}`

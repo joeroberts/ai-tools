@@ -52,6 +52,20 @@ func TestPlanValidateRejectsUnboundedPathsAndBadDependencies(t *testing.T) {
 	}
 }
 
+func TestPlanValidateAcceptsNamedRootPaths(t *testing.T) {
+	_, plan := validPlan(t)
+	plan.Subtasks[0].AllowedPaths = []string{"Makefile", ".githooks"}
+	if issues := strings.Join(plan.Validate(), "\n"); strings.Contains(issues, "invalid allowed path") {
+		t.Fatalf("issues = %q", issues)
+	}
+}
+
+func TestContainsNormalizedPathAcceptsDirectoryPathWithTrailingSlash(t *testing.T) {
+	if !containsNormalizedPath("The allowed path is internal/ticketplan/.", "internal/ticketplan") {
+		t.Fatal("directory path with trailing slash was not recognized")
+	}
+}
+
 func TestPlanValidateRejectsNormalizedTraversalAndCycles(t *testing.T) {
 	_, plan := validPlan(t)
 	plan.Subtasks[0].AllowedPaths = []string{"internal/ticketplan/../README.md"}

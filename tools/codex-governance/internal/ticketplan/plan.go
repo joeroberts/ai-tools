@@ -221,7 +221,7 @@ func validAllowedPath(value string) bool {
 		}
 	}
 	cleaned := filepath.Clean(filepath.FromSlash(value))
-	if cleaned != filepath.FromSlash(value) || cleaned == "." || cleaned == ".." || !strings.Contains(filepath.ToSlash(value), "/") && filepath.Ext(value) == "" {
+	if cleaned != filepath.FromSlash(value) || cleaned == "." || cleaned == ".." {
 		return false
 	}
 	return !strings.HasPrefix(cleaned, ".."+string(filepath.Separator))
@@ -378,7 +378,7 @@ func containsNormalizedPath(excerpt, value string) bool {
 		}
 		index += start
 		end := index + len(path)
-		if pathBoundary(text, index-1, false) && pathBoundary(text, end, true) {
+		if pathBoundary(text, index-1, false) && (end < len(text) && text[end] == '/' || pathBoundary(text, end, true)) {
 			return true
 		}
 		start = end

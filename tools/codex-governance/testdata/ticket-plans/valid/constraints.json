@@ -27,6 +27,7 @@
   "subtasks": [
     {
       "id": "contract-validation",
+      "phase": "Phase 1",
       "allowed_paths": [
         "internal/ticketplan"
       ],
@@ -39,6 +40,13 @@
       },
       "dependencies": [],
       "traceability": {
+        "phase": [
+          {
+            "source": "roadmap",
+            "section": "Phase 1",
+            "excerpt": "Source evidence: Phase 1 Plan Contract And Workflow State"
+          }
+        ],
         "allowed_paths": [
           {
             "source": "spec",

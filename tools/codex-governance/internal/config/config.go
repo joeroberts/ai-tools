@@ -63,6 +63,7 @@ type Signing struct {
 	FormatVersion       int          `yaml:"format_version"`
 	TrustedKeys         []TrustedKey `yaml:"trusted_keys"`
 	OfflineExportMaxAge string       `yaml:"offline_export_max_age"`
+	RepositoryID        string       `yaml:"repository_id"`
 }
 
 type TrustedKey struct {
@@ -88,6 +89,18 @@ func Load(path string) (Config, error) {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+// Save validates and persists configuration without retaining private key material.
+func Save(path string, cfg Config) error {
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Clean(path), data, 0o644)
 }
 
 func (c Config) Validate() error {
@@ -179,4 +192,13 @@ func (c Config) OfflineExportMaxAge() (time.Duration, error) {
 		return 0, fmt.Errorf("signing.offline_export_max_age must be a positive duration")
 	}
 	return age, nil
+}
+
+// PublicationRepositoryID is the opaque repository identity that a signed
+// remote-publication authorization must bind.
+func (c Config) PublicationRepositoryID() (string, error) {
+	if c.Signing.RepositoryID == "" {
+		return "", fmt.Errorf("signing.repository_id is required for remote publication")
+	}
+	return c.Signing.RepositoryID, nil
 }
