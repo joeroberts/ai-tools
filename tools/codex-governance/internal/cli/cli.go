@@ -1663,8 +1663,8 @@ func runOllama(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, path)
 		return 0
 	}
-	if len(args) == 0 || (args[0] != "run" && args[0] != "status" && args[0] != "inventory") {
-		fmt.Fprintln(stderr, "usage: codex-governance ollama policy init|run|status|inventory")
+	if len(args) == 0 || (args[0] != "run" && args[0] != "status" && args[0] != "inventory" && args[0] != "load" && args[0] != "stop") {
+		fmt.Fprintln(stderr, "usage: codex-governance ollama policy init|run|status|inventory|load|stop")
 		return 2
 	}
 	if args[0] == "status" {
@@ -1672,6 +1672,9 @@ func runOllama(args []string, stdout, stderr io.Writer) int {
 	}
 	if args[0] == "inventory" {
 		return runOllamaInventory(args[1:], stdout, stderr)
+	}
+	if args[0] == "load" || args[0] == "stop" {
+		return runOllamaResidency(args[0], args[1:], stdout, stderr)
 	}
 	flags := flag.NewFlagSet("ollama run", flag.ContinueOnError)
 	model := flags.String("model", "", "allowlisted model")
@@ -1723,6 +1726,26 @@ func runOllama(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	fmt.Fprintln(stdout, gruntime.Redact(output))
+	return 0
+}
+
+func runOllamaResidency(action string, args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("ollama "+action, flag.ContinueOnError)
+	model := flags.String("model", "", "allowlisted model")
+	policyPath := flags.String("policy", "", "policy path")
+	if err := flags.Parse(args); err != nil || *model == "" || *policyPath == "" || flags.NArg() != 0 {
+		return 2
+	}
+	policy, err := ollama.LoadPolicy(*policyPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load Ollama policy: %v\n", err)
+		return 2
+	}
+	if err := ollama.SetResidency(ollama.Client(policy), policy, *model, action == "load"); err != nil {
+		fmt.Fprintf(stderr, "%s Ollama model: %v\n", action, err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "PASS model=%s loaded=%t\n", *model, action == "load")
 	return 0
 }
 

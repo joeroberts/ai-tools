@@ -104,6 +104,37 @@ func TestLoadedStatusMarksZeroContextUnknown(t *testing.T) {
 	}
 }
 
+func TestSetResidencySendsNoPromptAndVerifiesStopped(t *testing.T) {
+	policy := testPolicy(Model{Name: "local-model", BenchmarkApproved: true, AllowedRoles: []string{"reviewer"}, AllowedTaskTypes: []string{"ticket-plan-review"}, MaxInputBytes: 100})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			_, _ = w.Write([]byte(`{"models":[{"name":"local-model","digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}`))
+		case "/api/generate":
+			var payload map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			if _, ok := payload["prompt"]; ok || payload["keep_alive"] != float64(0) {
+				t.Fatalf("stop payload = %#v", payload)
+			}
+			_, _ = w.Write([]byte(`{"done":true}`))
+		case "/api/ps":
+			_, _ = w.Write([]byte(`{"models":[]}`))
+		}
+	}))
+	defer server.Close()
+	policy.Endpoint = server.URL
+	if err := SetResidency(Client(policy), policy, "local-model", false); err != nil {
+		t.Fatalf("SetResidency() = %v", err)
+	}
+}
+
+func TestSetResidencyRejectsUnknownModel(t *testing.T) {
+	policy := testPolicy(Model{Name: "local-model", BenchmarkApproved: true, AllowedRoles: []string{"reviewer"}, AllowedTaskTypes: []string{"ticket-plan-review"}, MaxInputBytes: 100})
+	if err := SetResidency(Client(policy), policy, "unknown", false); err == nil {
+		t.Fatal("unknown model was accepted")
+	}
+}
+
 func TestInventoryReturnsInstalledModelsWithoutAllowlistingThem(t *testing.T) {
 	policy := testPolicy(Model{Name: "allowed", BenchmarkApproved: true, AllowedRoles: []string{"reviewer"}, AllowedTaskTypes: []string{"ticket-plan-review"}, MaxInputBytes: 100})
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
