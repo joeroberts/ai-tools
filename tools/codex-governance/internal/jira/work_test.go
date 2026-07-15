@@ -35,6 +35,24 @@ func TestWorkUpdateRejectsIncompleteBlocker(t *testing.T) {
 	}
 }
 
+func TestRenderEvidenceRedactsUnsafeLocalContent(t *testing.T) {
+	_, err := RenderEvidence([]EvidenceSummary{{Kind: "review", Outcome: "/Users/owner/private.json"}})
+	if err == nil {
+		t.Fatal("unsafe local path was rendered")
+	}
+	rendered, err := RenderEvidence([]EvidenceSummary{{Kind: "review", Executor: "gemma", Outcome: "passed", Digest: "sha256:abc"}})
+	if err != nil || !strings.Contains(rendered, "review: passed") || strings.Contains(rendered, "/Users/") {
+		t.Fatalf("RenderEvidence() = %q, %v", rendered, err)
+	}
+}
+
+func TestRenderEvidenceTruncatesDeterministically(t *testing.T) {
+	rendered, err := RenderEvidence([]EvidenceSummary{{Kind: "check", Outcome: strings.Repeat("x", maxRenderedEvidenceBytes+10)}})
+	if err != nil || len(rendered) != maxRenderedEvidenceBytes || !strings.HasSuffix(rendered, "… [truncated]") {
+		t.Fatalf("RenderEvidence() length=%d value=%q err=%v", len(rendered), rendered, err)
+	}
+}
+
 func TestWorkClientPostsAndReadsBackComment(t *testing.T) {
 	const text = "Work record: blocker\n\nBlocker: test"
 	var posted string

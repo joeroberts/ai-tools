@@ -15,6 +15,8 @@ var (
 	commitSHARE = regexp.MustCompile(`^[0-9a-fA-F]{40,64}$`)
 )
 
+const maxRenderedEvidenceBytes = 2048
+
 // WorkUpdate is a factual Jira work-record event. Commit and blocker events
 // have distinct required fields and are validated before a comment is sent.
 type WorkUpdate struct {
@@ -28,6 +30,40 @@ type WorkUpdate struct {
 	Impact         string
 	DecisionNeeded string
 	NextAction     string
+}
+
+// EvidenceSummary is the only evidence form that may be rendered into Jira.
+// It intentionally contains outcomes, never local artifact paths or raw data.
+type EvidenceSummary struct {
+	Kind     string `json:"kind"`
+	Executor string `json:"executor,omitempty"`
+	Outcome  string `json:"outcome"`
+	Digest   string `json:"digest,omitempty"`
+}
+
+func RenderEvidence(values []EvidenceSummary) (string, error) {
+	if len(values) == 0 {
+		return "", fmt.Errorf("at least one evidence summary is required")
+	}
+	lines := make([]string, 0, len(values))
+	for _, value := range values {
+		if value.Kind == "" || value.Outcome == "" || strings.ContainsAny(value.Outcome, "\n\r") || strings.Contains(value.Outcome, "/Users/") {
+			return "", fmt.Errorf("evidence summary is invalid or unsafe")
+		}
+		line := value.Kind + ": " + value.Outcome
+		if value.Executor != "" {
+			line += " (executor " + value.Executor + ")"
+		}
+		if value.Digest != "" {
+			line += " [" + value.Digest + "]"
+		}
+		lines = append(lines, line)
+	}
+	rendered := strings.Join(lines, "\n- ")
+	if len(rendered) > maxRenderedEvidenceBytes {
+		return rendered[:maxRenderedEvidenceBytes-len("… [truncated]")] + "… [truncated]", nil
+	}
+	return rendered, nil
 }
 
 func (u WorkUpdate) Validate() error {

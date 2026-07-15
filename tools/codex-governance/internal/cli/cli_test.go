@@ -139,6 +139,18 @@ func TestRunJiraWorkUpdateRequiresCompleteBlocker(t *testing.T) {
 	}
 }
 
+func TestRunJiraWorkUpdateRendersEvidenceSummaryNotPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "summary.json")
+	if err := os.WriteFile(path, []byte(`[{"kind":"reviewer","executor":"gemma","outcome":"passed"}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout bytes.Buffer
+	code := Run([]string{"jira", "work", "update", "--issue", "REK-10", "--kind", "commit", "--commit", strings.Repeat("a", 40), "--scope", "Render evidence", "--check", "make test: passed", "--evidence", "placeholder", "--evidence-summary", path}, &stdout, &bytes.Buffer{})
+	if code != 0 || !strings.Contains(stdout.String(), "reviewer: passed") || strings.Contains(stdout.String(), path) {
+		t.Fatalf("summary preview = %d, %q", code, stdout.String())
+	}
+}
+
 func TestRunJiraWorkUpdateApproveRequiresCredentials(t *testing.T) {
 	t.Setenv("JIRA_BASE_URL", "")
 	t.Setenv("JIRA_EMAIL", "")
