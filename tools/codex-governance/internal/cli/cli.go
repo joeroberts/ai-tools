@@ -324,11 +324,30 @@ func runJiraWork(args []string, stdout, stderr io.Writer) int {
 	decision := flags.String("decision-needed", "", "owner decision needed")
 	nextAction := flags.String("next-action", "", "next action")
 	approve := flags.Bool("approve", false, "explicitly authorize the Jira comment write")
+	evidenceSummary := flags.String("evidence-summary", "", "owner-local JSON evidence summary")
 	var checks, evidence stringValues
 	flags.Var(&checks, "check", "completed check (repeatable)")
 	flags.Var(&evidence, "evidence", "evidence reference (repeatable)")
 	if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 {
 		return 2
+	}
+	if *evidenceSummary != "" {
+		data, err := os.ReadFile(*evidenceSummary)
+		if err != nil {
+			fmt.Fprintf(stderr, "read evidence summary: %v\n", err)
+			return 2
+		}
+		var summaries []jira.EvidenceSummary
+		if err := json.Unmarshal(data, &summaries); err != nil {
+			fmt.Fprintf(stderr, "parse evidence summary: %v\n", err)
+			return 2
+		}
+		rendered, err := jira.RenderEvidence(summaries)
+		if err != nil {
+			fmt.Fprintf(stderr, "render evidence summary: %v\n", err)
+			return 2
+		}
+		evidence = stringValues{rendered}
 	}
 	update := jira.WorkUpdate{Issue: *issue, Kind: *kind, Commit: *commit, Scope: *scope, Checks: checks, Evidence: evidence, Blocker: *blocker, Impact: *impact, DecisionNeeded: *decision, NextAction: *nextAction}
 	if err := update.Validate(); err != nil {
