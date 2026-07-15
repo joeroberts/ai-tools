@@ -9,8 +9,8 @@ Jira-planning is complete. Source: GitHub issue #11; Story `REK-4`.
 
 The approved owner-authored plan was required because the manager decomposition
 did not cover the declared slices; the planner defect is tracked in GitHub
-issue #20. Implementation remains blocked until this work item and the
-governance-entry policy changes are reviewed and committed.
+issue #20. The work item and governance-entry policy changes are committed;
+`REK-5` is implementation-ready. `REK-6` remains blocked on `REK-5`.
 
 ## Scope
 

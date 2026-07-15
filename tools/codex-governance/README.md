@@ -69,6 +69,21 @@ The plan contract records source paths and SHA-256 digests, a Story, independent
 subtasks, traceability, phase, change class, review budget, allowed paths, and
 ADR rationale. It does not write Jira.
 
+## Jira Work Records
+
+Use `jira work update` after a known commit or as soon as work is blocked. It
+prints the exact Jira comment by default. Add `--approve` only after reviewing
+that preview; the command then reads credentials from the environment, writes
+the comment, and verifies the exact comment by read-back.
+
+```bash
+codex-governance jira work update \
+  --issue REK-5 --kind commit --commit FULL_SHA \
+  --scope "Add approval-gated Jira work records" \
+  --check "go test ./internal/jira ./internal/cli" \
+  --evidence "/private/review-evidence.json"
+```
+
 ## Verification And Advisory CI
 
 Run the governed local smoke check with:
