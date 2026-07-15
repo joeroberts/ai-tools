@@ -71,6 +71,11 @@ update. Jira remains the authoritative execution record, but every Jira write
 must be previewed, explicitly approved, and read back. Never make a Jira write
 from a hook, background process, or unstated inference.
 
+After confirming that a pull request is merged, return the local worktree to
+`main`, fast-forward it from `origin/main`, and verify the worktree is clean.
+If local changes or branch state prevent that sequence, report the blocker; do
+not stash, discard, or overwrite work to force synchronization.
+
 ## Security & Configuration Tips
 
 Preserve the repository's approval boundaries. Do not add instructions that permit pushes, publishes, remote PR updates, tags, releases, Terraform apply, cloud mutations, destructive commands, or secret access without explicit approval.
