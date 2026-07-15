@@ -2,15 +2,19 @@ package ollama
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -38,6 +42,26 @@ type Request struct {
 	Role     string
 	TaskType string
 	Input    []byte
+	Think    *bool
+	Format   string
+}
+
+// Status reports the context allocated to an allowlisted model that is
+// currently loaded by the local Ollama service. It intentionally returns only
+// local runtime metadata and never starts a model or sends a prompt.
+type Status struct {
+	Name          string `json:"name"`
+	Loaded        bool   `json:"loaded"`
+	ContextLength int    `json:"context_length"`
+	ContextKnown  bool   `json:"context_known"`
+	SizeVRAM      int64  `json:"size_vram"`
+}
+
+// InstalledModel is immutable local model metadata returned by a read-only
+// inventory request. Inventory never authorizes a model for execution.
+type InstalledModel struct {
+	Name string `json:"name"`
+	ID   string `json:"id"`
 }
 
 func LoadPolicy(path string) (Policy, error) {
@@ -77,9 +101,32 @@ func Run(client *http.Client, policy Policy, request Request) (string, error) {
 	if err := verifyInstalled(client, policy.Endpoint, model); err != nil {
 		return "", err
 	}
-	payload := fmt.Sprintf(`{"model":%q,"prompt":%q,"stream":false}`, model.Name, string(request.Input))
-	response, err := client.Post(policy.Endpoint+"/api/generate", "application/json", bytes.NewBufferString(payload))
+	return generateWithDeadline(client, policy.Endpoint, model.Name, request.Input, request.Think, request.Format, time.Duration(policy.RequestTimeoutSeconds)*time.Second)
+}
+
+func generateWithDeadline(client *http.Client, endpoint, model string, input []byte, think *bool, format string, timeout time.Duration) (string, error) {
+	deadline, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	payload, err := json.Marshal(struct {
+		Model  string `json:"model"`
+		Prompt string `json:"prompt"`
+		Stream bool   `json:"stream"`
+		Think  *bool  `json:"think,omitempty"`
+		Format string `json:"format,omitempty"`
+	}{Model: model, Prompt: string(input), Stream: true, Think: think, Format: format})
 	if err != nil {
+		return "", err
+	}
+	httpRequest, err := http.NewRequestWithContext(deadline, http.MethodPost, endpoint+"/api/generate", bytes.NewReader(payload))
+	if err != nil {
+		return "", err
+	}
+	httpRequest.Header.Set("Content-Type", "application/json")
+	response, err := client.Do(httpRequest)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return "", fmt.Errorf("Ollama stream stalled: policy deadline exceeded")
+		}
 		return "", err
 	}
 	defer response.Body.Close()
@@ -88,11 +135,109 @@ func Run(client *http.Client, policy Policy, request Request) (string, error) {
 	}
 	var body struct {
 		Response string `json:"response"`
+		Done     bool   `json:"done"`
+		Error    string `json:"error"`
+	}
+	decoder := json.NewDecoder(response.Body)
+	var output strings.Builder
+	for {
+		if err := decoder.Decode(&body); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(deadline.Err(), context.DeadlineExceeded) {
+				return "", fmt.Errorf("Ollama stream stalled: policy deadline exceeded")
+			}
+			if err == io.EOF {
+				return "", fmt.Errorf("Ollama stream ended before completion")
+			}
+			return "", err
+		}
+		if body.Error != "" {
+			return "", fmt.Errorf("Ollama generate: %s", body.Error)
+		}
+		output.WriteString(body.Response)
+		if body.Done {
+			return output.String(), nil
+		}
+	}
+}
+
+func LoadedStatus(client *http.Client, policy Policy, modelName string) (Status, error) {
+	if err := policy.Validate(); err != nil {
+		return Status{}, err
+	}
+	var allowed Model
+	found := false
+	for _, model := range policy.Models {
+		if model.Name == modelName {
+			allowed = model
+			found = true
+			break
+		}
+	}
+	if !found {
+		return Status{}, fmt.Errorf("model is not allowlisted")
+	}
+	if err := verifyInstalled(client, policy.Endpoint, allowed); err != nil {
+		return Status{}, err
+	}
+	response, err := client.Get(policy.Endpoint + "/api/ps")
+	if err != nil {
+		return Status{}, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return Status{}, fmt.Errorf("Ollama process status returned %s", response.Status)
+	}
+	var body struct {
+		Models []struct {
+			Name          string `json:"name"`
+			Digest        string `json:"digest"`
+			ContextLength int    `json:"context_length"`
+			SizeVRAM      int64  `json:"size_vram"`
+		} `json:"models"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
-		return "", err
+		return Status{}, err
 	}
-	return body.Response, nil
+	for _, loaded := range body.Models {
+		if loaded.Name == allowed.Name && loaded.Digest == allowed.ID {
+			return Status{Name: allowed.Name, Loaded: true, ContextLength: loaded.ContextLength, ContextKnown: loaded.ContextLength > 0, SizeVRAM: loaded.SizeVRAM}, nil
+		}
+	}
+	return Status{Name: allowed.Name}, nil
+}
+
+// Inventory returns only locally installed model names and immutable digests.
+// The policy still validates that the endpoint is local, but no allowlist entry
+// is required because this operation neither loads nor invokes a model.
+func Inventory(client *http.Client, policy Policy) ([]InstalledModel, error) {
+	if err := policy.Validate(); err != nil {
+		return nil, err
+	}
+	response, err := client.Get(policy.Endpoint + "/api/tags")
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Ollama tags returned %s", response.Status)
+	}
+	var body struct {
+		Models []struct {
+			Name   string `json:"name"`
+			Digest string `json:"digest"`
+		} `json:"models"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		return nil, err
+	}
+	models := make([]InstalledModel, 0, len(body.Models))
+	for _, model := range body.Models {
+		if model.Name == "" || !modelIDPattern.MatchString(model.Digest) {
+			return nil, fmt.Errorf("Ollama inventory contains invalid model metadata")
+		}
+		models = append(models, InstalledModel{Name: model.Name, ID: model.Digest})
+	}
+	return models, nil
 }
 
 func (p Policy) Authorize(request Request) (Model, error) { return p.authorize(request) }

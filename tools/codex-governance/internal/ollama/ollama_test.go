@@ -1,9 +1,125 @@
 package ollama
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
+
+func TestRunStreamsResponseUntilDone(t *testing.T) {
+	policy := testPolicy(Model{Name: "local-model", BenchmarkApproved: true, AllowedRoles: []string{"reviewer"}, AllowedTaskTypes: []string{"ticket-plan-review"}, MaxInputBytes: 100})
+	think := false
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/tags":
+			_, _ = writer.Write([]byte(`{"models":[{"name":"local-model","digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}`))
+		case "/api/generate":
+			var payload struct {
+				Stream bool   `json:"stream"`
+				Think  *bool  `json:"think"`
+				Format string `json:"format"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil || !payload.Stream || payload.Think == nil || *payload.Think || payload.Format != "json" {
+				t.Fatalf("stream payload = %#v, %v", payload, err)
+			}
+			_, _ = writer.Write([]byte("{\"response\":\"first \"}\n{\"response\":\"second\",\"done\":true}\n"))
+		}
+	}))
+	defer server.Close()
+	policy.Endpoint = server.URL
+	output, err := Run(Client(policy), policy, Request{Model: "local-model", Role: "reviewer", TaskType: "ticket-plan-review", Input: []byte("input"), Think: &think, Format: "json"})
+	if err != nil || output != "first second" {
+		t.Fatalf("Run() = %q, %v", output, err)
+	}
+}
+
+func TestGenerateWithDeadlineCancelsStalledStream(t *testing.T) {
+	disconnected := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/x-ndjson")
+		writer.WriteHeader(http.StatusOK)
+		writer.(http.Flusher).Flush()
+		<-request.Context().Done()
+		close(disconnected)
+	}))
+	defer server.Close()
+	start := time.Now()
+	_, err := generateWithDeadline(&http.Client{}, server.URL, "local-model", []byte("input"), nil, "", 100*time.Millisecond)
+	if err == nil || err.Error() != "Ollama stream stalled: policy deadline exceeded" {
+		t.Fatalf("generateWithDeadline() error = %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("stalled stream exceeded deadline: %s", elapsed)
+	}
+	select {
+	case <-disconnected:
+	case <-time.After(time.Second):
+		t.Fatal("server did not observe client cancellation")
+	}
+}
+
+func TestLoadedStatusReportsContextForAllowlistedLoadedModel(t *testing.T) {
+	policy := testPolicy(Model{Name: "local-model", BenchmarkApproved: true, AllowedRoles: []string{"reviewer"}, AllowedTaskTypes: []string{"ticket-plan-review"}, MaxInputBytes: 100})
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/tags":
+			_, _ = writer.Write([]byte(`{"models":[{"name":"local-model","digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}`))
+		case "/api/ps":
+			_, _ = writer.Write([]byte(`{"models":[{"name":"local-model","digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","context_length":32768,"size_vram":1234}]}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+	policy.Endpoint = server.URL
+	status, err := LoadedStatus(Client(policy), policy, "local-model")
+	if err != nil {
+		t.Fatalf("LoadedStatus() error = %v", err)
+	}
+	if !status.Loaded || !status.ContextKnown || status.ContextLength != 32768 || status.SizeVRAM != 1234 {
+		t.Fatalf("LoadedStatus() = %#v", status)
+	}
+}
+
+func TestLoadedStatusMarksZeroContextUnknown(t *testing.T) {
+	policy := testPolicy(Model{Name: "local-model", BenchmarkApproved: true, AllowedRoles: []string{"reviewer"}, AllowedTaskTypes: []string{"ticket-plan-review"}, MaxInputBytes: 100})
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/tags":
+			_, _ = writer.Write([]byte(`{"models":[{"name":"local-model","digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}`))
+		case "/api/ps":
+			_, _ = writer.Write([]byte(`{"models":[{"name":"local-model","digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","context_length":0}]}`))
+		}
+	}))
+	defer server.Close()
+	policy.Endpoint = server.URL
+	status, err := LoadedStatus(Client(policy), policy, "local-model")
+	if err != nil {
+		t.Fatalf("LoadedStatus() error = %v", err)
+	}
+	if !status.Loaded || status.ContextKnown {
+		t.Fatalf("LoadedStatus() = %#v", status)
+	}
+}
+
+func TestInventoryReturnsInstalledModelsWithoutAllowlistingThem(t *testing.T) {
+	policy := testPolicy(Model{Name: "allowed", BenchmarkApproved: true, AllowedRoles: []string{"reviewer"}, AllowedTaskTypes: []string{"ticket-plan-review"}, MaxInputBytes: 100})
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/tags" {
+			http.NotFound(writer, request)
+			return
+		}
+		_, _ = writer.Write([]byte(`{"models":[{"name":"devstral:24b","digest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}`))
+	}))
+	defer server.Close()
+	policy.Endpoint = server.URL
+	models, err := Inventory(Client(policy), policy)
+	if err != nil || len(models) != 1 || models[0].Name != "devstral:24b" || models[0].ID != "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" {
+		t.Fatalf("Inventory() = %#v, %v", models, err)
+	}
+}
 
 func TestClientUsesPolicyTimeout(t *testing.T) {
 	client := Client(Policy{RequestTimeoutSeconds: 90})
