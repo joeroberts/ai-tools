@@ -38,6 +38,7 @@ Usage:
   codex-governance jira export bootstrap --signer PATH --approve [--repo-root PATH]
   codex-governance jira export create --story KEY --subtask KEY --signer PATH --output PATH --approve [--repo-root PATH]
   codex-governance jira work update --issue KEY --kind commit|blocker [commit or blocker fields] [--approve]
+  codex-governance jira work finalize --issue KEY --pr URL [--approve]
   codex-governance jira plan decompose --prd PATH --spec PATH --roadmap PATH --output PATH [--repo-root PATH] [--runtime-root PATH] [--codex-bin PATH]
   codex-governance jira plan generate --prd PATH --spec PATH --roadmap PATH --constraints PATH --output PATH --policy PATH --reviewer-model NAME --verifier-model NAME [--repo-root PATH] [--runtime-root PATH] [--codex-bin PATH] [--dry-run] [--verbose]
   codex-governance jira plan validate --plan PATH [--repo-root PATH]
@@ -305,9 +306,12 @@ func (v *stringValues) Set(value string) error {
 }
 
 func runJiraWork(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 || args[0] != "update" {
-		fmt.Fprintln(stderr, "usage: codex-governance jira work update --issue KEY --kind commit|blocker [commit or blocker fields] [--approve]")
+	if len(args) == 0 || (args[0] != "update" && args[0] != "finalize") {
+		fmt.Fprintln(stderr, "usage: codex-governance jira work update|finalize")
 		return 2
+	}
+	if args[0] == "finalize" {
+		return runJiraWorkFinalize(args[1:], stdout, stderr)
 	}
 	flags := flag.NewFlagSet("jira work update", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -357,6 +361,65 @@ func runJiraWork(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprintf(stdout, "PASS recorded %s work update on %s (comment %s) and verified read-back\n", update.Kind, update.Issue, created.ID)
+	return 0
+}
+
+func runJiraWorkFinalize(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("jira work finalize", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	issue := flags.String("issue", "", "Jira subtask key")
+	pr := flags.String("pr", "", "merged pull request URL or number")
+	approve := flags.Bool("approve", false, "explicitly authorize Jira finalization writes")
+	if err := flags.Parse(args); err != nil || *issue == "" || *pr == "" || flags.NArg() != 0 {
+		return 2
+	}
+	baseURL, email, token := os.Getenv("JIRA_BASE_URL"), os.Getenv("JIRA_EMAIL"), os.Getenv("JIRA_API_TOKEN")
+	if baseURL == "" || email == "" || token == "" {
+		fmt.Fprintln(stderr, "jira work finalize requires JIRA_BASE_URL, JIRA_EMAIL, and JIRA_API_TOKEN")
+		return 2
+	}
+	pullRequest, err := (jira.GitHubCLI{}).ReadMerged(*pr)
+	if err != nil {
+		fmt.Fprintf(stderr, "verify merged pull request: %v\n", err)
+		return 1
+	}
+	client := jira.FinalizationClient{BaseURL: baseURL, Email: email, Token: token}
+	plan, err := client.Plan(*issue, pullRequest)
+	if err != nil {
+		fmt.Fprintf(stderr, "prepare Jira finalization: %v\n", err)
+		return 1
+	}
+	if !*approve {
+		fmt.Fprintf(stdout, "PREVIEW Jira finalization:\n%s\nTransition subtask %s, then Story %s\n", plan.Comment, plan.Subtask.Key, plan.Story.Key)
+		return 0
+	}
+	comment, err := (jira.WorkClient{BaseURL: baseURL, Email: email, Token: token}).AddComment(plan.Subtask.Key, plan.Comment)
+	if err != nil {
+		fmt.Fprintf(stderr, "record merged pull request: %v\n", err)
+		return 1
+	}
+	readBack, err := (jira.WorkClient{BaseURL: baseURL, Email: email, Token: token}).ReadComment(plan.Subtask.Key, comment.ID)
+	if err != nil || readBack.Body != plan.Comment {
+		fmt.Fprintln(stderr, "read back merged pull request record did not match")
+		return 1
+	}
+	if err := client.Transition(plan.Subtask.Key, plan.SubtaskTransitionID); err != nil {
+		fmt.Fprintf(stderr, "transition subtask: %v\n", err)
+		return 1
+	}
+	if err := client.VerifyClosed(plan.Subtask.Key); err != nil {
+		fmt.Fprintf(stderr, "verify subtask transition: %v\n", err)
+		return 1
+	}
+	if err := client.Transition(plan.Story.Key, plan.StoryTransitionID); err != nil {
+		fmt.Fprintf(stderr, "transition Story: %v\n", err)
+		return 1
+	}
+	if err := client.VerifyClosed(plan.Story.Key); err != nil {
+		fmt.Fprintf(stderr, "verify Story transition: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "PASS finalized subtask %s and Story %s\n", plan.Subtask.Key, plan.Story.Key)
 	return 0
 }
 

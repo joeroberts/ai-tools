@@ -84,6 +84,11 @@ codex-governance jira work update \
   --evidence "/private/review-evidence.json"
 ```
 
+After a pull request is merged, use `jira work finalize` to verify the merged
+pull request and current Jira hierarchy. It previews the merged-PR record and
+the Subtask-then-Story transition order; `--approve` records the PR, performs
+those transitions, and verifies each ticket is done with a resolution.
+
 ## Verification And Advisory CI
 
 Run the governed local smoke check with:
