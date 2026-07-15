@@ -35,6 +35,13 @@ Jira stories own product intent and acceptance criteria. Jira implementation
 subtasks own scoped technical work. Pull requests and CI own code and validation
 evidence. ADRs remain under `docs/decisions/` with the code.
 
+GitHub issues are backlog and planning records; they do not authorize
+implementation. Before implementation begins, create the approved Jira Story
+and primary Subtask, link the committed work item, and verify that lifecycle
+state in preflight. Jira is the running execution record: approved updates
+capture each governed commit or blocker, then PR and merge closure. Every Jira
+write is previewed, explicitly approved, and read back.
+
 The initial workflow reads Jira only. A Jira write, push, merge, publish,
 release, deployment, Terraform apply, cloud mutation, destructive command, or
 secret access always requires explicit approval.

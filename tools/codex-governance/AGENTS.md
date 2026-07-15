@@ -54,6 +54,23 @@ Git history currently uses short, plain commits such as `Initial commit` and `fi
 
 Pull requests should include a short summary, files changed, validation commands run, and any changes to governance scope or hard-stop behavior. Link the primary Jira work item and explain any approved review exception. Screenshots are not required for Markdown-only changes.
 
+## Work Tracking And Implementation Entry
+
+Use GitHub issues for backlog, deferred work, and broad planning. Use Jira as
+the execution contract for approved implementation work. Do not begin an
+implementation edit or call work implementation-ready until a committed work
+item links its Jira Story and primary Subtask.
+
+At each work-state change, report whether the item is `backlog`,
+`work-item-draft`, `Jira-planning`, `implementation-ready`, or `closed` and
+name the next required transition. Before the first implementation edit, verify
+the Jira linkage and state the next Jira update trigger.
+
+For every governed commit, blocker, PR, and merge, prepare a factual Jira
+update. Jira remains the authoritative execution record, but every Jira write
+must be previewed, explicitly approved, and read back. Never make a Jira write
+from a hook, background process, or unstated inference.
+
 ## Security & Configuration Tips
 
 Preserve the repository's approval boundaries. Do not add instructions that permit pushes, publishes, remote PR updates, tags, releases, Terraform apply, cloud mutations, destructive commands, or secret access without explicit approval.
