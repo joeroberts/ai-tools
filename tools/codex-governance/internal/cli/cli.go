@@ -37,6 +37,7 @@ Usage:
   codex-governance jira constraints draft|assign --output PATH [--prd PATH --spec PATH --roadmap PATH --decomposition PATH --assignment PATH --repo-root PATH]
   codex-governance jira export bootstrap --signer PATH --approve [--repo-root PATH]
   codex-governance jira export create --story KEY --subtask KEY --signer PATH --output PATH --approve [--repo-root PATH]
+  codex-governance jira work update --issue KEY --kind commit|blocker [commit or blocker fields] [--approve]
   codex-governance jira plan decompose --prd PATH --spec PATH --roadmap PATH --output PATH [--repo-root PATH] [--runtime-root PATH] [--codex-bin PATH]
   codex-governance jira plan generate --prd PATH --spec PATH --roadmap PATH --constraints PATH --output PATH --policy PATH --reviewer-model NAME --verifier-model NAME [--repo-root PATH] [--runtime-root PATH] [--codex-bin PATH] [--dry-run] [--verbose]
   codex-governance jira plan validate --plan PATH [--repo-root PATH]
@@ -109,7 +110,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 
 func runJira(args []string, stdout, stderr io.Writer) int {
 	if len(args) < 2 {
-		fmt.Fprintln(stderr, "usage: codex-governance jira plan|constraints|export")
+		fmt.Fprintln(stderr, "usage: codex-governance jira plan|constraints|export|work")
 		return 2
 	}
 	if args[0] == "constraints" {
@@ -118,8 +119,11 @@ func runJira(args []string, stdout, stderr io.Writer) int {
 	if args[0] == "export" {
 		return runJiraExport(args[1:], stdout, stderr)
 	}
+	if args[0] == "work" {
+		return runJiraWork(args[1:], stdout, stderr)
+	}
 	if args[0] != "plan" {
-		fmt.Fprintln(stderr, "usage: codex-governance jira plan|constraints")
+		fmt.Fprintln(stderr, "usage: codex-governance jira plan|constraints|export|work")
 		return 2
 	}
 	command := args[1]
@@ -289,6 +293,70 @@ func runJira(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	fmt.Fprintf(stdout, "PASS created Story %s and %d subtasks\n", story.Key, len(subtasks))
+	return 0
+}
+
+type stringValues []string
+
+func (v *stringValues) String() string { return strings.Join(*v, ",") }
+func (v *stringValues) Set(value string) error {
+	*v = append(*v, value)
+	return nil
+}
+
+func runJiraWork(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || args[0] != "update" {
+		fmt.Fprintln(stderr, "usage: codex-governance jira work update --issue KEY --kind commit|blocker [commit or blocker fields] [--approve]")
+		return 2
+	}
+	flags := flag.NewFlagSet("jira work update", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	issue := flags.String("issue", "", "Jira issue key")
+	kind := flags.String("kind", "", "work record kind: commit or blocker")
+	commit := flags.String("commit", "", "full Git commit SHA")
+	scope := flags.String("scope", "", "completed scope")
+	blocker := flags.String("blocker", "", "blocker description")
+	impact := flags.String("impact", "", "blocker impact")
+	decision := flags.String("decision-needed", "", "owner decision needed")
+	nextAction := flags.String("next-action", "", "next action")
+	approve := flags.Bool("approve", false, "explicitly authorize the Jira comment write")
+	var checks, evidence stringValues
+	flags.Var(&checks, "check", "completed check (repeatable)")
+	flags.Var(&evidence, "evidence", "evidence reference (repeatable)")
+	if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 {
+		return 2
+	}
+	update := jira.WorkUpdate{Issue: *issue, Kind: *kind, Commit: *commit, Scope: *scope, Checks: checks, Evidence: evidence, Blocker: *blocker, Impact: *impact, DecisionNeeded: *decision, NextAction: *nextAction}
+	if err := update.Validate(); err != nil {
+		fmt.Fprintf(stderr, "validate Jira work update: %v\n", err)
+		return 2
+	}
+	comment := update.Comment()
+	if !*approve {
+		fmt.Fprintf(stdout, "PREVIEW Jira comment for %s:\n%s\n", update.Issue, comment)
+		return 0
+	}
+	baseURL, email, token := os.Getenv("JIRA_BASE_URL"), os.Getenv("JIRA_EMAIL"), os.Getenv("JIRA_API_TOKEN")
+	if baseURL == "" || email == "" || token == "" {
+		fmt.Fprintln(stderr, "jira work update requires JIRA_BASE_URL, JIRA_EMAIL, and JIRA_API_TOKEN with --approve")
+		return 2
+	}
+	client := jira.WorkClient{BaseURL: baseURL, Email: email, Token: token}
+	created, err := client.AddComment(update.Issue, comment)
+	if err != nil {
+		fmt.Fprintf(stderr, "write Jira work update: %v\n", err)
+		return 1
+	}
+	readBack, err := client.ReadComment(update.Issue, created.ID)
+	if err != nil {
+		fmt.Fprintf(stderr, "read back Jira work update %s: %v\n", created.ID, err)
+		return 1
+	}
+	if readBack.ID != created.ID || readBack.Body != comment {
+		fmt.Fprintf(stderr, "read back Jira work update %s did not match the approved preview\n", created.ID)
+		return 1
+	}
+	fmt.Fprintf(stdout, "PASS recorded %s work update on %s (comment %s) and verified read-back\n", update.Kind, update.Issue, created.ID)
 	return 0
 }
 

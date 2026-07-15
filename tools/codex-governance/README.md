@@ -35,6 +35,13 @@ Jira stories own product intent and acceptance criteria. Jira implementation
 subtasks own scoped technical work. Pull requests and CI own code and validation
 evidence. ADRs remain under `docs/decisions/` with the code.
 
+GitHub issues are backlog and planning records; they do not authorize
+implementation. Before implementation begins, create the approved Jira Story
+and primary Subtask, link the committed work item, and verify that lifecycle
+state in preflight. Jira is the running execution record: approved updates
+capture each governed commit or blocker, then PR and merge closure. Every Jira
+write is previewed, explicitly approved, and read back.
+
 The initial workflow reads Jira only. A Jira write, push, merge, publish,
 release, deployment, Terraform apply, cloud mutation, destructive command, or
 secret access always requires explicit approval.
@@ -61,6 +68,21 @@ codex-governance jira plan validate \
 The plan contract records source paths and SHA-256 digests, a Story, independent
 subtasks, traceability, phase, change class, review budget, allowed paths, and
 ADR rationale. It does not write Jira.
+
+## Jira Work Records
+
+Use `jira work update` after a known commit or as soon as work is blocked. It
+prints the exact Jira comment by default. Add `--approve` only after reviewing
+that preview; the command then reads credentials from the environment, writes
+the comment, and verifies the exact comment by read-back.
+
+```bash
+codex-governance jira work update \
+  --issue REK-5 --kind commit --commit FULL_SHA \
+  --scope "Add approval-gated Jira work records" \
+  --check "go test ./internal/jira ./internal/cli" \
+  --evidence "/private/review-evidence.json"
+```
 
 ## Verification And Advisory CI
 

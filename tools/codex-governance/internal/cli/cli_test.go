@@ -121,6 +121,36 @@ func TestRunJiraPlanGenerateDryRun(t *testing.T) {
 	}
 }
 
+func TestRunJiraWorkUpdatePreviewsCommitWithoutCredentials(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	commit := strings.Repeat("a", 40)
+	code := Run([]string{"jira", "work", "update", "--issue", "REK-5", "--kind", "commit", "--commit", commit, "--scope", "Add work records", "--check", "go test ./internal/jira", "--evidence", "/private/evidence.json"}, &stdout, &stderr)
+	if code != 0 || !strings.Contains(stdout.String(), "PREVIEW Jira comment for REK-5") || !strings.Contains(stdout.String(), "Commit: "+commit) {
+		t.Fatalf("work preview = %d, stdout=%q, stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestRunJiraWorkUpdateRequiresCompleteBlocker(t *testing.T) {
+	var stderr bytes.Buffer
+	code := Run([]string{"jira", "work", "update", "--issue", "REK-5", "--kind", "blocker", "--blocker", "Jira unavailable"}, &bytes.Buffer{}, &stderr)
+	if code != 2 || !strings.Contains(stderr.String(), "--impact") {
+		t.Fatalf("incomplete blocker = %d, stderr=%q", code, stderr.String())
+	}
+}
+
+func TestRunJiraWorkUpdateApproveRequiresCredentials(t *testing.T) {
+	t.Setenv("JIRA_BASE_URL", "")
+	t.Setenv("JIRA_EMAIL", "")
+	t.Setenv("JIRA_API_TOKEN", "")
+	var stderr bytes.Buffer
+	commit := strings.Repeat("a", 40)
+	code := Run([]string{"jira", "work", "update", "--issue", "REK-5", "--kind", "commit", "--commit", commit, "--scope", "Add work records", "--check", "go test ./internal/jira", "--evidence", "/private/evidence.json", "--approve"}, &bytes.Buffer{}, &stderr)
+	if code != 2 || !strings.Contains(stderr.String(), "JIRA_BASE_URL") {
+		t.Fatalf("approve without credentials = %d, stderr=%q", code, stderr.String())
+	}
+}
+
 func TestRunJiraPlanGenerateVerboseDryRun(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

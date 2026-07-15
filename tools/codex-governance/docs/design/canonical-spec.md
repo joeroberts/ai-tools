@@ -43,6 +43,29 @@ release changes outside the approved stage.
 
 ## Jira Work-Item Model
 
+### Backlog And Implementation Entry
+
+GitHub issues record ideas, deferred work, prioritization, and broad planning.
+They do not authorize implementation. Jira is the execution contract once an
+owner approves work to enter the implementation pipeline: create a Story and
+one or more scoped implementation Subtasks, then link the approved work item
+before the first implementation edit.
+
+An agent must report the current lifecycle state as one of `backlog`,
+`work-item-draft`, `Jira-planning`, `implementation-ready`, or `closed`. It
+must not call work implementation-ready unless the approved work item is
+committed and identifies the Jira Story and primary Subtask. Before changing
+implementation code, preflight must verify that linkage and state the next
+required Jira update trigger.
+
+Jira is the authoritative execution record. After each governed commit, record
+the commit SHA, completed scope, checks, and evidence outcome. When blocked,
+record the blocker, impact, required owner decision, and next action promptly.
+After merge confirmation, record the pull request and merged commit, then
+transition the Subtask and only an eligible parent Story. Each Jira write must
+be previewed, explicitly approved, and read back; no hook, background process,
+or agent may make an implicit write.
+
 A Jira story owns the business intent. Each independently reviewable technical
 slice is a Jira implementation subtask. A subtask must contain:
 
