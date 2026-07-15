@@ -102,9 +102,13 @@ func TestApplyConstraintsOverridesManagerControlledPhaseAndAllowedPathEvidence(t
 	// These emulate malformed manager output. Assignment-owned values and their
 	// evidence must be replaced before deterministic plan validation runs.
 	plan.Subtasks[0].Phase = "unapproved manager phase"
+	plan.Subtasks[0].ChangeClass = "high-risk"
 	plan.Subtasks[0].AllowedPaths = []string{"internal/unapproved"}
 	plan.Subtasks[0].Traceability["phase"] = []ticketplan.Reference{{
 		Source: "spec", Section: "Scope", Excerpt: "Source evidence: Add deterministic ticket-plan contract validation in internal/ticketplan.",
+	}}
+	plan.Subtasks[0].Traceability["change_class"] = []ticketplan.Reference{{
+		Source: "spec", Section: "Scope", Excerpt: "unapproved manager change class",
 	}}
 	plan.Subtasks[0].Traceability["allowed_paths"] = []ticketplan.Reference{{
 		Source: "spec", Section: "Scope", Excerpt: "Source evidence: Add deterministic ticket-plan contract validation in internal/ticketplan.",
@@ -114,7 +118,7 @@ func TestApplyConstraintsOverridesManagerControlledPhaseAndAllowedPathEvidence(t
 		t.Fatal(err)
 	}
 	issues := strings.Join(plan.ValidateAgainst(repoRoot), "\n")
-	for _, field := range []string{"phase", "allowed_paths"} {
+	for _, field := range []string{"phase", "change_class", "allowed_paths"} {
 		if strings.Contains(issues, "subtask contract-validation "+field+" traceability lacks matching source evidence") {
 			t.Fatalf("%s evidence was not replaced before validation: %q", field, issues)
 		}
