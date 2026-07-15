@@ -81,7 +81,7 @@ func TestPlanValidateRejectsNormalizedTraversalAndCycles(t *testing.T) {
 
 func TestPlanValidateAgainstRejectsTraceWithoutEvidence(t *testing.T) {
 	root, plan := validPlan(t)
-	plan.Story.Traceability["summary"][0].Excerpt = "Missing source quote"
+	plan.Story.Traceability["summary"][0].Section = "Missing source section"
 	issues := strings.Join(plan.ValidateAgainst(root), "\n")
 	if !strings.Contains(issues, "story summary traceability lacks matching source evidence") {
 		t.Fatalf("issues = %q", issues)
@@ -90,7 +90,7 @@ func TestPlanValidateAgainstRejectsTraceWithoutEvidence(t *testing.T) {
 
 func TestPlanValidateAgainstRejectsGenericTraceExcerpt(t *testing.T) {
 	root, plan := validPlan(t)
-	plan.Story.Traceability["summary"][0].Excerpt = "Source evidence"
+	plan.Story.Summary = "Unsupported manager value"
 	issues := strings.Join(plan.ValidateAgainst(root), "\n")
 	if !strings.Contains(issues, "story summary traceability lacks matching source evidence") {
 		t.Fatalf("issues = %q", issues)
