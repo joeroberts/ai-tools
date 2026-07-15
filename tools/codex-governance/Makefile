@@ -1,4 +1,4 @@
-.PHONY: build install uninstall test vet fmt smoke-ticket-plan smoke-implementation-agent
+.PHONY: build install uninstall test vet fmt smoke-ticket-plan smoke-implementation-agent ollama-inventory install-hooks review-gate
 
 GO_BIN_DIR := $(shell go env GOBIN)
 ifeq ($(GO_BIN_DIR),)
@@ -29,3 +29,14 @@ smoke-ticket-plan:
 
 smoke-implementation-agent:
 	go test ./internal/implementation ./internal/cli -count=1
+
+ollama-inventory:
+	@test -n "$(POLICY)" || (echo "set POLICY to the owner-only Ollama policy file" >&2; exit 2)
+	go run ./cmd/codex-governance ollama inventory --policy "$(POLICY)"
+
+install-hooks:
+	git config core.hooksPath .githooks
+
+review-gate:
+	@test -n "$(EVIDENCE)" || (echo "set EVIDENCE to the reviewer/verifier evidence file" >&2; exit 2)
+	go run ./cmd/codex-governance implementation evidence check --evidence "$(EVIDENCE)" --worktree . --staged

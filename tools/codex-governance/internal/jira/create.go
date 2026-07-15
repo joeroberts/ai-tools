@@ -30,14 +30,39 @@ func (c CreateClient) createPlanAfterPhase4Approval(project string, plan ticketp
 	}
 	subtasks := make([]CreatedIssue, 0, len(plan.Subtasks))
 	for _, subtask := range plan.Subtasks {
-		description := "## Scope\n" + subtask.Scope + "\n\n## Non-Goals\n- " + strings.Join(subtask.NonGoals, "\n- ") + "\n\n## Technical Acceptance Criteria\n- " + strings.Join(subtask.AcceptanceCriteria, "\n- ") + "\n\n## Validation Plan\n- " + strings.Join(subtask.ValidationPlan, "\n- ") + "\n\n## ADR\n" + subtask.ADR
-		created, err := c.create(project, "Sub-task", subtask.Summary, description, story.Key)
+		created, err := c.createSubtask(project, subtask, story.Key)
 		if err != nil {
 			return story, subtasks, err
 		}
 		subtasks = append(subtasks, created)
 	}
 	return story, subtasks, nil
+}
+
+// ResumePlan creates only the ordered subtasks that were not recorded before
+// a prior publication attempt stopped. The caller must validate the record's
+// plan digest and incomplete status before invoking this recovery operation.
+func (c CreateClient) ResumePlan(project string, plan ticketplan.Plan, story CreatedIssue, created []CreatedIssue) ([]CreatedIssue, error) {
+	if story.Key == "" {
+		return nil, fmt.Errorf("resume requires a recorded Story key")
+	}
+	if len(created) >= len(plan.Subtasks) {
+		return nil, fmt.Errorf("resume has no remaining subtasks to create")
+	}
+	result := append([]CreatedIssue(nil), created...)
+	for _, subtask := range plan.Subtasks[len(created):] {
+		issue, err := c.createSubtask(project, subtask, story.Key)
+		if err != nil {
+			return result, err
+		}
+		result = append(result, issue)
+	}
+	return result, nil
+}
+
+func (c CreateClient) createSubtask(project string, subtask ticketplan.Subtask, parent string) (CreatedIssue, error) {
+	description := "## Scope\n" + subtask.Scope + "\n\n## Non-Goals\n- " + strings.Join(subtask.NonGoals, "\n- ") + "\n\n## Technical Acceptance Criteria\n- " + strings.Join(subtask.AcceptanceCriteria, "\n- ") + "\n\n## Validation Plan\n- " + strings.Join(subtask.ValidationPlan, "\n- ") + "\n\n## ADR\n" + subtask.ADR
+	return c.create(project, "Subtask", subtask.Summary, description, parent)
 }
 
 func (c CreateClient) create(project, issueType, summary, description, parent string) (CreatedIssue, error) {

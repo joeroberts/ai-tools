@@ -130,6 +130,15 @@ func TestRunJiraPlanGenerateVerboseDryRun(t *testing.T) {
 	}
 }
 
+func TestRunJiraConstraintsAssignRequiresDecompositionAndAssignment(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"jira", "constraints", "assign", "--output", "constraints.json"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("constraints assign = %d, stdout=%q, stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
 func TestWriteJiraPublicationRecordIsOwnerOnly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "result.json")
 	if err := writeJiraPublicationRecord(path, jiraPublicationRecord{PlanDigest: "sha256:abc", Status: "creating"}); err != nil {

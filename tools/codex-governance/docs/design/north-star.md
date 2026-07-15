@@ -167,8 +167,10 @@ ticket baseline, allowed paths, commands, ADRs, and repository guidance. The
 governance application owns preflight, lifecycle evidence, reconciliation, and
 deterministic post-run checks.
 
-Local commits are permitted only when enabled by the approved work item and
-pre-commit gates pass. Pushing the exact resulting commit to a non-protected
+Local commits are permitted only when enabled by the approved work item, the
+exact staged diff has passing assessments from independent reviewer and
+verifier executors, and pre-commit gates pass. The same diff-bound evidence is
+required before pushing the exact resulting commit to a non-protected
 branch and creating its PR require a separate run-specific human authorization.
 It binds the work item and run ID, repository identity, remote name and URL
 fingerprint, target ref, exact commit and expected base SHAs, approver identity,

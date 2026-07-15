@@ -1,28 +1,34 @@
 format_version: 1
 profile: generic
 jira:
-  project: ""
-  issue_key_pattern: "^[A-Z][A-Z0-9]+-[0-9]+$"
-  required_sections:
-    - Scope
-    - Non-Goals
-    - Technical Acceptance Criteria
-    - Validation Plan
+    project: REK
+    issue_key_pattern: ^[A-Z][A-Z0-9]+-[0-9]+$
+    required_sections:
+        - Scope
+        - Non-Goals
+        - Technical Acceptance Criteria
+        - Validation Plan
 review_budget:
-  max_changed_files: 20
-  max_changed_lines: 800
-  max_components: 2
+    max_changed_files: 20
+    max_changed_lines: 800
+    max_components: 2
 ci:
-  provider: github-actions
-  mode: warn
+    provider: github-actions
+    mode: warn
 upstream:
-  release: ""
-  source_commit: ""
-  format_version: 0
+    release: ""
+    source_commit: ""
+    format_version: 0
 implementation:
-  allowed_adapters: []
-  local_code_edit_enabled: false
+    allowed_adapters:
+        - headless-codex
+    local_code_edit_enabled: false
 signing:
-  format_version: 1
-  trusted_keys: []
-  offline_export_max_age: 24h
+    format_version: 1
+    trusted_keys:
+        - key_id: sha256:d449c1e0fca7d
+          role: export-issuer
+          algorithm: ed25519
+          public_key: hQWB+oognVrOvQzpmY7cYU5DmyJ3I3QDm89zI7WGMXM=
+    offline_export_max_age: 24h
+    repository_id: github.com/joeroberts/ai-tools

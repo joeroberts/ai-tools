@@ -79,6 +79,12 @@ it receives no Jira credentials or model prompts.
 
 ## Development
 
+Before committing or publishing a change, obtain independent reviewer and
+verifier assessments for the exact diff. Both must pass before the commit,
+push, or pull-request gate can proceed. The tracked hooks use the evidence
+file supplied through `CODEX_GOVERNANCE_REVIEW_EVIDENCE`; install them with
+`make install-hooks`.
+
 ```bash
 make fmt
 make vet
