@@ -390,7 +390,13 @@ func runJiraWorkFinalize(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	if !*approve {
-		fmt.Fprintf(stdout, "PREVIEW Jira finalization:\n%s\nTransition subtask %s, then Story %s\n", plan.Comment, plan.Subtask.Key, plan.Story.Key)
+		fmt.Fprintf(stdout, "PREVIEW Jira finalization:\n%s\nTransition subtask %s", plan.Comment, plan.Subtask.Key)
+		if plan.StoryEligible {
+			fmt.Fprintf(stdout, ", then Story %s", plan.Story.Key)
+		} else {
+			fmt.Fprintf(stdout, "; Story %s remains open until its other children are complete", plan.Story.Key)
+		}
+		fmt.Fprintln(stdout)
 		return 0
 	}
 	comment, err := (jira.WorkClient{BaseURL: baseURL, Email: email, Token: token}).AddComment(plan.Subtask.Key, plan.Comment)
@@ -411,15 +417,19 @@ func runJiraWorkFinalize(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "verify subtask transition: %v\n", err)
 		return 1
 	}
-	if err := client.Transition(plan.Story.Key, plan.StoryTransitionID); err != nil {
-		fmt.Fprintf(stderr, "transition Story: %v\n", err)
-		return 1
+	if plan.StoryEligible {
+		if err := client.Transition(plan.Story.Key, plan.StoryTransitionID); err != nil {
+			fmt.Fprintf(stderr, "transition Story: %v\n", err)
+			return 1
+		}
+		if err := client.VerifyClosed(plan.Story.Key); err != nil {
+			fmt.Fprintf(stderr, "verify Story transition: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "PASS finalized subtask %s and Story %s\n", plan.Subtask.Key, plan.Story.Key)
+		return 0
 	}
-	if err := client.VerifyClosed(plan.Story.Key); err != nil {
-		fmt.Fprintf(stderr, "verify Story transition: %v\n", err)
-		return 1
-	}
-	fmt.Fprintf(stdout, "PASS finalized subtask %s and Story %s\n", plan.Subtask.Key, plan.Story.Key)
+	fmt.Fprintf(stdout, "PASS finalized subtask %s; Story %s remains open for incomplete children\n", plan.Subtask.Key, plan.Story.Key)
 	return 0
 }
 

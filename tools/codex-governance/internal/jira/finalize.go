@@ -54,6 +54,7 @@ type FinalizationPlan struct {
 	Subtask, Story      IssueState
 	SubtaskTransitionID string
 	StoryTransitionID   string
+	StoryEligible       bool
 	Comment             string
 }
 
@@ -84,20 +85,22 @@ func (c FinalizationClient) Plan(subtask string, pr PullRequest) (FinalizationPl
 	if story.Done {
 		return FinalizationPlan{}, fmt.Errorf("parent Story %s is already complete", story.Key)
 	}
-	for _, sibling := range story.Children {
-		if sibling.Key != child.Key && !sibling.Done {
-			return FinalizationPlan{}, fmt.Errorf("parent Story %s has incomplete child %s", story.Key, sibling.Key)
-		}
-	}
 	childTransition, err := c.doneTransition(child.Key)
 	if err != nil {
 		return FinalizationPlan{}, err
+	}
+	plan := FinalizationPlan{Subtask: child, Story: story, SubtaskTransitionID: childTransition, Comment: "Work record: merged pull request\n\nPull request: " + pr.URL + "\nMerged commit: " + pr.MergeCommit}
+	for _, sibling := range story.Children {
+		if sibling.Key != child.Key && !sibling.Done {
+			return plan, nil
+		}
 	}
 	storyTransition, err := c.doneTransition(story.Key)
 	if err != nil {
 		return FinalizationPlan{}, err
 	}
-	return FinalizationPlan{Subtask: child, Story: story, SubtaskTransitionID: childTransition, StoryTransitionID: storyTransition, Comment: "Work record: merged pull request\n\nPull request: " + pr.URL + "\nMerged commit: " + pr.MergeCommit}, nil
+	plan.StoryTransitionID, plan.StoryEligible = storyTransition, true
+	return plan, nil
 }
 
 func (c FinalizationClient) Transition(issue, transitionID string) error {

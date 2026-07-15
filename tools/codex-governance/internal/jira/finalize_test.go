@@ -7,12 +7,12 @@ import (
 	"testing"
 )
 
-func TestFinalizationPlanRejectsIncompleteSibling(t *testing.T) {
+func TestFinalizationPlanDefersStoryForIncompleteSibling(t *testing.T) {
 	server := finalizationServer(t, true)
 	defer server.Close()
-	_, err := (FinalizationClient{BaseURL: server.URL}).Plan("REK-6", PullRequest{URL: "https://example.test/pr/1", MergeCommit: strings.Repeat("a", 40), Merged: true})
-	if err == nil || !strings.Contains(err.Error(), "incomplete child REK-7") {
-		t.Fatalf("Plan() error = %v", err)
+	plan, err := (FinalizationClient{BaseURL: server.URL}).Plan("REK-6", PullRequest{URL: "https://example.test/pr/1", MergeCommit: strings.Repeat("a", 40), Merged: true})
+	if err != nil || plan.StoryEligible || plan.SubtaskTransitionID != "11" {
+		t.Fatalf("Plan() = %#v, %v", plan, err)
 	}
 }
 
@@ -20,7 +20,7 @@ func TestFinalizationPlanFindsOrderedDoneTransitions(t *testing.T) {
 	server := finalizationServer(t, false)
 	defer server.Close()
 	plan, err := (FinalizationClient{BaseURL: server.URL}).Plan("REK-6", PullRequest{URL: "https://example.test/pr/1", MergeCommit: strings.Repeat("a", 40), Merged: true})
-	if err != nil || plan.SubtaskTransitionID != "11" || plan.StoryTransitionID != "12" || !strings.Contains(plan.Comment, "Merged commit") {
+	if err != nil || !plan.StoryEligible || plan.SubtaskTransitionID != "11" || plan.StoryTransitionID != "12" || !strings.Contains(plan.Comment, "Merged commit") {
 		t.Fatalf("Plan() = %#v, %v", plan, err)
 	}
 }
