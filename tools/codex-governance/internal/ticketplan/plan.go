@@ -308,6 +308,10 @@ func traceSupportsField(field, excerpt, value string) bool {
 		return containsNormalizedPhrase(excerpt, value)
 	}
 	if isListTraceField(field) {
+		if field == "validation_plan" {
+			overlap := substantiveTokenOverlapCount(excerpt, value)
+			return overlap >= 2
+		}
 		if field == "review_budget" && isPositiveInteger(value) {
 			return containsWholeNumber(excerpt, value)
 		}
