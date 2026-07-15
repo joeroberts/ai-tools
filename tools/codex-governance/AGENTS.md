@@ -76,6 +76,15 @@ After confirming that a pull request is merged, return the local worktree to
 If local changes or branch state prevent that sequence, report the blocker; do
 not stash, discard, or overwrite work to force synchronization.
 
+## Local Model Residency
+
+Use the guarded Makefile targets to manage the fixed local review roles:
+`make unload-reviewer-model`, `make unload-verifier-model`,
+`make load-reviewer-model`, and `make load-verifier-model`. Before switching to
+a high-memory reviewer or verifier, unload the no-longer-needed role and verify
+the governed status reports the expected residency. Do not use raw Ollama CLI
+or API commands and do not ask the user to unload models manually.
+
 ## Security & Configuration Tips
 
 Preserve the repository's approval boundaries. Do not add instructions that permit pushes, publishes, remote PR updates, tags, releases, Terraform apply, cloud mutations, destructive commands, or secret access without explicit approval.

@@ -57,6 +57,56 @@ type Status struct {
 	SizeVRAM      int64  `json:"size_vram"`
 }
 
+// SetResidency changes only the residency of an allowlisted installed model.
+// It never includes prompt content and verifies the requested final state.
+func SetResidency(client *http.Client, policy Policy, modelName string, loaded bool) error {
+	var allowed Model
+	for _, model := range policy.Models {
+		if model.Name == modelName {
+			allowed = model
+			break
+		}
+	}
+	if allowed.Name == "" {
+		return fmt.Errorf("model is not allowlisted")
+	}
+	if err := verifyInstalled(client, policy.Endpoint, allowed); err != nil {
+		return err
+	}
+	keepAlive := any(0)
+	if loaded {
+		keepAlive = "10m"
+	}
+	payload, _ := json.Marshal(map[string]any{"model": allowed.Name, "keep_alive": keepAlive, "stream": false})
+	request, err := http.NewRequest(http.MethodPost, policy.Endpoint+"/api/generate", bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("Ollama residency request returned %s", response.Status)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		status, err := LoadedStatus(client, policy, modelName)
+		if err != nil {
+			return err
+		}
+		if status.Loaded == loaded {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("model residency verification failed: loaded=%t", status.Loaded)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 // InstalledModel is immutable local model metadata returned by a read-only
 // inventory request. Inventory never authorizes a model for execution.
 type InstalledModel struct {
