@@ -2,6 +2,7 @@ package agentplan
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,15 @@ import (
 
 	"codex-governance/internal/ticketplan"
 )
+
+func TestWriteDecompositionReturnsMarshalError(t *testing.T) {
+	original := marshalDecomposition
+	marshalDecomposition = func(any, string, string) ([]byte, error) { return nil, errors.New("marshal failed") }
+	t.Cleanup(func() { marshalDecomposition = original })
+	if err := writeDecomposition(filepath.Join(t.TempDir(), "plan.json"), ticketplan.Plan{}); err == nil || !strings.Contains(err.Error(), "serialize manager decomposition") {
+		t.Fatalf("writeDecomposition() error = %v", err)
+	}
+}
 
 type fakeRunner struct {
 	roles []string
@@ -94,6 +104,34 @@ printf '%s' '{"format_version":1}' > "$output"
 	}
 	if string(output) != `{"format_version":1}` {
 		t.Fatalf("CodexRunner.Run() output = %q", output)
+	}
+}
+
+func TestDecomposeWritesOwnerOnlyArtifact(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"prd.md", "spec.md", "roadmap.md"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("# Scope\nApproved source.\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	binary := filepath.Join(root, "fake-codex")
+	script := `#!/bin/sh
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--output-last-message" ]; then shift; printf '%s' '{"format_version":1}' > "$1"; exit 0; fi
+  shift
+done
+exit 1
+`
+	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(root, "private", "decomposition.json")
+	if _, err := Decompose(Request{PRDPath: filepath.Join(root, "prd.md"), SpecPath: filepath.Join(root, "spec.md"), RoadmapPath: filepath.Join(root, "roadmap.md"), OutputPath: output, RepoRoot: root, RuntimeRoot: filepath.Join(root, "runtime")}, CodexRunner{Binary: binary, WorkDir: root}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(output)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("decomposition permissions = %v, %v", info.Mode().Perm(), err)
 	}
 }
 

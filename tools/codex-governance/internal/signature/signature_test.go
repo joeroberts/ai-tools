@@ -4,9 +4,33 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
+
+func TestCreateLocalExportSignerWritesOwnerOnlyKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "runtime", "export-signer.json")
+	key, err := CreateLocalExportSigner(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key.KeyID == "" || key.Role != "export-issuer" || key.Algorithm != Algorithm || key.PublicKey == "" {
+		t.Fatalf("trusted key = %#v", key)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("signer permissions = %v, %v", info.Mode().Perm(), err)
+	}
+	if _, err := CreateLocalExportSigner(path); err == nil {
+		t.Fatal("CreateLocalExportSigner() overwrote an existing signer")
+	}
+	keyID, privateKey, err := LoadLocalExportSigner(path)
+	if err != nil || keyID != key.KeyID || len(privateKey) != ed25519.PrivateKeySize {
+		t.Fatalf("LoadLocalExportSigner() = %q, %d, %v", keyID, len(privateKey), err)
+	}
+}
 
 func TestVerifyAcceptsCanonicalPayload(t *testing.T) {
 	publicKey, privateKey := fixtureKey(t)

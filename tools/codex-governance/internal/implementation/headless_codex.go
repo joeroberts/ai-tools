@@ -1,7 +1,6 @@
 package implementation
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -23,9 +22,24 @@ type HeadlessCodexAdapter struct {
 	tasks map[string]*codexTask
 }
 
+// codexThreadID remains available for parsing archived Codex JSON event logs.
+func codexThreadID(line []byte) (string, bool) {
+	var event struct {
+		Type     string `json:"type"`
+		ThreadID string `json:"thread_id"`
+	}
+	if err := json.Unmarshal(line, &event); err != nil || event.Type != "thread.started" || event.ThreadID == "" {
+		return "", false
+	}
+	return event.ThreadID, true
+}
+
 type codexTask struct {
 	command    *exec.Cmd
 	resultPath string
+	stderrPath string
+	stderr     *os.File
+	stdout     *os.File
 	done       bool
 	err        error
 }
@@ -42,53 +56,35 @@ func (a *HeadlessCodexAdapter) Start(bundle TaskBundle) (string, error) {
 		return "", err
 	}
 	resultPath := filepath.Join(a.ResultDir, fmt.Sprintf("codex-%d-result.json", time.Now().UTC().UnixNano()))
+	stderrPath := resultPath + ".stderr.log"
 	schemaPath := filepath.Join(a.ResultDir, fmt.Sprintf("codex-%d-schema.json", time.Now().UTC().UnixNano()))
 	if err := os.WriteFile(schemaPath, []byte(codexResultSchema), 0o600); err != nil {
 		return "", err
 	}
-	command := exec.Command(a.Binary, "--ask-for-approval", "never", "exec", "--json", "--sandbox", "workspace-write", "--output-schema", schemaPath, "--output-last-message", resultPath, headlessPrompt(bundle))
+	command := exec.Command(a.Binary, "--ask-for-approval", "never", "exec", "--ephemeral", "--sandbox", "workspace-write", "--output-schema", schemaPath, "--output-last-message", resultPath, headlessPrompt(bundle))
 	command.Dir = filepath.Clean(a.WorkDir)
-	stdout, err := command.StdoutPipe()
+	stderr, err := os.OpenFile(stderrPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return "", err
 	}
-	if err := command.Start(); err != nil {
+	command.Stderr = stderr
+	stdout, err := os.OpenFile(resultPath+".stdout.log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		_ = stderr.Close()
 		return "", err
 	}
-	started := make(chan string, 1)
-	readErr := make(chan error, 1)
-	go func() {
-		scanner := bufio.NewScanner(stdout)
-		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-		for scanner.Scan() {
-			if threadID, ok := codexThreadID(scanner.Bytes()); ok {
-				select {
-				case started <- threadID:
-				default:
-				}
-			}
-		}
-		readErr <- scanner.Err()
-	}()
-	select {
-	case threadID := <-started:
-		a.mu.Lock()
-		a.tasks[threadID] = &codexTask{command: command, resultPath: resultPath}
-		a.mu.Unlock()
-		go a.wait(threadID, command)
-		return threadID, nil
-	case err := <-readErr:
-		_ = command.Process.Kill()
-		_ = command.Wait()
-		if err != nil {
-			return "", fmt.Errorf("read Codex startup event: %w", err)
-		}
-		return "", fmt.Errorf("Codex did not emit a thread.started event")
-	case <-time.After(30 * time.Second):
-		_ = command.Process.Kill()
-		_ = command.Wait()
-		return "", fmt.Errorf("Codex did not start within 30 seconds")
+	command.Stdout = stdout
+	if err := command.Start(); err != nil {
+		_ = stderr.Close()
+		_ = stdout.Close()
+		return "", err
 	}
+	taskID := fmt.Sprintf("codex-%d", command.Process.Pid)
+	a.mu.Lock()
+	a.tasks[taskID] = &codexTask{command: command, resultPath: resultPath, stderrPath: stderrPath, stderr: stderr, stdout: stdout}
+	a.mu.Unlock()
+	go a.wait(taskID, command)
+	return taskID, nil
 }
 
 func (a *HeadlessCodexAdapter) Status(taskID string) (AdapterStatus, error) {
@@ -153,19 +149,10 @@ func (a *HeadlessCodexAdapter) wait(taskID string, command *exec.Cmd) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if task, ok := a.tasks[taskID]; ok {
+		_ = task.stderr.Close()
+		_ = task.stdout.Close()
 		task.done, task.err = true, err
 	}
-}
-
-func codexThreadID(line []byte) (string, bool) {
-	var event struct {
-		Type     string `json:"type"`
-		ThreadID string `json:"thread_id"`
-	}
-	if err := json.Unmarshal(line, &event); err != nil || event.Type != "thread.started" || event.ThreadID == "" {
-		return "", false
-	}
-	return event.ThreadID, true
 }
 
 func headlessPrompt(bundle TaskBundle) string {

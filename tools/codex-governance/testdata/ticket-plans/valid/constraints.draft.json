@@ -27,6 +27,7 @@
   "subtasks": [
     {
       "id": "contract-validation",
+      "phase": "Phase 1",
       "allowed_paths": ["internal/ticketplan"],
       "review_budget": {
         "max_changed_files": 5,
@@ -35,6 +36,7 @@
       },
       "dependencies": [],
       "traceability": {
+        "phase": [{"source": "roadmap", "section": "Phase 1", "excerpt": "Source evidence: Phase 1 Plan Contract And Workflow State"}],
         "review_budget": [{"source": "spec", "section": "Budget", "excerpt": "Source evidence: Limit the fixture change to 5 changed files, 300 changed lines, and ticketplan tests"}],
         "allowed_paths": [{"source": "spec", "section": "Scope", "excerpt": "Source evidence: Add deterministic ticket-plan contract validation in internal/ticketplan"}],
         "dependencies": [{"source": "roadmap", "section": "Phase 1", "excerpt": "Source evidence: Phase 1 Plan Contract And Workflow State"}]

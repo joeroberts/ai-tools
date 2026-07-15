@@ -18,6 +18,7 @@ import (
 	"codex-governance/internal/ollama"
 	"codex-governance/internal/roadmap"
 	gruntime "codex-governance/internal/runtime"
+	"codex-governance/internal/signature"
 	"codex-governance/internal/syncer"
 	"codex-governance/internal/ticketplan"
 	"codex-governance/internal/validate"
@@ -33,11 +34,15 @@ Usage:
   codex-governance roadmap status --roadmap PATH [--format table|markdown|json]
   codex-governance roadmap check --roadmap PATH
   codex-governance sync --check|--dry-run --manifest PATH [--repo-root PATH]
-  codex-governance jira constraints draft|promote --output PATH [--prd PATH --spec PATH --roadmap PATH --repo-root PATH]
+  codex-governance jira constraints draft|assign --output PATH [--prd PATH --spec PATH --roadmap PATH --decomposition PATH --assignment PATH --repo-root PATH]
+  codex-governance jira export bootstrap --signer PATH --approve [--repo-root PATH]
+  codex-governance jira export create --story KEY --subtask KEY --signer PATH --output PATH --approve [--repo-root PATH]
+  codex-governance jira plan decompose --prd PATH --spec PATH --roadmap PATH --output PATH [--repo-root PATH] [--runtime-root PATH] [--codex-bin PATH]
   codex-governance jira plan generate --prd PATH --spec PATH --roadmap PATH --constraints PATH --output PATH --policy PATH --reviewer-model NAME --verifier-model NAME [--repo-root PATH] [--runtime-root PATH] [--codex-bin PATH] [--dry-run] [--verbose]
   codex-governance jira plan validate --plan PATH [--repo-root PATH]
   codex-governance jira plan approve --plan PATH --workflow PATH --approved-by ID --approve [--repo-root PATH]
   codex-governance jira plan create --plan PATH --workflow PATH (--dry-run|--approve) [--result PATH --repo-root PATH]
+  codex-governance jira plan resume --plan PATH --workflow PATH --result PATH (--dry-run|--approve) [--repo-root PATH]
   codex-governance runtime agent start|complete|fail|close --work-item KEY --agent-id ID --role ROLE [--result-ref REF]
   codex-governance runtime check --work-item KEY
   codex-governance runtime cache clear [--runtime-root PATH]
@@ -48,15 +53,18 @@ Usage:
   codex-governance implementation review|verification --run PATH --assessment PATH
   codex-governance implementation remediate --run PATH --assessment PATH --finding ID [--finding ID ...]
   codex-governance implementation assess --role reviewer|verifier --model NAME --policy PATH --bundle PATH --worktree PATH --output PATH
+  codex-governance implementation evidence check --evidence PATH --worktree PATH (--staged|--diff-range RANGE)
   codex-governance implementation status --run PATH [--format table|json]
   codex-governance implementation metrics --run PATH
   codex-governance implementation audit --run PATH --output PATH
   codex-governance implementation commit --run PATH --worktree PATH --branch NAME --message TEXT --approve
-  codex-governance implementation authorize-publish --output PATH --worktree PATH --work-item KEY --remote NAME --branch NAME --sha SHA --operation push|create-pr --approver ID --expires-at RFC3339 --approve
-  codex-governance implementation push --run PATH --authorization PATH --worktree PATH --approve
-  codex-governance implementation create-pr --run PATH --authorization PATH --worktree PATH --title TEXT [--body TEXT] --approve
+  codex-governance implementation authorize-publish --authorization PATH --run PATH --repo-root PATH
+  codex-governance implementation push --run PATH --authorization PATH --review-evidence PATH --worktree PATH --repo-root PATH [--runtime-root PATH] --approve
+  codex-governance implementation create-pr --run PATH --authorization PATH --review-evidence PATH --worktree PATH --title TEXT [--body TEXT] --repo-root PATH [--runtime-root PATH] --approve
   codex-governance ollama policy init [--runtime-root PATH]
   codex-governance ollama run --model NAME --role ROLE --task-type TYPE --input PATH [--policy PATH]
+  codex-governance ollama status --model NAME [--policy PATH]
+  codex-governance ollama inventory [--policy PATH]
 
 Governed engineering utilities for Jira-backed work items.
 `
@@ -101,11 +109,14 @@ func Run(args []string, stdout, stderr io.Writer) int {
 
 func runJira(args []string, stdout, stderr io.Writer) int {
 	if len(args) < 2 {
-		fmt.Fprintln(stderr, "usage: codex-governance jira plan|constraints")
+		fmt.Fprintln(stderr, "usage: codex-governance jira plan|constraints|export")
 		return 2
 	}
 	if args[0] == "constraints" {
 		return runJiraConstraints(args[1:], stdout, stderr)
+	}
+	if args[0] == "export" {
+		return runJiraExport(args[1:], stdout, stderr)
 	}
 	if args[0] != "plan" {
 		fmt.Fprintln(stderr, "usage: codex-governance jira plan|constraints")
@@ -115,8 +126,11 @@ func runJira(args []string, stdout, stderr io.Writer) int {
 	if command == "generate" {
 		return runJiraPlanGenerate(args[2:], stdout, stderr)
 	}
-	if command != "validate" && command != "create" && command != "approve" {
-		fmt.Fprintln(stderr, "usage: codex-governance jira plan generate|validate|approve|create")
+	if command == "decompose" {
+		return runJiraPlanDecompose(args[2:], stdout, stderr)
+	}
+	if command != "validate" && command != "create" && command != "approve" && command != "resume" {
+		fmt.Fprintln(stderr, "usage: codex-governance jira plan decompose|generate|validate|approve|create|resume")
 		return 2
 	}
 	flags := flag.NewFlagSet("jira plan "+command, flag.ContinueOnError)
@@ -182,13 +196,53 @@ func runJira(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	if *dryRun == *approve {
-		fmt.Fprintln(stderr, "jira plan create requires exactly one of --dry-run or --approve")
+		fmt.Fprintf(stderr, "jira plan %s requires exactly one of --dry-run or --approve\n", command)
 		return 2
 	}
 	cfg, err := config.Load(filepath.Join(*repoRoot, "governance.yml"))
 	if err != nil || cfg.Jira.Project == "" {
 		fmt.Fprintln(stderr, "jira plan create requires governance.yml with jira.project")
 		return 2
+	}
+	if command == "resume" {
+		if *resultPath == "" {
+			fmt.Fprintln(stderr, "jira plan resume requires --result")
+			return 2
+		}
+		creation, err := loadJiraPublicationRecord(*resultPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "load Jira publication record: %v\n", err)
+			return 2
+		}
+		if creation.Status != "incomplete" || creation.PlanDigest != planDigest || creation.Story.Key == "" || len(creation.Subtasks) >= len(plan.Subtasks) {
+			fmt.Fprintln(stdout, "FAIL Jira publication record is not an incomplete publication for this exact plan with remaining subtasks")
+			return 1
+		}
+		if *dryRun {
+			fmt.Fprintf(stdout, "DRY RUN would resume Story %s with %d remaining subtasks in project %s\n", creation.Story.Key, len(plan.Subtasks)-len(creation.Subtasks), cfg.Jira.Project)
+			return 0
+		}
+		baseURL, email, token := os.Getenv("JIRA_BASE_URL"), os.Getenv("JIRA_EMAIL"), os.Getenv("JIRA_API_TOKEN")
+		if baseURL == "" || email == "" || token == "" {
+			fmt.Fprintln(stderr, "jira plan resume requires JIRA_BASE_URL, JIRA_EMAIL, and JIRA_API_TOKEN")
+			return 2
+		}
+		creation.Subtasks, err = (jira.CreateClient{BaseURL: baseURL, Email: email, Token: token}).ResumePlan(cfg.Jira.Project, plan, creation.Story, creation.Subtasks)
+		if err != nil {
+			creation.Status = "incomplete"
+			if writeErr := writeJiraPublicationRecord(*resultPath, creation); writeErr != nil {
+				fmt.Fprintf(stderr, "update Jira publication record: %v\n", writeErr)
+			}
+			fmt.Fprintf(stderr, "resume Jira publication: %v\n", err)
+			return 1
+		}
+		creation.Status = "complete"
+		if err := writeJiraPublicationRecord(*resultPath, creation); err != nil {
+			fmt.Fprintf(stderr, "update Jira publication record: %v\n", err)
+			return 2
+		}
+		fmt.Fprintf(stdout, "PASS resumed Story %s and created %d subtasks\n", creation.Story.Key, len(creation.Subtasks))
+		return 0
 	}
 	if *dryRun {
 		fmt.Fprintf(stdout, "DRY RUN would create Story %q and %d subtasks in project %s\n", plan.Story.Summary, len(plan.Subtasks), cfg.Jira.Project)
@@ -238,6 +292,136 @@ func runJira(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func runJiraExport(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || (args[0] != "bootstrap" && args[0] != "create") {
+		fmt.Fprintln(stderr, "usage: codex-governance jira export bootstrap|create")
+		return 2
+	}
+	if args[0] == "create" {
+		return runJiraExportCreate(args[1:], stdout, stderr)
+	}
+	flags := flag.NewFlagSet("jira export bootstrap", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	signerPath := flags.String("signer", "", "owner-only local export signer path")
+	repoRoot := flags.String("repo-root", ".", "repository root")
+	approve := flags.Bool("approve", false, "explicitly authorize local signer creation and configuration")
+	if err := flags.Parse(args[1:]); err != nil || *signerPath == "" || !*approve || flags.NArg() != 0 {
+		return 2
+	}
+	configPath := filepath.Join(*repoRoot, "governance.yml")
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load governance config: %v\n", err)
+		return 2
+	}
+	key, err := signature.CreateLocalExportSigner(*signerPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "create local export signer: %v\n", err)
+		return 1
+	}
+	cfg.Signing.TrustedKeys = append(cfg.Signing.TrustedKeys, config.TrustedKey{KeyID: key.KeyID, Role: key.Role, Algorithm: key.Algorithm, PublicKey: key.PublicKey})
+	if !cfg.AllowsAdapter("headless-codex") {
+		cfg.Implementation.AllowedAdapters = append(cfg.Implementation.AllowedAdapters, "headless-codex")
+	}
+	if err := config.Save(configPath, cfg); err != nil {
+		fmt.Fprintf(stderr, "save governance config: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "PASS bootstrapped local export signer %s and enabled headless-codex\n", key.KeyID)
+	return 0
+}
+
+func runJiraExportCreate(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("jira export create", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	storyKey := flags.String("story", "", "Jira Story key")
+	subtaskKey := flags.String("subtask", "", "Jira subtask key")
+	signerPath := flags.String("signer", "", "owner-only local export signer path")
+	output := flags.String("output", "", "owner-only signed export output path")
+	repoRoot := flags.String("repo-root", ".", "repository root")
+	approve := flags.Bool("approve", false, "explicitly authorize the read-only Jira export")
+	if err := flags.Parse(args); err != nil || *storyKey == "" || *subtaskKey == "" || *signerPath == "" || *output == "" || !*approve || flags.NArg() != 0 {
+		return 2
+	}
+	if _, err := os.Stat(*output); err == nil {
+		fmt.Fprintf(stderr, "refusing to overwrite signed export: %s\n", *output)
+		return 1
+	} else if !os.IsNotExist(err) {
+		fmt.Fprintf(stderr, "check signed export output: %v\n", err)
+		return 2
+	}
+	cfg, err := config.Load(filepath.Join(*repoRoot, "governance.yml"))
+	if err != nil {
+		fmt.Fprintf(stderr, "load governance config: %v\n", err)
+		return 2
+	}
+	maxAge, err := cfg.OfflineExportMaxAge()
+	if err != nil {
+		fmt.Fprintf(stderr, "load offline export policy: %v\n", err)
+		return 2
+	}
+	keyID, privateKey, err := signature.LoadLocalExportSigner(*signerPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load local export signer: %v\n", err)
+		return 1
+	}
+	baseURL, email, token := os.Getenv("JIRA_BASE_URL"), os.Getenv("JIRA_EMAIL"), os.Getenv("JIRA_API_TOKEN")
+	if baseURL == "" || email == "" || token == "" {
+		fmt.Fprintln(stderr, "jira export create requires JIRA_BASE_URL, JIRA_EMAIL, and JIRA_API_TOKEN")
+		return 2
+	}
+	envelope, err := jira.CreateSignedOfflineExport(jira.ReadClient{BaseURL: baseURL, Email: email, Token: token}, *storyKey, *subtaskKey, keyID, privateKey, time.Now().UTC(), maxAge)
+	if err != nil {
+		fmt.Fprintf(stderr, "create signed Jira export: %v\n", err)
+		return 1
+	}
+	data, err := json.MarshalIndent(envelope, "", "  ")
+	if err != nil {
+		fmt.Fprintf(stderr, "serialize signed Jira export: %v\n", err)
+		return 2
+	}
+	if err := os.MkdirAll(filepath.Dir(*output), 0o700); err != nil {
+		fmt.Fprintf(stderr, "write signed Jira export: %v\n", err)
+		return 2
+	}
+	if err := os.WriteFile(*output, append(data, '\n'), 0o600); err != nil {
+		fmt.Fprintf(stderr, "write signed Jira export: %v\n", err)
+		return 2
+	}
+	fmt.Fprintf(stdout, "PASS created signed Jira export: %s\n", *output)
+	return 0
+}
+
+func runJiraPlanDecompose(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("jira plan decompose", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	prd := flags.String("prd", "", "approved PRD Markdown")
+	spec := flags.String("spec", "", "approved specification Markdown")
+	roadmapPath := flags.String("roadmap", "", "approved roadmap Markdown")
+	output := flags.String("output", "", "manager decomposition draft JSON")
+	repoRoot := flags.String("repo-root", ".", "repository root")
+	runtimeRootPath := flags.String("runtime-root", "", "owner-only runtime directory")
+	codexBin := flags.String("codex-bin", "codex", "hosted Codex executable")
+	if err := flags.Parse(args); err != nil || *prd == "" || *spec == "" || *roadmapPath == "" || *output == "" || flags.NArg() != 0 {
+		return 2
+	}
+	if *runtimeRootPath == "" {
+		var err error
+		*runtimeRootPath, err = gruntime.DefaultRoot()
+		if err != nil {
+			fmt.Fprintf(stderr, "resolve runtime root: %v\n", err)
+			return 2
+		}
+	}
+	result, err := agentplan.Decompose(agentplan.Request{PRDPath: *prd, SpecPath: *spec, RoadmapPath: *roadmapPath, OutputPath: *output, RepoRoot: *repoRoot, RuntimeRoot: *runtimeRootPath}, agentplan.CodexRunner{Binary: *codexBin, WorkDir: *repoRoot})
+	if err != nil {
+		fmt.Fprintf(stderr, "decompose ticket plan: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "PASS ticket-plan decomposition drafted: %s (work item %s)\n", result.PlanPath, result.WorkItem)
+	return 0
+}
+
 type jiraPublicationRecord struct {
 	PlanDigest string              `json:"plan_digest"`
 	Status     string              `json:"status"`
@@ -256,15 +440,28 @@ func writeJiraPublicationRecord(path string, record jiraPublicationRecord) error
 	return os.WriteFile(path, append(data, '\n'), 0o600)
 }
 
+func loadJiraPublicationRecord(path string) (jiraPublicationRecord, error) {
+	data, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return jiraPublicationRecord{}, err
+	}
+	var record jiraPublicationRecord
+	if err := json.Unmarshal(data, &record); err != nil {
+		return jiraPublicationRecord{}, err
+	}
+	return record, nil
+}
+
 func runJiraConstraints(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 || (args[0] != "draft" && args[0] != "promote") {
-		fmt.Fprintln(stderr, "usage: codex-governance jira constraints draft|promote")
+	if len(args) == 0 || (args[0] != "draft" && args[0] != "assign") {
+		fmt.Fprintln(stderr, "usage: codex-governance jira constraints draft|assign")
 		return 2
 	}
 	flags := flag.NewFlagSet("jira constraints "+args[0], flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	output := flags.String("output", "", "constraints output JSON")
-	draft := flags.String("draft", "", "constraints draft JSON")
+	decomposition := flags.String("decomposition", "", "manager decomposition JSON")
+	assignment := flags.String("assignment", "", "approved assignment JSON")
 	prd := flags.String("prd", "", "approved PRD Markdown")
 	spec := flags.String("spec", "", "approved specification Markdown")
 	roadmapPath := flags.String("roadmap", "", "approved roadmap Markdown")
@@ -272,15 +469,15 @@ func runJiraConstraints(args []string, stdout, stderr io.Writer) int {
 	if err := flags.Parse(args[1:]); err != nil || *output == "" || flags.NArg() != 0 {
 		return 2
 	}
-	if args[0] == "promote" {
-		if *draft == "" {
+	if args[0] == "assign" {
+		if *decomposition == "" || *assignment == "" {
 			return 2
 		}
-		if err := agentplan.PromoteConstraints(*draft, *output); err != nil {
-			fmt.Fprintf(stderr, "promote constraints: %v\n", err)
+		if err := agentplan.AssignConstraints(*decomposition, *assignment, *output, *repoRoot); err != nil {
+			fmt.Fprintf(stderr, "assign constraints: %v\n", err)
 			return 1
 		}
-		fmt.Fprintf(stdout, "PASS promoted constraints: %s\n", *output)
+		fmt.Fprintf(stdout, "PASS assigned constraints: %s\n", *output)
 		return 0
 	}
 	if *prd == "" || *spec == "" || *roadmapPath == "" {
@@ -676,8 +873,8 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 }
 
 func runImplementation(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 || !oneOf(args[0], "preflight", "start", "reconcile", "verify", "review", "verification", "remediate", "assess", "status", "metrics", "audit", "commit", "authorize-publish", "push", "create-pr") {
-		fmt.Fprintln(stderr, "usage: codex-governance implementation preflight|start|reconcile|verify|review|verification|remediate|assess|status|metrics|audit|commit|authorize-publish|push|create-pr")
+	if len(args) == 0 || !oneOf(args[0], "preflight", "start", "reconcile", "verify", "review", "verification", "remediate", "assess", "evidence", "status", "metrics", "audit", "commit", "authorize-publish", "push", "create-pr") {
+		fmt.Fprintln(stderr, "usage: codex-governance implementation preflight|start|reconcile|verify|review|verification|remediate|assess|evidence|status|metrics|audit|commit|authorize-publish|push|create-pr")
 		return 2
 	}
 	if args[0] == "start" {
@@ -697,6 +894,9 @@ func runImplementation(args []string, stdout, stderr io.Writer) int {
 	}
 	if args[0] == "assess" {
 		return runImplementationAssess(args[1:], stdout, stderr)
+	}
+	if args[0] == "evidence" {
+		return runImplementationEvidence(args[1:], stdout, stderr)
 	}
 	if args[0] == "status" {
 		return runImplementationStatus(args[1:], stdout, stderr)
@@ -967,6 +1167,44 @@ func runImplementationAssess(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func runImplementationEvidence(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || args[0] != "check" {
+		return 2
+	}
+	flags := flag.NewFlagSet("implementation evidence check", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	evidencePath := flags.String("evidence", "", "review evidence JSON")
+	worktreePath := flags.String("worktree", "", "worktree")
+	staged := flags.Bool("staged", false, "validate staged diff")
+	diffRange := flags.String("diff-range", "", "committed Git diff range")
+	if err := flags.Parse(args[1:]); err != nil || *evidencePath == "" || *worktreePath == "" || (*staged == (*diffRange != "")) || flags.NArg() != 0 {
+		return 2
+	}
+	diffArgs := []string{"--cached"}
+	if *diffRange != "" {
+		diffArgs = []string{*diffRange}
+	}
+	diff, err := implementation.DiffBytes(*worktreePath, diffArgs...)
+	if err != nil {
+		fmt.Fprintf(stderr, "read review-gated diff: %v\n", err)
+		return 1
+	}
+	if err := implementation.ValidateReviewEvidence(*evidencePath, diff); err != nil {
+		fmt.Fprintf(stderr, "validate review evidence: %v\n", err)
+		return 1
+	}
+	fmt.Fprintln(stdout, "PASS independent reviewer and verifier evidence matches diff")
+	return 0
+}
+
+func validatePublicationReviewEvidence(path, worktree string, run implementation.Run) error {
+	diff, err := implementation.DiffBytes(worktree, run.BaseSHA+".."+run.CommitSHA)
+	if err != nil {
+		return err
+	}
+	return implementation.ValidateReviewEvidence(path, diff)
+}
+
 func runImplementationStatus(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("implementation status", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -1066,46 +1304,10 @@ func runImplementationCommit(args []string, stdout, stderr io.Writer) int {
 func runImplementationAuthorizePublish(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("implementation authorize-publish", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	output := flags.String("output", "", "owner-only authorization JSON")
-	worktreePath := flags.String("worktree", "", "disposable worktree containing the approved remote")
-	workItem := flags.String("work-item", "", "work item key")
-	remote := flags.String("remote", "", "approved remote name")
-	branch := flags.String("branch", "", "approved codex/* branch")
-	sha := flags.String("sha", "", "exact local commit SHA")
-	approver := flags.String("approver", "", "human approver ID")
-	expiresAt := flags.String("expires-at", "", "RFC3339 expiration")
-	approve := flags.Bool("approve", false, "explicitly create this one-use authorization")
-	operation := flags.String("operation", "", "exactly one of push or create-pr")
-	if err := flags.Parse(args); err != nil || !*approve || *output == "" || *worktreePath == "" || *workItem == "" || *remote == "" || *branch == "" || *sha == "" || *approver == "" || *expiresAt == "" || *operation == "" || flags.NArg() != 0 {
-		return 2
-	}
-	expires, err := time.Parse(time.RFC3339, *expiresAt)
-	if err != nil {
-		fmt.Fprintln(stderr, "expires-at must be RFC3339")
-		return 2
-	}
-	remoteURL, err := implementation.RemoteURL(*worktreePath, *remote)
-	if err != nil {
-		fmt.Fprintf(stderr, "read approved remote: %v\n", err)
-		return 1
-	}
-	auth := implementation.RemoteAuthorization{FormatVersion: implementation.FormatVersion, WorkItemKey: *workItem, Remote: *remote, RemoteFingerprint: implementation.RemoteFingerprint(remoteURL), Branch: *branch, CommitSHA: *sha, Operation: *operation, Approver: *approver, ExpiresAt: expires}
-	if err := implementation.SaveAuthorization(*output, auth); err != nil {
-		fmt.Fprintf(stderr, "save authorization: %v\n", err)
-		return 1
-	}
-	fmt.Fprintln(stdout, "PASS remote publication authorization recorded")
-	return 0
-}
-
-func runImplementationPush(args []string, stdout, stderr io.Writer) int {
-	flags := flag.NewFlagSet("implementation push", flag.ContinueOnError)
-	flags.SetOutput(stderr)
+	authorizationPath := flags.String("authorization", "", "externally signed publication authorization JSON")
 	runPath := flags.String("run", "", "implementation-run JSON")
-	authorizationPath := flags.String("authorization", "", "one-use remote publication authorization JSON")
-	worktreePath := flags.String("worktree", "", "disposable worktree")
-	approve := flags.Bool("approve", false, "explicitly execute this already authorized push")
-	if err := flags.Parse(args); err != nil || !*approve || *runPath == "" || *authorizationPath == "" || *worktreePath == "" || flags.NArg() != 0 {
+	repoRoot := flags.String("repo-root", ".", "repository root")
+	if err := flags.Parse(args); err != nil || *authorizationPath == "" || *runPath == "" || flags.NArg() != 0 {
 		return 2
 	}
 	run, err := implementation.LoadRun(*runPath)
@@ -1113,29 +1315,95 @@ func runImplementationPush(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "load implementation run: %v\n", err)
 		return 2
 	}
-	authorization, err := implementation.LoadAuthorization(*authorizationPath)
+	cfg, err := config.Load(filepath.Join(*repoRoot, "governance.yml"))
 	if err != nil {
-		fmt.Fprintf(stderr, "load remote authorization: %v\n", err)
+		fmt.Fprintf(stderr, "load governance config: %v\n", err)
 		return 2
 	}
-	remoteURL, err := implementation.RemoteURL(*worktreePath, authorization.Remote)
-	if err != nil {
-		fmt.Fprintf(stderr, "read approved remote: %v\n", err)
+	if _, err := implementation.LoadSignedPublicationAuthorization(*authorizationPath, cfg, time.Now().UTC()); err != nil {
+		fmt.Fprintf(stderr, "verify signed publication authorization: %v\n", err)
 		return 1
 	}
-	if err := implementation.PreparePush(&run, authorization, remoteURL); err != nil {
-		fmt.Fprintf(stderr, "validate remote publication: %v\n", err)
+	if _, err := cfg.PublicationRepositoryID(); err != nil || run.ID == "" {
+		fmt.Fprintln(stderr, "signed publication authorization cannot bind this run")
+		return 1
+	}
+	fmt.Fprintln(stdout, "PASS signed remote publication authorization verified")
+	return 0
+}
+
+func runImplementationPush(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("implementation push", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	runPath := flags.String("run", "", "implementation-run JSON")
+	authorizationPath := flags.String("authorization", "", "externally signed publication authorization JSON")
+	reviewEvidencePath := flags.String("review-evidence", "", "passing independent review evidence JSON")
+	worktreePath := flags.String("worktree", "", "disposable worktree")
+	repoRoot := flags.String("repo-root", ".", "repository root")
+	runtimeRootPath := flags.String("runtime-root", "", "runtime root")
+	approve := flags.Bool("approve", false, "explicitly execute this already authorized push")
+	if err := flags.Parse(args); err != nil || !*approve || *runPath == "" || *authorizationPath == "" || *reviewEvidencePath == "" || *worktreePath == "" || flags.NArg() != 0 {
+		return 2
+	}
+	run, err := implementation.LoadRun(*runPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load implementation run: %v\n", err)
+		return 2
+	}
+	cfg, err := config.Load(filepath.Join(*repoRoot, "governance.yml"))
+	if err != nil {
+		fmt.Fprintf(stderr, "load governance config: %v\n", err)
+		return 2
+	}
+	repositoryID, err := cfg.PublicationRepositoryID()
+	if err != nil {
+		fmt.Fprintf(stderr, "read publication repository identity: %v\n", err)
+		return 2
+	}
+	authorization, err := implementation.LoadSignedPublicationAuthorization(*authorizationPath, cfg, time.Now().UTC())
+	if err != nil {
+		fmt.Fprintf(stderr, "verify signed publication authorization: %v\n", err)
+		return 1
+	}
+	remoteURL, err := implementation.RemoteURL(*worktreePath, authorization.Payload.Remote)
+	if err != nil {
+		fmt.Fprintf(stderr, "read authorized remote: %v\n", err)
+		return 1
+	}
+	if err := implementation.ValidateSignedPublication(run, authorization, "push", remoteURL, repositoryID); err != nil {
+		fmt.Fprintf(stderr, "validate signed push authorization: %v\n", err)
+		return 1
+	}
+	if err := implementation.ValidatePublicationWorktree(*worktreePath, run); err != nil {
+		fmt.Fprintf(stderr, "validate authorized worktree refs: %v\n", err)
+		return 1
+	}
+	if err := validatePublicationReviewEvidence(*reviewEvidencePath, *worktreePath, run); err != nil {
+		fmt.Fprintf(stderr, "validate independent review evidence: %v\n", err)
+		return 1
+	}
+	if err := implementation.ValidateAuthorizedRemoteBase(*worktreePath, authorization); err != nil {
+		fmt.Fprintf(stderr, "validate authorized remote target ref: %v\n", err)
+		return 1
+	}
+	if err := implementation.PrepareSignedPush(&run); err != nil {
+		fmt.Fprintf(stderr, "prepare authorized push: %v\n", err)
 		return 1
 	}
 	if err := implementation.SaveRun(*runPath, run); err != nil {
 		fmt.Fprintf(stderr, "persist pre-push state: %v\n", err)
 		return 2
 	}
-	if err := implementation.ConsumeAuthorization(*authorizationPath, authorization); err != nil {
-		fmt.Fprintf(stderr, "consume remote authorization: %v\n", err)
+	resolvedRuntimeRoot, err := runtimeRoot(*runtimeRootPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "resolve runtime root: %v\n", err)
+		return 2
+	}
+	if err := implementation.ConsumeSignedAuthorization(resolvedRuntimeRoot, authorization, "push"); err != nil {
+		fmt.Fprintf(stderr, "consume signed push authorization: %v\n", err)
 		return 1
 	}
-	if err := implementation.Push(&run, authorization, *worktreePath); err != nil {
+	if err := implementation.PushSigned(&run, authorization, *worktreePath); err != nil {
 		fmt.Fprintf(stderr, "push implementation branch: %v\n", err)
 		return 1
 	}
@@ -1151,12 +1419,15 @@ func runImplementationCreatePR(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("implementation create-pr", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	runPath := flags.String("run", "", "implementation-run JSON")
-	authorizationPath := flags.String("authorization", "", "one-use remote publication authorization JSON")
+	authorizationPath := flags.String("authorization", "", "externally signed publication authorization JSON")
+	reviewEvidencePath := flags.String("review-evidence", "", "passing independent review evidence JSON")
 	worktreePath := flags.String("worktree", "", "disposable worktree")
 	title := flags.String("title", "", "pull request title")
 	body := flags.String("body", "", "pull request body")
+	repoRoot := flags.String("repo-root", ".", "repository root")
+	runtimeRootPath := flags.String("runtime-root", "", "runtime root")
 	approve := flags.Bool("approve", false, "explicitly execute this already authorized pull request creation")
-	if err := flags.Parse(args); err != nil || !*approve || *runPath == "" || *authorizationPath == "" || *worktreePath == "" || *title == "" || flags.NArg() != 0 {
+	if err := flags.Parse(args); err != nil || !*approve || *runPath == "" || *authorizationPath == "" || *reviewEvidencePath == "" || *worktreePath == "" || *title == "" || flags.NArg() != 0 {
 		return 2
 	}
 	run, err := implementation.LoadRun(*runPath)
@@ -1164,25 +1435,52 @@ func runImplementationCreatePR(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "load implementation run: %v\n", err)
 		return 2
 	}
-	authorization, err := implementation.LoadAuthorization(*authorizationPath)
+	cfg, err := config.Load(filepath.Join(*repoRoot, "governance.yml"))
 	if err != nil {
-		fmt.Fprintf(stderr, "load remote authorization: %v\n", err)
+		fmt.Fprintf(stderr, "load governance config: %v\n", err)
 		return 2
 	}
-	remoteURL, err := implementation.RemoteURL(*worktreePath, authorization.Remote)
+	repositoryID, err := cfg.PublicationRepositoryID()
 	if err != nil {
-		fmt.Fprintf(stderr, "read approved remote: %v\n", err)
+		fmt.Fprintf(stderr, "read publication repository identity: %v\n", err)
+		return 2
+	}
+	authorization, err := implementation.LoadSignedPublicationAuthorization(*authorizationPath, cfg, time.Now().UTC())
+	if err != nil {
+		fmt.Fprintf(stderr, "verify signed publication authorization: %v\n", err)
 		return 1
 	}
-	if err := implementation.ValidatePublication(run, authorization, "create-pr", remoteURL); err != nil {
-		fmt.Fprintf(stderr, "validate pull request authorization: %v\n", err)
+	remoteURL, err := implementation.RemoteURL(*worktreePath, authorization.Payload.Remote)
+	if err != nil {
+		fmt.Fprintf(stderr, "read authorized remote: %v\n", err)
 		return 1
 	}
-	if err := implementation.ConsumeAuthorization(*authorizationPath, authorization); err != nil {
-		fmt.Fprintf(stderr, "consume pull request authorization: %v\n", err)
+	if err := implementation.ValidateSignedPublication(run, authorization, "create-pr", remoteURL, repositoryID); err != nil {
+		fmt.Fprintf(stderr, "validate signed pull request authorization: %v\n", err)
 		return 1
 	}
-	if err := implementation.CreatePullRequest(&run, authorization, *worktreePath, *title, *body); err != nil {
+	if err := implementation.ValidatePublicationWorktree(*worktreePath, run); err != nil {
+		fmt.Fprintf(stderr, "validate authorized worktree refs: %v\n", err)
+		return 1
+	}
+	if err := validatePublicationReviewEvidence(*reviewEvidencePath, *worktreePath, run); err != nil {
+		fmt.Fprintf(stderr, "validate independent review evidence: %v\n", err)
+		return 1
+	}
+	if err := implementation.ValidateAuthorizedRemoteBase(*worktreePath, authorization); err != nil {
+		fmt.Fprintf(stderr, "validate authorized remote target ref: %v\n", err)
+		return 1
+	}
+	resolvedRuntimeRoot, err := runtimeRoot(*runtimeRootPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "resolve runtime root: %v\n", err)
+		return 2
+	}
+	if err := implementation.ConsumeSignedAuthorization(resolvedRuntimeRoot, authorization, "create-pr"); err != nil {
+		fmt.Fprintf(stderr, "consume signed pull request authorization: %v\n", err)
+		return 1
+	}
+	if err := implementation.CreateSignedPullRequest(&run, authorization, *worktreePath, *title, *body); err != nil {
 		fmt.Fprintf(stderr, "create pull request: %v\n", err)
 		return 1
 	}
@@ -1224,9 +1522,15 @@ func runOllama(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, path)
 		return 0
 	}
-	if len(args) == 0 || args[0] != "run" {
-		fmt.Fprintln(stderr, "usage: codex-governance ollama policy init|run")
+	if len(args) == 0 || (args[0] != "run" && args[0] != "status" && args[0] != "inventory") {
+		fmt.Fprintln(stderr, "usage: codex-governance ollama policy init|run|status|inventory")
 		return 2
+	}
+	if args[0] == "status" {
+		return runOllamaStatus(args[1:], stdout, stderr)
+	}
+	if args[0] == "inventory" {
+		return runOllamaInventory(args[1:], stdout, stderr)
 	}
 	flags := flag.NewFlagSet("ollama run", flag.ContinueOnError)
 	model := flags.String("model", "", "allowlisted model")
@@ -1278,6 +1582,73 @@ func runOllama(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	fmt.Fprintln(stdout, gruntime.Redact(output))
+	return 0
+}
+
+func runOllamaStatus(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("ollama status", flag.ContinueOnError)
+	model := flags.String("model", "", "allowlisted model")
+	policyPath := flags.String("policy", "", "policy path")
+	root := flags.String("runtime-root", "", "runtime root")
+	if err := flags.Parse(args); err != nil || *model == "" || flags.NArg() != 0 {
+		return 2
+	}
+	resolvedRoot, err := runtimeRoot(*root)
+	if err != nil {
+		return 2
+	}
+	if *policyPath == "" {
+		*policyPath = ollama.PolicyPath(resolvedRoot)
+	}
+	policy, err := ollama.LoadPolicy(*policyPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load Ollama policy: %v\n", err)
+		return 2
+	}
+	status, err := ollama.LoadedStatus(ollama.Client(policy), policy, *model)
+	if err != nil {
+		fmt.Fprintf(stderr, "read Ollama status: %v\n", err)
+		return 1
+	}
+	if !status.Loaded {
+		fmt.Fprintf(stdout, "model=%s loaded=false\n", status.Name)
+		return 0
+	}
+	if !status.ContextKnown {
+		fmt.Fprintf(stdout, "model=%s loaded=true context_length=unknown size_vram=%d\n", status.Name, status.SizeVRAM)
+		return 0
+	}
+	fmt.Fprintf(stdout, "model=%s loaded=true context_length=%d size_vram=%d\n", status.Name, status.ContextLength, status.SizeVRAM)
+	return 0
+}
+
+func runOllamaInventory(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("ollama inventory", flag.ContinueOnError)
+	policyPath := flags.String("policy", "", "policy path")
+	root := flags.String("runtime-root", "", "runtime root")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+		return 2
+	}
+	resolvedRoot, err := runtimeRoot(*root)
+	if err != nil {
+		return 2
+	}
+	if *policyPath == "" {
+		*policyPath = ollama.PolicyPath(resolvedRoot)
+	}
+	policy, err := ollama.LoadPolicy(*policyPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load Ollama policy: %v\n", err)
+		return 2
+	}
+	models, err := ollama.Inventory(ollama.Client(policy), policy)
+	if err != nil {
+		fmt.Fprintf(stderr, "read Ollama inventory: %v\n", err)
+		return 1
+	}
+	for _, model := range models {
+		fmt.Fprintf(stdout, "model=%s id=%s\n", model.Name, model.ID)
+	}
 	return 0
 }
 

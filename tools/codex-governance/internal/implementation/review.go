@@ -8,9 +8,11 @@ import (
 )
 
 type Finding struct {
-	ID       string `json:"id"`
-	Severity string `json:"severity"`
-	Summary  string `json:"summary"`
+	ID        string `json:"id"`
+	Severity  string `json:"severity"`
+	Location  string `json:"location,omitempty"`
+	Condition string `json:"condition,omitempty"`
+	Summary   string `json:"summary"`
 }
 
 type Assessment struct {
@@ -31,6 +33,24 @@ func SaveAssessment(path string, assessment Assessment) error {
 		return err
 	}
 	return os.WriteFile(filepath.Clean(path), append(data, '\n'), 0o600)
+}
+
+// SaveRawAssessment preserves a malformed model response for local diagnosis.
+// It is owner-only and never overwrites an earlier failure artifact.
+func SaveRawAssessment(path string, response []byte) (string, error) {
+	rawPath := filepath.Clean(path) + ".raw"
+	if err := os.MkdirAll(filepath.Dir(rawPath), 0o700); err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(rawPath); err == nil {
+		return "", fmt.Errorf("refusing to overwrite raw assessment response")
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+	if err := os.WriteFile(rawPath, response, 0o600); err != nil {
+		return "", err
+	}
+	return rawPath, nil
 }
 
 func LoadAssessment(path string) (Assessment, error) {

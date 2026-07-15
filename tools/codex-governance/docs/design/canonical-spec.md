@@ -259,8 +259,12 @@ Jira, Git push, cloud, secret, or arbitrary shell access. If the selected
 provider is unavailable, revoked, or not approved for code edits, preflight
 fails without falling back or escalating models.
 
-Local commits are allowed only when the approved work item enables them and
-all required pre-commit gates pass. Push and pull-request creation require a
+Local commits are allowed only when the approved work item enables them, the
+exact staged diff has passing independently executed reviewer and verifier
+assessments, and all required pre-commit gates pass. Those assessment records
+must identify distinct executors, bind the staged-diff digest, and contain no
+blocking or important findings. The same evidence must match the committed
+diff before push or pull-request creation. Push and pull-request creation require a
 separate, run-specific remote-publish authorization binding the work-item key
 and run ID, repository identity, remote name and URL fingerprint, target ref,
 exact commit and expected base SHAs, approver identity, issuance time, expiry,

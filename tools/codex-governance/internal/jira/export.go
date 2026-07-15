@@ -2,6 +2,7 @@ package jira
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -165,4 +166,27 @@ func Digest(value string) string {
 func DigestBytes(value []byte) string {
 	sum := sha256.Sum256(value)
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// CreateSignedOfflineExport captures the exact Story/subtask pair and signs
+// the normalized snapshot with the configured export issuer.
+func CreateSignedOfflineExport(client ReadClient, storyKey, subtaskKey, keyID string, privateKey ed25519.PrivateKey, now time.Time, maxAge time.Duration) (signature.Envelope, error) {
+	if maxAge <= 0 {
+		return signature.Envelope{}, fmt.Errorf("offline export maximum age must be positive")
+	}
+	story, err := client.ReadIssue(storyKey)
+	if err != nil {
+		return signature.Envelope{}, err
+	}
+	subtask, err := client.ReadIssue(subtaskKey)
+	if err != nil {
+		return signature.Envelope{}, err
+	}
+	export := OfflineExport{CapturedAt: now.UTC().Format(time.RFC3339), Story: story, Subtask: subtask}
+	payload, err := json.Marshal(export)
+	if err != nil {
+		return signature.Envelope{}, err
+	}
+	expires := now.Add(maxAge)
+	return signature.Sign(payload, keyID, "export-issuer", privateKey, now, &expires)
 }

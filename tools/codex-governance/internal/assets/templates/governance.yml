@@ -24,5 +24,6 @@ implementation:
   local_code_edit_enabled: false
 signing:
   format_version: 1
+  repository_id: ""
   trusted_keys: []
   offline_export_max_age: 24h

@@ -69,6 +69,10 @@ ticket baseline, allowed paths, required commands, ADR references, repository
 guidance, and a structured-result schema. It must not include credentials or
 unbounded local logs.
 
+Signed-publication hardening and its integration follow-up are governed by
+their respective approved work items. Any expansion beyond a work item's
+budget requires an approved scope change or a separate work item.
+
 All signed governance records use a common envelope: canonical JSON payload,
 SHA-256 payload digest, `key_id`, `algorithm`, signer role, issuance time,
 optional expiry, and signature. The initial algorithm is Ed25519 over the

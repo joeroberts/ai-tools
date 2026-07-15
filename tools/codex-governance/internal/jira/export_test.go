@@ -1,6 +1,7 @@
 package jira
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -47,6 +48,44 @@ func TestCreatePlanPostsStoryAndSubtasks(t *testing.T) {
 	}
 	if requests != 2 || story.Key != "CG-1" || len(subtasks) != 1 || subtasks[0].Key != "CG-2" {
 		t.Fatalf("CreatePlan() = %#v, %#v; requests=%d", story, subtasks, requests)
+	}
+}
+
+func TestResumePlanCreatesOnlyRemainingSubtasksWithConfiguredType(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		requests++
+		var payload struct {
+			Fields struct {
+				IssueType struct {
+					Name string `json:"name"`
+				} `json:"issuetype"`
+				Parent struct {
+					Key string `json:"key"`
+				} `json:"parent"`
+			} `json:"fields"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.Fields.IssueType.Name != "Subtask" || payload.Fields.Parent.Key != "CG-1" {
+			t.Fatalf("resume payload = %#v", payload.Fields)
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"key":"CG-3","self":"ignored"}`))
+	}))
+	defer server.Close()
+
+	plan := ticketplan.Plan{Subtasks: []ticketplan.Subtask{
+		{Summary: "First"},
+		{Summary: "Second", Scope: "bounded", NonGoals: []string{"none"}, AcceptanceCriteria: []string{"done"}, ValidationPlan: []string{"test"}, ADR: "No ADR needed: follows current design"},
+	}}
+	created, err := (CreateClient{BaseURL: server.URL}).ResumePlan("CG", plan, CreatedIssue{Key: "CG-1"}, []CreatedIssue{{Key: "CG-2"}})
+	if err != nil {
+		t.Fatalf("ResumePlan() error = %v", err)
+	}
+	if requests != 1 || len(created) != 2 || created[1].Key != "CG-3" {
+		t.Fatalf("ResumePlan() = %#v; requests=%d", created, requests)
 	}
 }
 

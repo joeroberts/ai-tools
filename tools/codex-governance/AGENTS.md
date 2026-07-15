@@ -23,6 +23,8 @@ Use the repository commands before committing:
 - `make vet` runs Go static checks.
 - `make build` builds the CLI.
 - `git diff --check` catches trailing whitespace and whitespace errors.
+- `make review-gate EVIDENCE=/absolute/path/review-evidence.json` verifies
+  independent reviewer and verifier evidence for the exact staged diff.
 - `git diff --check` catches trailing whitespace and whitespace errors.
 
 ## Coding Style & Naming Conventions
@@ -39,6 +41,14 @@ Add focused Go tests beside behavior and fixtures under `testdata/`. Run `make
 test`, `make vet`, `make build`, and `git diff --check` for functional changes.
 
 ## Commit & Pull Request Guidelines
+
+Reviewer and verifier evidence is a hard gate. Before any commit, push, or
+pull-request creation, run independent reviewer and verifier assessments for
+the exact diff and run `make review-gate` with the resulting evidence record.
+Both records must pass and identify distinct executors. If either record is
+missing, stale, mismatched, or reports a blocking or important finding, stop:
+do not stage a commit, push, or create a pull request. Unit tests, CI, roadmap
+status, or a prior review are not substitutes for this evidence.
 
 Git history currently uses short, plain commits such as `Initial commit` and `first push`. Continue using concise imperative messages, for example `Add Jira drift validation` or `Clarify stage 3 CI guidance`.
 

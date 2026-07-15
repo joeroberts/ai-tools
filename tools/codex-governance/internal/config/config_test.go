@@ -53,6 +53,7 @@ ci:
 upstream: {}
 signing:
   format_version: 1
+  repository_id: github.com/acme/repo
   offline_export_max_age: 2h
   trusted_keys:
     - key_id: repository-owner-1
@@ -73,5 +74,14 @@ signing:
 	age, err := config.OfflineExportMaxAge()
 	if err != nil || age.String() != "2h0m0s" {
 		t.Fatalf("OfflineExportMaxAge() = %v, %v", age, err)
+	}
+	if repositoryID, err := config.PublicationRepositoryID(); err != nil || repositoryID != "github.com/acme/repo" {
+		t.Fatalf("PublicationRepositoryID() = %q, %v", repositoryID, err)
+	}
+}
+
+func TestPublicationRepositoryIDRequiresConfiguration(t *testing.T) {
+	if _, err := (Config{}).PublicationRepositoryID(); err == nil {
+		t.Fatal("PublicationRepositoryID accepted an empty identity")
 	}
 }
