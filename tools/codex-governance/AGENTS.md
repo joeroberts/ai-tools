@@ -40,6 +40,16 @@ canonical spec under `docs/design/` first, then align staged prompts and README.
 Add focused Go tests beside behavior and fixtures under `testdata/`. Run `make
 test`, `make vet`, `make build`, and `git diff --check` for functional changes.
 
+## Active-Task Continuity
+
+Once the user authorizes a task (for example, “go,” “go for it,” or
+“approved”), continue the full governed workflow without waiting for further
+prompts: implement, validate, obtain required reviewer/verifier evidence,
+update Jira, commit, push, and create the PR when policy permits. Send concise
+progress updates, but do not end a turn or request confirmation unless a new
+external authorization, a material scope decision, or a genuine blocker
+requires the user’s input.
+
 ## Commit & Pull Request Guidelines
 
 Reviewer and verifier evidence is a hard gate. Before any commit, push, or

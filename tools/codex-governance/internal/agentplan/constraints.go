@@ -25,6 +25,7 @@ type Constraints struct {
 type SubtaskConstraints struct {
 	ID           string                  `json:"id"`
 	Phase        string                  `json:"phase"`
+	ChangeClass  string                  `json:"change_class"`
 	AllowedPaths []string                `json:"allowed_paths"`
 	ReviewBudget ticketplan.ReviewBudget `json:"review_budget"`
 	Dependencies []string                `json:"dependencies"`
@@ -181,13 +182,13 @@ func validateAssignment(constraints Constraints) error {
 	for _, assignment := range constraints.Subtasks {
 		files += assignment.ReviewBudget.MaxChangedFiles
 		lines += assignment.ReviewBudget.MaxChangedLines
-		if assignment.Phase == "" {
-			return fmt.Errorf("assignment for subtask %q is missing phase", assignment.ID)
+		if assignment.Phase == "" || assignment.ChangeClass == "" {
+			return fmt.Errorf("assignment for subtask %q is missing phase or change class", assignment.ID)
 		}
 		if assignment.ReviewBudget.MaxChangedFiles < 1 || assignment.ReviewBudget.MaxChangedLines < 1 || len(assignment.AllowedPaths) == 0 || assignment.Traceability == nil {
 			return fmt.Errorf("assignment for subtask %q is incomplete", assignment.ID)
 		}
-		for _, field := range []string{"phase", "review_budget", "allowed_paths", "dependencies"} {
+		for _, field := range []string{"phase", "change_class", "review_budget", "allowed_paths", "dependencies"} {
 			if len(assignment.Traceability[field]) == 0 {
 				return fmt.Errorf("assignment for subtask %q is missing %s traceability", assignment.ID, field)
 			}
@@ -287,15 +288,15 @@ func ApplyConstraints(plan *ticketplan.Plan, constraints Constraints) error {
 	}
 	for index := range plan.Subtasks {
 		assignment := constraints.Subtasks[index]
-		if assignment.ID == "" || assignment.Phase == "" || len(assignment.AllowedPaths) == 0 || assignment.ReviewBudget.MaxChangedFiles < 1 || assignment.ReviewBudget.MaxChangedLines < 1 || len(assignment.ReviewBudget.Components) == 0 || assignment.Traceability == nil {
+		if assignment.ID == "" || assignment.Phase == "" || assignment.ChangeClass == "" || len(assignment.AllowedPaths) == 0 || assignment.ReviewBudget.MaxChangedFiles < 1 || assignment.ReviewBudget.MaxChangedLines < 1 || len(assignment.ReviewBudget.Components) == 0 || assignment.Traceability == nil {
 			return fmt.Errorf("constraints subtask %d is incomplete", index+1)
 		}
 		subtask := &plan.Subtasks[index]
-		subtask.ID, subtask.Phase, subtask.AllowedPaths, subtask.ReviewBudget, subtask.Dependencies = assignment.ID, assignment.Phase, assignment.AllowedPaths, assignment.ReviewBudget, assignment.Dependencies
+		subtask.ID, subtask.Phase, subtask.ChangeClass, subtask.AllowedPaths, subtask.ReviewBudget, subtask.Dependencies = assignment.ID, assignment.Phase, assignment.ChangeClass, assignment.AllowedPaths, assignment.ReviewBudget, assignment.Dependencies
 		if assignment.ADR != "" {
 			subtask.ADR = assignment.ADR
 		}
-		for _, field := range []string{"phase", "review_budget", "allowed_paths", "dependencies", "adr"} {
+		for _, field := range []string{"phase", "change_class", "review_budget", "allowed_paths", "dependencies", "adr"} {
 			if len(assignment.Traceability[field]) == 0 && field == "adr" && assignment.ADR == "" {
 				continue
 			}

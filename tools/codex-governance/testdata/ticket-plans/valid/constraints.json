@@ -28,6 +28,7 @@
     {
       "id": "contract-validation",
       "phase": "Phase 1",
+      "change_class": "standard",
       "allowed_paths": [
         "internal/ticketplan"
       ],
@@ -45,6 +46,13 @@
             "source": "roadmap",
             "section": "Phase 1",
             "excerpt": "Source evidence: Phase 1 Plan Contract And Workflow State"
+          }
+        ],
+        "change_class": [
+          {
+            "source": "spec",
+            "section": "Scope",
+            "excerpt": "Source evidence: Standard ticket-plan validation is the approved change class"
           }
         ],
         "allowed_paths": [
