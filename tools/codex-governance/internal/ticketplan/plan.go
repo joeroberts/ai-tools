@@ -279,8 +279,10 @@ func validateTraceability(subject string, trace TraceMap, sections map[string]ma
 				if !ok {
 					continue
 				}
-				excerpt := strings.TrimSpace(ref.Excerpt)
-				if strings.Contains(section, excerpt) && traceSupportsField(field, excerpt, value) {
+				// Trace excerpts are manager-generated presentation data. Validate
+				// against the canonical verified source section instead, so harmless
+				// excerpt formatting cannot make the plan non-deterministic.
+				if traceSupportsField(field, section, value) {
 					matched = true
 					break
 				}
