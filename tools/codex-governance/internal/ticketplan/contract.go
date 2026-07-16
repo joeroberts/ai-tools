@@ -238,3 +238,14 @@ func SaveAuthorityContract(path, repoRoot string, contract AuthorityContract) (s
 	}
 	return digestBytes(data), nil
 }
+
+func (c AuthorityContract) Digest() (string, error) {
+	if err := c.Validate(); err != nil {
+		return "", err
+	}
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return digestBytes(append(data, '\n')), nil
+}

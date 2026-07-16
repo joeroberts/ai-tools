@@ -1,6 +1,7 @@
 {
   "format_version": 1,
   "status": "draft",
+  "contract_digest": "sha256:3e34f3191ea2360b9ce84f6c2c961c09c7e3ab8b23a269ab92930c8ca707dd98",
   "sources": {
     "prd": {
       "path": "testdata/ticket-plans/valid/prd.md",

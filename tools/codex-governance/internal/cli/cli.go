@@ -41,7 +41,7 @@ Usage:
   codex-governance jira work finalize --issue KEY --pr URL [--approve]
   codex-governance jira plan decompose --prd PATH --spec PATH --roadmap PATH --output PATH [--repo-root PATH] [--runtime-root PATH] [--codex-bin PATH]
   codex-governance jira plan generate --prd PATH --spec PATH --roadmap PATH --constraints PATH --output PATH --policy PATH --reviewer-model NAME --verifier-model NAME [--repo-root PATH] [--runtime-root PATH] [--codex-bin PATH] [--dry-run] [--verbose]
-  codex-governance jira plan validate --plan PATH [--repo-root PATH]
+  codex-governance jira plan validate --plan PATH --contract PATH [--repo-root PATH]
   codex-governance jira plan approve --plan PATH --workflow PATH --approved-by ID --approve [--repo-root PATH]
   codex-governance jira plan create --plan PATH --workflow PATH (--dry-run|--approve) [--result PATH --repo-root PATH]
   codex-governance jira plan resume --plan PATH --workflow PATH --result PATH (--dry-run|--approve) [--repo-root PATH]
@@ -146,6 +146,7 @@ func runJira(args []string, stdout, stderr io.Writer) int {
 	approve := flags.Bool("approve", false, "explicitly authorize the requested action")
 	resultPath := flags.String("result", "", "creation result JSON")
 	workflowPath := flags.String("workflow", "", "persisted ticket-plan workflow state")
+	contractPath := flags.String("contract", "", "persisted ticket-plan authority contract")
 	approvedBy := flags.String("approved-by", "", "stakeholder approving the ticket plan")
 	if err := flags.Parse(args[2:]); err != nil || *path == "" || flags.NArg() != 0 {
 		return 2
@@ -156,6 +157,16 @@ func runJira(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	issues := plan.ValidateAgainst(*repoRoot)
+	if *contractPath != "" {
+		contract, contractErr := ticketplan.LoadAuthorityContract(*contractPath, *repoRoot)
+		if contractErr != nil {
+			issues = append(issues, "authority contract is unavailable or invalid")
+		} else {
+			issues = plan.ValidateAgainstContract(*repoRoot, contract)
+		}
+	} else if command == "validate" {
+		issues = append(issues, "unsupported legacy ticket plan: --contract is required")
+	}
 	if len(issues) != 0 {
 		for _, issue := range issues {
 			fmt.Fprintf(stdout, "FAIL %s\n", issue)

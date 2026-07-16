@@ -8,21 +8,21 @@
   "role_bindings": {"prd":"requirements","spec":"technical-rules","roadmap":"delivery-order"},
   "story": {
     "summary":"Validate ticket plans",
-    "description":"Apply one deterministic authority contract.",
-    "acceptance_criteria":["Valid plans round-trip and invalid plans fail closed."]
+    "description":"Validate ticket-plan contracts before Jira write operation.",
+    "acceptance_criteria":["A valid ticket plan is reproducible"]
   },
   "slices": [{
     "id":"contract-validation",
     "assignment": {
       "phase":"Phase 1","change_class":"standard",
-      "review_budget":{"max_changed_files":5,"max_changed_lines":300,"components":["ticketplan tests"]},
+      "review_budget":{"max_changed_files":5,"max_changed_lines":300,"components":["ticketplan"]},
       "allowed_paths":["internal/ticketplan"],"dependencies":[],
-      "adr":"docs/decisions/0001-persist-ticket-plan-authority-contract.md"
+      "adr":"No ADR needed: additive validation fixture"
     },
     "source_derived": {
-      "summary":"Add deterministic contract validation","scope":"Validate and persist the authority contract.",
-      "non_goals":["Remote writes."],"acceptance_criteria":["Reject malformed contracts."],
-      "validation_plan":["Run focused Go tests."]
+      "summary":"Deterministic contract validation","scope":"Add deterministic validation",
+      "non_goals":["No Jira write operation"],"acceptance_criteria":["Validation passes"],
+      "validation_plan":["go test ./internal/ticketplan"]
     }
   }],
   "manager_narrative_rules":[{"field":"story.description","required_role":"prd","min_length":10}],

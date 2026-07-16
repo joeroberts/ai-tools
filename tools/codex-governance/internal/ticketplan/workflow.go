@@ -14,6 +14,8 @@ type WorkflowState struct {
 	RepositoryRoot string    `json:"repository_root"`
 	PlanPath       string    `json:"plan_path"`
 	PlanDigest     string    `json:"plan_digest"`
+	ContractPath   string    `json:"contract_path,omitempty"`
+	ContractDigest string    `json:"contract_digest,omitempty"`
 	Sources        Sources   `json:"sources"`
 	Status         string    `json:"status"`
 	UpdatedAt      time.Time `json:"updated_at"`
@@ -105,10 +107,28 @@ func (s WorkflowState) Validate() error {
 	if plan.Sources != s.Sources {
 		return fmt.Errorf("workflow state sources do not match the plan")
 	}
-	if issues := plan.ValidateAgainst(s.RepositoryRoot); len(issues) != 0 {
+	if plan.ContractDigest != "" {
+		if s.ContractPath == "" || s.ContractDigest != plan.ContractDigest {
+			return fmt.Errorf("workflow state authority contract binding does not match plan")
+		}
+		contract, err := LoadAuthorityContract(s.ContractPath, s.RepositoryRoot)
+		if err != nil || contractDigest(contract) != s.ContractDigest {
+			return fmt.Errorf("workflow state authority contract is unavailable or changed")
+		}
+		if issues := plan.ValidateAgainstContract(s.RepositoryRoot, contract); len(issues) != 0 {
+			return fmt.Errorf("workflow state contract verification failed: %v", issues)
+		}
+	} else if s.ContractPath != "" || s.ContractDigest != "" {
+		return fmt.Errorf("unsupported plan and workflow authority contract version combination")
+	} else if issues := plan.ValidateAgainst(s.RepositoryRoot); len(issues) != 0 {
 		return fmt.Errorf("workflow state source verification failed: %v", issues)
 	}
 	return nil
+}
+
+func contractDigest(contract AuthorityContract) string {
+	digest, _ := contract.Digest()
+	return digest
 }
 
 func canonicalRepositoryRoot(repoRoot string) (string, error) {

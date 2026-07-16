@@ -120,8 +120,8 @@ func TestApplyConstraintsOverridesManagerControlledPhaseAndAllowedPathEvidence(t
 	issues := strings.Join(plan.ValidateAgainst(repoRoot), "\n")
 	for _, field := range []string{"phase", "change_class", "allowed_paths"} {
 		for _, ref := range plan.Subtasks[0].Traceability[field] {
-			if ref.Authority != "assignment" {
-				t.Fatalf("%s trace authority = %q, want assignment", field, ref.Authority)
+			if ref.Authority != "" {
+				t.Fatalf("%s trace retained temporary assignment authority %q", field, ref.Authority)
 			}
 		}
 		if strings.Contains(issues, "subtask contract-validation "+field+" traceability lacks matching source evidence") {
@@ -150,6 +150,32 @@ func TestApplyConstraintsOverridesMalformedManagerSourceDerivedFields(t *testing
 	}
 	if plan.Story.Summary != "Canonical story" || plan.Subtasks[0].Summary != "Canonical subtask" || plan.Subtasks[0].Scope != "Canonical scope" || plan.Subtasks[0].AcceptanceCriteria[0] != "Canonical acceptance" {
 		t.Fatalf("manager fields were not replaced: %#v", plan)
+	}
+}
+
+func TestBuildAuthorityContractFromCanonicalConstraints(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	plan, err := ticketplan.Load(filepath.Join(repoRoot, "testdata", "ticket-plans", "valid", "plan.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	constraints, err := LoadConstraints(filepath.Join(repoRoot, "testdata", "ticket-plans", "valid", "constraints.json"), plan.Sources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	constraints.Story = &StoryConstraints{Summary: plan.Story.Summary, Description: plan.Story.Description, AcceptanceCriteria: plan.Story.AcceptanceCriteria, Traceability: plan.Story.Traceability}
+	subtask := plan.Subtasks[0]
+	constraints.Subtasks[0].ADR = subtask.ADR
+	constraints.Subtasks[0].SourceDerived = &SourceDerivedConstraints{Summary: subtask.Summary, Scope: subtask.Scope, NonGoals: subtask.NonGoals, AcceptanceCriteria: subtask.AcceptanceCriteria, ValidationPlan: subtask.ValidationPlan, Traceability: subtask.Traceability}
+	contract, err := buildAuthorityContract(constraints)
+	if err != nil || contract.ValidateAgainst(repoRoot) != nil {
+		t.Fatalf("buildAuthorityContract() error = %v", err)
+	}
+	again, err := buildAuthorityContract(constraints)
+	firstDigest, _ := contract.Digest()
+	secondDigest, _ := again.Digest()
+	if err != nil || firstDigest != secondDigest {
+		t.Fatalf("authority contract digest is not deterministic: %q != %q", firstDigest, secondDigest)
 	}
 }
 

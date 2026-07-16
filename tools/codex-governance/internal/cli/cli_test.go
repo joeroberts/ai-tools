@@ -239,6 +239,15 @@ func TestRunJiraPlanCreateDryRunUsesApprovedWorkflowWithoutWritingRecord(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
+	contractData, err := os.ReadFile(filepath.Join("..", "..", "testdata", "ticket-plans", "valid", "contract.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	contractPath := filepath.Join(root, "contract.json")
+	if err := os.WriteFile(contractPath, contractData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	workflow.ContractPath, workflow.ContractDigest = contractPath, plan.ContractDigest
 	workflow.ApprovedBy, workflow.ApprovedAt = "stakeholder@example.test", time.Now().UTC()
 	workflowPath := filepath.Join(root, "workflow.json")
 	if err := ticketplan.SaveWorkflow(workflowPath, workflow); err != nil {
@@ -283,13 +292,39 @@ func TestRunJiraPlanValidateChecksCurrentSources(t *testing.T) {
 
 func TestRunJiraPlanValidateValidFixture(t *testing.T) {
 	plan := filepath.Join("..", "..", "testdata", "ticket-plans", "valid", "plan.json")
+	contract := filepath.Join("..", "..", "testdata", "ticket-plans", "valid", "contract.json")
 	root := filepath.Join("..", "..")
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	if code := Run([]string{"jira", "plan", "validate", "--plan", plan, "--repo-root", root}, &stdout, &stderr); code != 0 {
+	if code := Run([]string{"jira", "plan", "validate", "--plan", plan, "--contract", contract, "--repo-root", root}, &stdout, &stderr); code != 0 {
 		t.Fatalf("validate = %d, stdout=%q, stderr=%q", code, stdout.String(), stderr.String())
 	}
 	if !bytes.Contains(stdout.Bytes(), []byte("PASS ticket plan is valid")) {
 		t.Fatalf("validate stdout=%q", stdout.String())
+	}
+}
+
+func TestRunJiraPlanValidateRejectsContractDriftAndLegacyInvocation(t *testing.T) {
+	root := filepath.Join("..", "..")
+	planPath := filepath.Join(root, "testdata", "ticket-plans", "valid", "plan.json")
+	contractPath := filepath.Join(root, "testdata", "ticket-plans", "valid", "contract.json")
+	var stdout bytes.Buffer
+	if code := Run([]string{"jira", "plan", "validate", "--plan", planPath, "--repo-root", root}, &stdout, &bytes.Buffer{}); code != 1 || !strings.Contains(stdout.String(), "unsupported legacy ticket plan") {
+		t.Fatalf("legacy validate = %d, output=%q", code, stdout.String())
+	}
+	plan := ticketplan.Plan{}
+	data := mustReadFile(t, planPath)
+	if err := json.Unmarshal(data, &plan); err != nil {
+		t.Fatal(err)
+	}
+	plan.Subtasks[0].Phase = "Changed"
+	tampered := filepath.Join(t.TempDir(), "plan.json")
+	data, _ = json.Marshal(plan)
+	if err := os.WriteFile(tampered, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	if code := Run([]string{"jira", "plan", "validate", "--plan", tampered, "--contract", contractPath, "--repo-root", root}, &stdout, &bytes.Buffer{}); code != 1 || !strings.Contains(stdout.String(), "does not match authority contract") {
+		t.Fatalf("contract drift validate = %d, output=%q", code, stdout.String())
 	}
 }

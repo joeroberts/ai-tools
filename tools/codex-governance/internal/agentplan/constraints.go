@@ -328,7 +328,7 @@ func ApplyConstraints(plan *ticketplan.Plan, constraints Constraints) error {
 			if len(assignment.Traceability[field]) == 0 && field == "adr" && assignment.ADR == "" {
 				continue
 			}
-			subtask.Traceability[field] = assignmentTrace(assignment.Traceability[field])
+			subtask.Traceability[field] = append([]ticketplan.Reference(nil), assignment.Traceability[field]...)
 		}
 		if source := assignment.SourceDerived; source != nil {
 			subtask.Summary = source.Summary
@@ -344,18 +344,55 @@ func ApplyConstraints(plan *ticketplan.Plan, constraints Constraints) error {
 	return nil
 }
 
-func assignmentTrace(refs []ticketplan.Reference) []ticketplan.Reference {
-	result := append([]ticketplan.Reference(nil), refs...)
-	for index := range result {
-		result[index].Authority = "assignment"
-	}
-	return result
-}
-
 func cloneTrace(source ticketplan.TraceMap) ticketplan.TraceMap {
 	result := make(ticketplan.TraceMap, len(source))
 	for field, refs := range source {
 		result[field] = append([]ticketplan.Reference(nil), refs...)
 	}
 	return result
+}
+
+func buildAuthorityContract(constraints Constraints) (ticketplan.AuthorityContract, error) {
+	if constraints.Story == nil {
+		return ticketplan.AuthorityContract{}, fmt.Errorf("unsupported legacy constraints: canonical story is required")
+	}
+	contract := ticketplan.AuthorityContract{
+		FormatVersion: ticketplan.AuthorityContractFormatVersion,
+		Sources: []ticketplan.ContractSource{
+			{ID: "prd", Path: constraints.Sources.PRD.Path, Digest: constraints.Sources.PRD.Digest},
+			{ID: "spec", Path: constraints.Sources.Spec.Path, Digest: constraints.Sources.Spec.Digest},
+			{ID: "roadmap", Path: constraints.Sources.Roadmap.Path, Digest: constraints.Sources.Roadmap.Digest},
+		},
+		Roles:          ticketplan.SourceRoleBindings{PRD: "prd", Spec: "spec", Roadmap: "roadmap"},
+		Story:          ticketplan.ContractStory{Summary: constraints.Story.Summary, Description: constraints.Story.Description, AcceptanceCriteria: append([]string(nil), constraints.Story.AcceptanceCriteria...)},
+		NarrativeRules: []ticketplan.NarrativeRule{},
+	}
+	appendEvidence := func(prefix string, trace ticketplan.TraceMap) {
+		fields := make([]string, 0, len(trace))
+		for field := range trace {
+			fields = append(fields, field)
+		}
+		sort.Strings(fields)
+		for _, field := range fields {
+			refs := trace[field]
+			for _, ref := range refs {
+				contract.Evidence = append(contract.Evidence, ticketplan.ContractEvidence{Field: prefix + field, Role: ref.Source, Section: ref.Section, Excerpt: ref.Excerpt})
+			}
+		}
+	}
+	appendEvidence("story.", constraints.Story.Traceability)
+	for _, assignment := range constraints.Subtasks {
+		if assignment.SourceDerived == nil {
+			return ticketplan.AuthorityContract{}, fmt.Errorf("unsupported legacy constraints: subtask %q lacks canonical source-derived values", assignment.ID)
+		}
+		source := assignment.SourceDerived
+		contract.Slices = append(contract.Slices, ticketplan.ContractSlice{
+			ID:            assignment.ID,
+			Assignment:    ticketplan.SliceAssignment{Phase: assignment.Phase, ChangeClass: assignment.ChangeClass, ReviewBudget: assignment.ReviewBudget, AllowedPaths: append([]string(nil), assignment.AllowedPaths...), Dependencies: append([]string{}, assignment.Dependencies...), ADR: assignment.ADR},
+			SourceDerived: ticketplan.SliceSourceDerived{Summary: source.Summary, Scope: source.Scope, NonGoals: append([]string(nil), source.NonGoals...), AcceptanceCriteria: append([]string(nil), source.AcceptanceCriteria...), ValidationPlan: append([]string(nil), source.ValidationPlan...)},
+		})
+		appendEvidence("slices[].", assignment.Traceability)
+		appendEvidence("slices[].", source.Traceability)
+	}
+	return contract, contract.Validate()
 }

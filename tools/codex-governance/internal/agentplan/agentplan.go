@@ -153,6 +153,24 @@ func generateAfterPhase2Approval(request Request, runners Runners) (Result, erro
 	}
 	key := sha256.Sum256([]byte(sources.PRD.Digest + sources.Spec.Digest + sources.Roadmap.Digest))
 	workItem := "ticket-plan:" + hex.EncodeToString(key[:8])
+	contract, err := buildAuthorityContract(constraints)
+	if err != nil {
+		return Result{}, err
+	}
+	contractPath := filepath.Join(request.RuntimeRoot, "ticket-plan-runs", strings.ReplaceAll(workItem, ":", "-"), "authority-contract.json")
+	contractDigest, err := contract.Digest()
+	if existing, loadErr := ticketplan.LoadAuthorityContract(contractPath, request.RepoRoot); loadErr == nil {
+		existingDigest, _ := existing.Digest()
+		if existingDigest != contractDigest {
+			return Result{}, fmt.Errorf("persisted authority contract does not match approved constraints")
+		}
+	} else if os.IsNotExist(loadErr) {
+		if _, err = ticketplan.SaveAuthorityContract(contractPath, request.RepoRoot, contract); err != nil {
+			return Result{}, fmt.Errorf("persist authority contract: %w", err)
+		}
+	} else {
+		return Result{}, fmt.Errorf("load persisted authority contract: %w", loadErr)
+	}
 	var plan ticketplan.Plan
 	feedback := ""
 	for cycle := 1; cycle <= 2; cycle++ {
@@ -168,11 +186,11 @@ func generateAfterPhase2Approval(request Request, runners Runners) (Result, erro
 		if err := json.Unmarshal(planBytes, &plan); err != nil {
 			return Result{}, fmt.Errorf("parse manager plan: %w", err)
 		}
-		plan.Sources, plan.Status = sources, "draft"
+		plan.Sources, plan.Status, plan.ContractDigest = sources, "draft", contractDigest
 		if err := ApplyConstraints(&plan, constraints); err != nil {
 			return Result{}, err
 		}
-		if issues := plan.ValidateAgainst(request.RepoRoot); len(issues) != 0 {
+		if issues := plan.ValidateAgainstContract(request.RepoRoot, contract); len(issues) != 0 {
 			if err := saveValidationFindings(request.RuntimeRoot, workItem, cycle, issues); err != nil {
 				return Result{}, fmt.Errorf("save manager validation findings: %w", err)
 			}
@@ -243,6 +261,7 @@ func generateAfterPhase2Approval(request Request, runners Runners) (Result, erro
 	if err != nil {
 		return Result{}, err
 	}
+	state.ContractPath, state.ContractDigest = contractPath, contractDigest
 	if err := ticketplan.SaveWorkflow(statePath, state); err != nil {
 		return Result{}, err
 	}
