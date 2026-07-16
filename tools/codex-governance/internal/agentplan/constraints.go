@@ -19,18 +19,40 @@ type Constraints struct {
 	Sources       ticketplan.Sources      `json:"sources"`
 	PathPool      []string                `json:"path_pool"`
 	ReviewBudget  ticketplan.ReviewBudget `json:"review_budget"`
+	Story         *StoryConstraints       `json:"story,omitempty"`
 	Subtasks      []SubtaskConstraints    `json:"subtasks"`
 }
 
+// StoryConstraints is canonical source-derived story content. It is approved
+// before manager dispatch and is never accepted from manager output.
+type StoryConstraints struct {
+	Summary            string              `json:"summary"`
+	Description        string              `json:"description"`
+	AcceptanceCriteria []string            `json:"acceptance_criteria"`
+	Traceability       ticketplan.TraceMap `json:"traceability"`
+}
+
 type SubtaskConstraints struct {
-	ID           string                  `json:"id"`
-	Phase        string                  `json:"phase"`
-	ChangeClass  string                  `json:"change_class"`
-	AllowedPaths []string                `json:"allowed_paths"`
-	ReviewBudget ticketplan.ReviewBudget `json:"review_budget"`
-	Dependencies []string                `json:"dependencies"`
-	ADR          string                  `json:"adr,omitempty"`
-	Traceability ticketplan.TraceMap     `json:"traceability"`
+	ID            string                    `json:"id"`
+	Phase         string                    `json:"phase"`
+	ChangeClass   string                    `json:"change_class"`
+	AllowedPaths  []string                  `json:"allowed_paths"`
+	ReviewBudget  ticketplan.ReviewBudget   `json:"review_budget"`
+	Dependencies  []string                  `json:"dependencies"`
+	ADR           string                    `json:"adr,omitempty"`
+	Traceability  ticketplan.TraceMap       `json:"traceability"`
+	SourceDerived *SourceDerivedConstraints `json:"source_derived,omitempty"`
+}
+
+// SourceDerivedConstraints contains the verified-source fields which must not
+// be selected or paraphrased by the manager.
+type SourceDerivedConstraints struct {
+	Summary            string              `json:"summary"`
+	Scope              string              `json:"scope"`
+	NonGoals           []string            `json:"non_goals"`
+	AcceptanceCriteria []string            `json:"acceptance_criteria"`
+	ValidationPlan     []string            `json:"validation_plan"`
+	Traceability       ticketplan.TraceMap `json:"traceability"`
 }
 
 var (
@@ -283,6 +305,12 @@ func makePrivateDirectory(directory string) error {
 }
 
 func ApplyConstraints(plan *ticketplan.Plan, constraints Constraints) error {
+	if constraints.Story != nil {
+		plan.Story.Summary = constraints.Story.Summary
+		plan.Story.Description = constraints.Story.Description
+		plan.Story.AcceptanceCriteria = append([]string(nil), constraints.Story.AcceptanceCriteria...)
+		plan.Story.Traceability = cloneTrace(constraints.Story.Traceability)
+	}
 	if len(plan.Subtasks) != len(constraints.Subtasks) {
 		return fmt.Errorf("manager decomposition has %d subtasks but constraints assign %d", len(plan.Subtasks), len(constraints.Subtasks))
 	}
@@ -300,8 +328,34 @@ func ApplyConstraints(plan *ticketplan.Plan, constraints Constraints) error {
 			if len(assignment.Traceability[field]) == 0 && field == "adr" && assignment.ADR == "" {
 				continue
 			}
-			subtask.Traceability[field] = assignment.Traceability[field]
+			subtask.Traceability[field] = assignmentTrace(assignment.Traceability[field])
+		}
+		if source := assignment.SourceDerived; source != nil {
+			subtask.Summary = source.Summary
+			subtask.Scope = source.Scope
+			subtask.NonGoals = append([]string(nil), source.NonGoals...)
+			subtask.AcceptanceCriteria = append([]string(nil), source.AcceptanceCriteria...)
+			subtask.ValidationPlan = append([]string(nil), source.ValidationPlan...)
+			for _, field := range []string{"summary", "scope", "non_goals", "acceptance_criteria", "validation_plan"} {
+				subtask.Traceability[field] = append([]ticketplan.Reference(nil), source.Traceability[field]...)
+			}
 		}
 	}
 	return nil
+}
+
+func assignmentTrace(refs []ticketplan.Reference) []ticketplan.Reference {
+	result := append([]ticketplan.Reference(nil), refs...)
+	for index := range result {
+		result[index].Authority = "assignment"
+	}
+	return result
+}
+
+func cloneTrace(source ticketplan.TraceMap) ticketplan.TraceMap {
+	result := make(ticketplan.TraceMap, len(source))
+	for field, refs := range source {
+		result[field] = append([]ticketplan.Reference(nil), refs...)
+	}
+	return result
 }

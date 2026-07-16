@@ -119,9 +119,37 @@ func TestApplyConstraintsOverridesManagerControlledPhaseAndAllowedPathEvidence(t
 	}
 	issues := strings.Join(plan.ValidateAgainst(repoRoot), "\n")
 	for _, field := range []string{"phase", "change_class", "allowed_paths"} {
+		for _, ref := range plan.Subtasks[0].Traceability[field] {
+			if ref.Authority != "assignment" {
+				t.Fatalf("%s trace authority = %q, want assignment", field, ref.Authority)
+			}
+		}
 		if strings.Contains(issues, "subtask contract-validation "+field+" traceability lacks matching source evidence") {
 			t.Fatalf("%s evidence was not replaced before validation: %q", field, issues)
 		}
+	}
+}
+
+func TestApplyConstraintsOverridesMalformedManagerSourceDerivedFields(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	fixtureRoot := filepath.Join(repoRoot, "testdata", "ticket-plans", "valid")
+	plan, err := ticketplan.Load(filepath.Join(fixtureRoot, "plan.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	constraints, err := LoadConstraints(filepath.Join(fixtureRoot, "constraints.json"), plan.Sources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	constraints.Story = &StoryConstraints{Summary: "Canonical story", Description: "Canonical description", AcceptanceCriteria: []string{"Canonical acceptance"}, Traceability: plan.Story.Traceability}
+	constraints.Subtasks[0].SourceDerived = &SourceDerivedConstraints{Summary: "Canonical subtask", Scope: "Canonical scope", NonGoals: []string{"Canonical non-goal"}, AcceptanceCriteria: []string{"Canonical acceptance"}, ValidationPlan: []string{"Canonical validation"}, Traceability: ticketplan.TraceMap{"summary": plan.Subtasks[0].Traceability["summary"], "scope": plan.Subtasks[0].Traceability["scope"], "non_goals": plan.Subtasks[0].Traceability["non_goals"], "acceptance_criteria": plan.Subtasks[0].Traceability["acceptance_criteria"], "validation_plan": plan.Subtasks[0].Traceability["validation_plan"]}}
+	plan.Story.Summary, plan.Subtasks[0].Scope = "Malformed manager story", "Malformed manager scope"
+	plan.Subtasks[0].AcceptanceCriteria = []string{"Malformed manager acceptance"}
+	if err := ApplyConstraints(&plan, constraints); err != nil {
+		t.Fatal(err)
+	}
+	if plan.Story.Summary != "Canonical story" || plan.Subtasks[0].Summary != "Canonical subtask" || plan.Subtasks[0].Scope != "Canonical scope" || plan.Subtasks[0].AcceptanceCriteria[0] != "Canonical acceptance" {
+		t.Fatalf("manager fields were not replaced: %#v", plan)
 	}
 }
 
