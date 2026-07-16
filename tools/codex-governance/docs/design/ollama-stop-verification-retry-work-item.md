@@ -4,7 +4,9 @@
 
 GitHub issue #30, Story `REK-19`, and primary Subtask `REK-20` are linked to
 this work item. `REK-20` was transitioned to `In Progress` and read back before
-implementation began.
+implementation began. Owner-approved Jira comment `10021` amends only the
+review budget from 2 to 3 changed files so it counts this committed work-item
+record separately from production code and regression tests.
 
 ## Scope
 
@@ -56,6 +58,6 @@ This is a standard resilience correction to existing residency verification.
 
 ## Review Budget
 
-Maximum 2 changed files, 220 changed lines, and work-item record, Ollama residency verification.
+Maximum 3 changed files, 220 changed lines, and work-item record, Ollama residency verification.
 No ADR is needed because this narrows bounded error handling without adding a
 new component or policy boundary.
