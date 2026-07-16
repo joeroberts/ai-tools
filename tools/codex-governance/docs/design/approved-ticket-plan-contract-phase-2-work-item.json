@@ -1,0 +1,74 @@
+{
+  "format_version": 1,
+  "governance_status": "ready",
+  "profile": "generic",
+  "source": {
+    "mode": "offline-export",
+    "story_key": "REK-21",
+    "story_url": "https://rekonlabs.atlassian.net/browse/REK-21",
+    "subtask_key": "REK-23",
+    "subtask_url": "https://rekonlabs.atlassian.net/browse/REK-23",
+    "captured_at": "2026-07-16T12:21:30Z",
+    "story_updated_at": "2026-07-16T11:21:39Z",
+    "subtask_updated_at": "2026-07-16T12:21:02Z",
+    "story_description_digest": "sha256:ecb305b066631742937adae5855c7814cfd3ece90b11383b00d54412310d755b",
+    "story_acceptance_criteria_digest": "sha256:ecb305b066631742937adae5855c7814cfd3ece90b11383b00d54412310d755b",
+    "subtask_description_digest": "sha256:6467b74d7359e01ba01181674bb9adf1f46f06d6ebc50f78cdc7100207d35eb2",
+    "subtask_acceptance_criteria_digest": "sha256:6467b74d7359e01ba01181674bb9adf1f46f06d6ebc50f78cdc7100207d35eb2"
+  },
+  "scope": {
+    "phase": "Phase 2",
+    "change_class": "high-risk",
+    "allowed_paths": [
+      "internal/agentplan",
+      "internal/cli",
+      "internal/ticketplan",
+      "testdata/ticket-plans"
+    ],
+    "non_goals": [
+      "Any change to Jira or publication approval policy.",
+      "Declared-slice coverage enforcement, which belongs to Phase 3."
+    ],
+    "technical_acceptance_criteria": [
+      "Make generation and standalone validation consume the same contract-aware validator.",
+      "Validate assignment-owned and source-derived values by equality with the persisted contract.",
+      "Bind plan and workflow state to the matching contract digest.",
+      "Remove the temporary assignment-authority trace mechanism.",
+      "Reject unsupported plan, contract, and workflow version combinations with an actionable migration or rejection message."
+    ],
+    "validation_plan": [
+      "Run focused generation, workflow, CLI, and standalone-validation tests.",
+      "Run make test, make vet, make build, and git diff --check.",
+      "Obtain independent exact-diff reviewer and verifier evidence from distinct executors.",
+      "Run make review-gate for the exact staged diff."
+    ],
+    "file_classification": {
+      "generated_paths": [],
+      "lockfile_paths": []
+    },
+    "review_budget": {
+      "max_changed_files": 10,
+      "max_changed_lines": 800,
+      "max_components": 2
+    }
+  },
+  "git_range": {
+    "base_sha": "e8c147f4c86e5d8e1d439762d733d5a2d8d6a8f5",
+    "head_sha": "e8c147f4c86e5d8e1d439762d733d5a2d8d6a8f5"
+  },
+  "decision": {
+    "adr": "docs/decisions/0001-persist-ticket-plan-authority-contract.md"
+  },
+  "links": {
+    "pull_request": null,
+    "ci_run": null,
+    "review_exception": null,
+    "agent_exception": null
+  },
+  "handoff": {
+    "status": "ready for linked Phase 2 planning baseline",
+    "completed_work": "Completed and reviewed REK-22, recorded its commit in Jira, moved REK-22 to In Review, and transitioned REK-23 to In Progress with read-back.",
+    "blocker": null,
+    "next_action": "Commit this linked Phase 2 planning baseline, run implementation preflight, and implement only the unified-contract-validation slice."
+  }
+}
