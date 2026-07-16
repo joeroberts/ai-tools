@@ -66,6 +66,23 @@ func TestContainsNormalizedPathAcceptsDirectoryPathWithTrailingSlash(t *testing.
 	}
 }
 
+func TestTraceSupportsCanonicalEvidenceGatedPublicationSummary(t *testing.T) {
+	section := "# Evidence-Gated Publication Work Item"
+	if !traceSupportsField("summary", section, "Evidence-Gated Publication Work Item") {
+		t.Fatal("canonical summary was not supported by its verified title section")
+	}
+}
+
+func TestPlanValidateAgainstRejectsAssignmentAuthorityOnNarrativeField(t *testing.T) {
+	root, plan := validPlan(t)
+	plan.Story.Summary = "Unsupported manager narrative"
+	plan.Story.Traceability["summary"][0].Authority = "assignment"
+	issues := strings.Join(plan.ValidateAgainst(root), "\n")
+	if !strings.Contains(issues, "story is incomplete") || !strings.Contains(issues, "story summary traceability lacks matching source evidence") {
+		t.Fatalf("issues = %q", issues)
+	}
+}
+
 func TestPlanValidateRejectsNormalizedTraversalAndCycles(t *testing.T) {
 	_, plan := validPlan(t)
 	plan.Subtasks[0].AllowedPaths = []string{"internal/ticketplan/../README.md"}

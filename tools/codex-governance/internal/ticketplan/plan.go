@@ -76,9 +76,10 @@ type Subtask struct {
 }
 
 type Reference struct {
-	Source  string `json:"source"`
-	Section string `json:"section"`
-	Excerpt string `json:"excerpt"`
+	Source    string `json:"source"`
+	Section   string `json:"section"`
+	Excerpt   string `json:"excerpt"`
+	Authority string `json:"authority,omitempty"`
 }
 
 type TraceMap map[string][]Reference
@@ -258,6 +259,9 @@ func validTrace(trace TraceMap, fields ...string) bool {
 			return false
 		}
 		for _, ref := range refs {
+			if ref.Authority != "" && (ref.Authority != "assignment" || !isAssignmentTraceField(field)) {
+				return false
+			}
 			if !oneOf(ref.Source, "prd", "spec", "roadmap") || strings.TrimSpace(ref.Section) == "" || len(strings.TrimSpace(ref.Excerpt)) < 10 || !hasSubstantiveTokens(ref.Excerpt) {
 				return false
 			}
@@ -275,6 +279,10 @@ func validateTraceability(subject string, trace TraceMap, sections map[string]ma
 		for _, value := range fields[field] {
 			matched := false
 			for _, ref := range trace[field] {
+				if ref.Authority == "assignment" && isAssignmentTraceField(field) {
+					matched = true
+					break
+				}
 				section, ok := sections[ref.Source][strings.TrimSpace(ref.Section)]
 				if !ok {
 					continue
@@ -329,6 +337,10 @@ func traceSupportsField(field, excerpt, value string) bool {
 
 func isListTraceField(field string) bool {
 	return oneOf(field, "acceptance_criteria", "review_budget", "non_goals", "validation_plan", "dependencies")
+}
+
+func isAssignmentTraceField(field string) bool {
+	return oneOf(field, "phase", "change_class", "review_budget", "allowed_paths", "dependencies", "adr")
 }
 
 func containsNormalizedPhrase(excerpt, value string) bool {

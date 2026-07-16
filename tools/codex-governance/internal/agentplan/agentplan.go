@@ -167,15 +167,7 @@ func generateAfterPhase2Approval(request Request, runners Runners) (Result, erro
 			if err := saveValidationFindings(request.RuntimeRoot, workItem, cycle, issues); err != nil {
 				return Result{}, fmt.Errorf("save manager validation findings: %w", err)
 			}
-			if cycle == 2 {
-				if err := saveEscalation(request.RuntimeRoot, workItem, cycle, "manager validation did not converge", issues); err != nil {
-					return Result{}, fmt.Errorf("save stakeholder escalation: %w", err)
-				}
-				return Result{}, fmt.Errorf("ticket plan requires stakeholder escalation after two manager validation cycles: %v", issues)
-			}
-			progress("Manager plan failed deterministic validation; returning findings for remediation")
-			feedback = "Deterministic plan validation findings:\n- " + strings.Join(issues, "\n- ")
-			continue
+			return Result{}, fmt.Errorf("ticket plan contains unsupported manager narrative or invalid canonical content: %v", issues)
 		}
 		serialized, _ := json.Marshal(plan)
 		progress(fmt.Sprintf("Dispatching independent reviewer (cycle %d/2)", cycle))
