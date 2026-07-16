@@ -60,6 +60,10 @@ type Status struct {
 // SetResidency changes only the residency of an allowlisted installed model.
 // It never includes prompt content and verifies the requested final state.
 func SetResidency(client *http.Client, policy Policy, modelName string, loaded bool) error {
+	return setResidency(client, policy, modelName, loaded, 5*time.Second)
+}
+
+func setResidency(client *http.Client, policy Policy, modelName string, loaded bool, verificationTimeout time.Duration) error {
 	var allowed Model
 	for _, model := range policy.Models {
 		if model.Name == modelName {
@@ -91,7 +95,7 @@ func SetResidency(client *http.Client, policy Policy, modelName string, loaded b
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("Ollama residency request returned %s", response.Status)
 	}
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(verificationTimeout)
 	for {
 		status, err := LoadedStatus(client, policy, modelName)
 		if err != nil {

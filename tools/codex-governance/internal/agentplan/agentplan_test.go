@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"codex-governance/internal/ollama"
 	"codex-governance/internal/ticketplan"
 )
 
@@ -140,6 +141,115 @@ func TestOllamaRunnerRestrictsExecutionToReviewRoles(t *testing.T) {
 	if _, err := runner.Run(context.Background(), "manager", "prompt", "schema"); err == nil || !strings.Contains(err.Error(), "restricted to reviewer and verifier roles") {
 		t.Fatalf("OllamaRunner.Run(manager) error = %v", err)
 	}
+}
+
+func TestHandoffReviewerToVerifierOrdersResidencyChanges(t *testing.T) {
+	var changes []string
+	reviewer := OllamaRunner{Model: "reviewer-model", setResidency: func(loaded bool) error {
+		changes = append(changes, "reviewer=false")
+		if loaded {
+			t.Fatal("reviewer was loaded during handoff")
+		}
+		return nil
+	}}
+	verifier := OllamaRunner{Model: "verifier-model", setResidency: func(loaded bool) error {
+		changes = append(changes, "verifier=true")
+		if !loaded {
+			t.Fatal("verifier was unloaded during handoff")
+		}
+		return nil
+	}}
+	if err := handoffReviewerToVerifier(reviewer, verifier); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(changes, ","); got != "reviewer=false,verifier=true" {
+		t.Fatalf("residency changes = %q", got)
+	}
+}
+
+func TestHandoffReviewerToVerifierStopsOnUnloadFailure(t *testing.T) {
+	verifierCalled := false
+	reviewer := OllamaRunner{Model: "reviewer-model", setResidency: func(bool) error { return errors.New("status verification failed") }}
+	verifier := OllamaRunner{Model: "verifier-model", setResidency: func(bool) error {
+		verifierCalled = true
+		return nil
+	}}
+	err := handoffReviewerToVerifier(reviewer, verifier)
+	if err == nil || !strings.Contains(err.Error(), `unload reviewer model "reviewer-model": status verification failed`) {
+		t.Fatalf("handoffReviewerToVerifier() error = %v", err)
+	}
+	if verifierCalled {
+		t.Fatal("verifier residency changed after reviewer unload failure")
+	}
+}
+
+func TestHandoffReviewerToVerifierStopsOnLoadFailure(t *testing.T) {
+	reviewerCalled := false
+	reviewer := OllamaRunner{Model: "reviewer-model", setResidency: func(bool) error {
+		reviewerCalled = true
+		return nil
+	}}
+	verifier := OllamaRunner{Model: "verifier-model", setResidency: func(bool) error { return errors.New("load verification failed") }}
+	err := handoffReviewerToVerifier(reviewer, verifier)
+	if err == nil || !strings.Contains(err.Error(), `load verifier model "verifier-model": load verification failed`) {
+		t.Fatalf("handoffReviewerToVerifier() error = %v", err)
+	}
+	if !reviewerCalled {
+		t.Fatal("reviewer was not unloaded before verifier load failure")
+	}
+}
+
+func TestValidateRunnersRejectsSharedModelIdentity(t *testing.T) {
+	policy := ticketPlanPolicy("same-model", "same-model", "same-policy")
+	err := validateRunners(Runners{
+		Manager:  CodexRunner{},
+		Reviewer: OllamaRunner{Policy: policy, Model: "same-model"},
+		Verifier: OllamaRunner{Policy: policy, Model: "same-model"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "models must have distinct identities") {
+		t.Fatalf("validateRunners() error = %v", err)
+	}
+}
+
+func TestValidateRunnersRejectsAliasedModelIdentity(t *testing.T) {
+	policy := ticketPlanPolicy("reviewer-model", "verifier-alias", "same-policy")
+	policy.Models[1].ID = policy.Models[0].ID
+	err := validateRunners(Runners{
+		Manager:  CodexRunner{},
+		Reviewer: OllamaRunner{Policy: policy, Model: "reviewer-model"},
+		Verifier: OllamaRunner{Policy: policy, Model: "verifier-alias"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "models must have distinct identities") {
+		t.Fatalf("validateRunners() error = %v", err)
+	}
+}
+
+func TestValidateRunnersRejectsDifferentPolicies(t *testing.T) {
+	reviewerPolicy := ticketPlanPolicy("reviewer-model", "verifier-model", "reviewer-policy")
+	verifierPolicy := ticketPlanPolicy("reviewer-model", "verifier-model", "verifier-policy")
+	err := validateRunners(Runners{
+		Manager:  CodexRunner{},
+		Reviewer: OllamaRunner{Policy: reviewerPolicy, Model: "reviewer-model"},
+		Verifier: OllamaRunner{Policy: verifierPolicy, Model: "verifier-model"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "must use the same local model policy") {
+		t.Fatalf("validateRunners() error = %v", err)
+	}
+}
+
+func ticketPlanPolicy(reviewer, verifier, fingerprint string) ollama.Policy {
+	const reviewerID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	verifierID := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	if reviewer == verifier {
+		verifierID = reviewerID
+	}
+	models := []ollama.Model{
+		{Name: reviewer, ID: reviewerID, BenchmarkApproved: true, AllowedRoles: []string{"reviewer", "verifier"}, AllowedTaskTypes: []string{"ticket-plan-review"}, MaxInputBytes: 1024},
+	}
+	if verifier != reviewer {
+		models = append(models, ollama.Model{Name: verifier, ID: verifierID, BenchmarkApproved: true, AllowedRoles: []string{"verifier"}, AllowedTaskTypes: []string{"ticket-plan-review"}, MaxInputBytes: 1024})
+	}
+	return ollama.Policy{Endpoint: "http://127.0.0.1:11434", RequestTimeoutSeconds: 60, Models: models, Fingerprint: fingerprint}
 }
 
 func TestReviewPromptRequiresStructuredResult(t *testing.T) {

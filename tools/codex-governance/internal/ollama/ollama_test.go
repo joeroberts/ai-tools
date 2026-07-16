@@ -135,6 +135,26 @@ func TestSetResidencyRejectsUnknownModel(t *testing.T) {
 	}
 }
 
+func TestSetResidencyFailsWhenStatusDoesNotReachRequestedState(t *testing.T) {
+	policy := testPolicy(Model{Name: "local-model", BenchmarkApproved: true, AllowedRoles: []string{"reviewer"}, AllowedTaskTypes: []string{"ticket-plan-review"}, MaxInputBytes: 100})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			_, _ = w.Write([]byte(`{"models":[{"name":"local-model","digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}`))
+		case "/api/generate":
+			_, _ = w.Write([]byte(`{"done":true}`))
+		case "/api/ps":
+			_, _ = w.Write([]byte(`{"models":[{"name":"local-model","digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}`))
+		}
+	}))
+	defer server.Close()
+	policy.Endpoint = server.URL
+	err := setResidency(Client(policy), policy, "local-model", false, 10*time.Millisecond)
+	if err == nil || err.Error() != "model residency verification failed: loaded=true" {
+		t.Fatalf("setResidency() error = %v", err)
+	}
+}
+
 func TestInventoryReturnsInstalledModelsWithoutAllowlistingThem(t *testing.T) {
 	policy := testPolicy(Model{Name: "allowed", BenchmarkApproved: true, AllowedRoles: []string{"reviewer"}, AllowedTaskTypes: []string{"ticket-plan-review"}, MaxInputBytes: 100})
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

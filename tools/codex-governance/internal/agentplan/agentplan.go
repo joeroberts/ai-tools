@@ -36,6 +36,8 @@ type Runners struct{ Manager, Reviewer, Verifier Runner }
 type OllamaRunner struct {
 	Policy ollama.Policy
 	Model  string
+
+	setResidency func(bool) error
 }
 
 func (r OllamaRunner) Run(_ context.Context, role, prompt, _ string) ([]byte, error) {
@@ -47,6 +49,13 @@ func (r OllamaRunner) Run(_ context.Context, role, prompt, _ string) ([]byte, er
 		return nil, err
 	}
 	return []byte(output), nil
+}
+
+func (r OllamaRunner) SetResidency(loaded bool) error {
+	if r.setResidency != nil {
+		return r.setResidency(loaded)
+	}
+	return ollama.SetResidency(ollama.Client(r.Policy), r.Policy, r.Model, loaded)
 }
 
 type CodexRunner struct {
@@ -193,6 +202,14 @@ func generateAfterPhase2Approval(request Request, runners Runners) (Result, erro
 		feedback = review.Summary
 	}
 	serialized, _ := json.Marshal(plan)
+	progress("Unloading approved reviewer before verifier handoff")
+	if err := handoffReviewerToVerifier(runners.Reviewer, runners.Verifier); err != nil {
+		if saveErr := saveEscalation(request.RuntimeRoot, workItem, 1, "reviewer-to-verifier residency handoff failed", []string{err.Error()}); saveErr != nil {
+			return Result{}, fmt.Errorf("save residency handoff escalation: %w", saveErr)
+		}
+		return Result{}, err
+	}
+	progress("Reviewer unloaded and verifier residency verified")
 	progress("Dispatching independent verifier")
 	result, err := runRole(request.RuntimeRoot, workItem, "verifier", 1, runners.Verifier, reviewPrompt("verifier", serialized), reviewSchema())
 	if err != nil {
@@ -277,30 +294,63 @@ func validateRunners(runners Runners) error {
 	if sameRunnerInstance(runners.Reviewer, runners.Verifier) {
 		return fmt.Errorf("reviewer and verifier runners must be independent instances")
 	}
-	if err := validateLocalWorker(runners.Reviewer, "reviewer"); err != nil {
+	reviewerModel, err := authorizedLocalModel(runners.Reviewer, "reviewer")
+	if err != nil {
 		return fmt.Errorf("reviewer worker policy: %w", err)
 	}
-	if err := validateLocalWorker(runners.Verifier, "verifier"); err != nil {
+	verifierModel, err := authorizedLocalModel(runners.Verifier, "verifier")
+	if err != nil {
 		return fmt.Errorf("verifier worker policy: %w", err)
+	}
+	reviewer, _ := localWorker(runners.Reviewer)
+	verifier, _ := localWorker(runners.Verifier)
+	if reviewerModel.Name == verifierModel.Name || reviewerModel.ID == verifierModel.ID {
+		return fmt.Errorf("reviewer and verifier models must have distinct identities")
+	}
+	if reviewer.Policy.Endpoint != verifier.Policy.Endpoint || reviewer.Policy.Fingerprint != verifier.Policy.Fingerprint {
+		return fmt.Errorf("reviewer and verifier runners must use the same local model policy")
 	}
 	return nil
 }
 
-func validateLocalWorker(runner Runner, role string) error {
-	var worker OllamaRunner
+func authorizedLocalModel(runner Runner, role string) (ollama.Model, error) {
+	worker, err := localWorker(runner)
+	if err != nil {
+		return ollama.Model{}, err
+	}
+	return worker.Policy.Authorize(ollama.Request{Model: worker.Model, Role: role, TaskType: "ticket-plan-review"})
+}
+
+func localWorker(runner Runner) (OllamaRunner, error) {
 	switch value := runner.(type) {
 	case OllamaRunner:
-		worker = value
+		return value, nil
 	case *OllamaRunner:
 		if value == nil {
-			return fmt.Errorf("local Ollama runner is nil")
+			return OllamaRunner{}, fmt.Errorf("local Ollama runner is nil")
 		}
-		worker = *value
+		return *value, nil
 	default:
-		return fmt.Errorf("local Ollama runner is invalid")
+		return OllamaRunner{}, fmt.Errorf("local Ollama runner is invalid")
 	}
-	_, err := worker.Policy.Authorize(ollama.Request{Model: worker.Model, Role: role, TaskType: "ticket-plan-review"})
-	return err
+}
+
+func handoffReviewerToVerifier(reviewerRunner, verifierRunner Runner) error {
+	reviewer, err := localWorker(reviewerRunner)
+	if err != nil {
+		return fmt.Errorf("resolve reviewer residency worker: %w", err)
+	}
+	verifier, err := localWorker(verifierRunner)
+	if err != nil {
+		return fmt.Errorf("resolve verifier residency worker: %w", err)
+	}
+	if err := reviewer.SetResidency(false); err != nil {
+		return fmt.Errorf("unload reviewer model %q: %w", reviewer.Model, err)
+	}
+	if err := verifier.SetResidency(true); err != nil {
+		return fmt.Errorf("load verifier model %q: %w", verifier.Model, err)
+	}
+	return nil
 }
 
 func sameRunnerInstance(left, right Runner) bool {
