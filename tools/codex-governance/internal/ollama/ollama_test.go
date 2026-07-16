@@ -128,6 +128,39 @@ func TestSetResidencySendsNoPromptAndVerifiesStopped(t *testing.T) {
 	}
 }
 
+func TestSetResidencyLoadsWithoutPromptAndVerifiesLoaded(t *testing.T) {
+	policy := testPolicy(Model{Name: "local-model", BenchmarkApproved: true, AllowedRoles: []string{"reviewer"}, AllowedTaskTypes: []string{"ticket-plan-review"}, MaxInputBytes: 100})
+	installedVerified, loadRequested := false, false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			installedVerified = true
+			_, _ = w.Write([]byte(`{"models":[{"name":"local-model","digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}`))
+		case "/api/generate":
+			if !installedVerified {
+				t.Fatal("load requested before installed-model identity verification")
+			}
+			var payload map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			if _, ok := payload["prompt"]; ok || payload["model"] != "local-model" || payload["keep_alive"] != "10m" || payload["stream"] != false {
+				t.Fatalf("load payload = %#v", payload)
+			}
+			loadRequested = true
+			_, _ = w.Write([]byte(`{"done":true}`))
+		case "/api/ps":
+			if !loadRequested {
+				t.Fatal("residency checked before load request")
+			}
+			_, _ = w.Write([]byte(`{"models":[{"name":"local-model","digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","context_length":4096,"size_vram":1}]}`))
+		}
+	}))
+	defer server.Close()
+	policy.Endpoint = server.URL
+	if err := SetResidency(Client(policy), policy, "local-model", true); err != nil {
+		t.Fatalf("SetResidency() = %v", err)
+	}
+}
+
 func TestSetResidencyRejectsUnknownModel(t *testing.T) {
 	policy := testPolicy(Model{Name: "local-model", BenchmarkApproved: true, AllowedRoles: []string{"reviewer"}, AllowedTaskTypes: []string{"ticket-plan-review"}, MaxInputBytes: 100})
 	if err := SetResidency(Client(policy), policy, "unknown", false); err == nil {
