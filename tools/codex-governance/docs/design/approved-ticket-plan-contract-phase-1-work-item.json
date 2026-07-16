@@ -1,0 +1,78 @@
+{
+  "format_version": 1,
+  "governance_status": "ready",
+  "profile": "generic",
+  "source": {
+    "mode": "offline-export",
+    "story_key": "REK-21",
+    "story_url": "https://rekonlabs.atlassian.net/browse/REK-21",
+    "subtask_key": "REK-22",
+    "subtask_url": "https://rekonlabs.atlassian.net/browse/REK-22",
+    "captured_at": "2026-07-16T11:27:04Z",
+    "story_updated_at": "2026-07-16T11:21:39Z",
+    "subtask_updated_at": "2026-07-16T11:26:15Z",
+    "story_description_digest": "sha256:ecb305b066631742937adae5855c7814cfd3ece90b11383b00d54412310d755b",
+    "story_acceptance_criteria_digest": "sha256:ecb305b066631742937adae5855c7814cfd3ece90b11383b00d54412310d755b",
+    "subtask_description_digest": "sha256:571355d338923841f8442b15c311f8c08cc06f327ef4feddbae326b4e515b848",
+    "subtask_acceptance_criteria_digest": "sha256:571355d338923841f8442b15c311f8c08cc06f327ef4feddbae326b4e515b848"
+  },
+  "scope": {
+    "phase": "Phase 1",
+    "change_class": "high-risk",
+    "allowed_paths": [
+      "docs/decisions",
+      "docs/design",
+      "docs/roadmaps",
+      "internal/agentplan",
+      "internal/ticketplan",
+      "testdata/ticket-plans"
+    ],
+    "non_goals": [
+      "A parallel source or slice contract.",
+      "Manager-authored evidence as authority.",
+      "internal/cli changes, which belong to Phase 2.",
+      "Jira or publication approval policy changes."
+    ],
+    "technical_acceptance_criteria": [
+      "Define the accepted ADR and strict versioned contract schema.",
+      "Record canonical source identities and explicit PRD, specification, and roadmap role bindings.",
+      "Reject repeated paths, symlink aliases, identical-content aliases, missing roles, malformed contracts, and unsupported versions.",
+      "Persist owner-only contract artifacts without overwrite.",
+      "Round-trip a valid three-source contract deterministically."
+    ],
+    "validation_plan": [
+      "Run focused contract schema and persistence tests.",
+      "Run make test, make vet, make build, and git diff --check.",
+      "Obtain independent exact-diff reviewer and verifier evidence from distinct executors.",
+      "Run make review-gate for the exact staged diff."
+    ],
+    "file_classification": {
+      "generated_paths": [],
+      "lockfile_paths": []
+    },
+    "review_budget": {
+      "max_changed_files": 8,
+      "max_changed_lines": 650,
+      "max_components": 2
+    }
+  },
+  "git_range": {
+    "base_sha": "c0d75a3006280f2778af31af4d3ea3537812fc1a",
+    "head_sha": "c0d75a3006280f2778af31af4d3ea3537812fc1a"
+  },
+  "decision": {
+    "adr": "docs/decisions/0001-persist-ticket-plan-authority-contract.md"
+  },
+  "links": {
+    "pull_request": null,
+    "ci_run": null,
+    "review_exception": null,
+    "agent_exception": null
+  },
+  "handoff": {
+    "status": "ready for linked planning baseline",
+    "completed_work": "Approved the distinct-source ticket plan, created REK-21 and its three Subtasks, and transitioned REK-22 to In Progress with read-back.",
+    "blocker": null,
+    "next_action": "Commit the linked planning baseline, run implementation preflight, and implement the contract-schema slice."
+  }
+}

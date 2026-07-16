@@ -1,0 +1,30 @@
+{
+  "format_version": 1,
+  "sources": [
+    {"id":"requirements","path":"testdata/ticket-plans/valid/prd.md","digest":"sha256:628ad9eb3cc54f26d3d23a27ebb10bbc44b9fab56d6aabbaf3517109dcae35a3"},
+    {"id":"technical-rules","path":"testdata/ticket-plans/valid/spec.md","digest":"sha256:400a079cc24b63e154de745ef7cdbab9f9797613eca3f2d7fe922f00e4bda52e"},
+    {"id":"delivery-order","path":"testdata/ticket-plans/valid/roadmap.md","digest":"sha256:9ede82f123e2dee3e6474026ad214d85ea05ffbd6d68ad211c1f7b3843e51b35"}
+  ],
+  "role_bindings": {"prd":"requirements","spec":"technical-rules","roadmap":"delivery-order"},
+  "story": {
+    "summary":"Validate ticket plans",
+    "description":"Validate ticket-plan contracts before Jira write operation.",
+    "acceptance_criteria":["A valid ticket plan is reproducible"]
+  },
+  "slices": [{
+    "id":"contract-validation",
+    "assignment": {
+      "phase":"Phase 1","change_class":"standard",
+      "review_budget":{"max_changed_files":5,"max_changed_lines":300,"components":["ticketplan"]},
+      "allowed_paths":["internal/ticketplan"],"dependencies":[],
+      "adr":"No ADR needed: additive validation fixture"
+    },
+    "source_derived": {
+      "summary":"Deterministic contract validation","scope":"Add deterministic validation",
+      "non_goals":["No Jira write operation"],"acceptance_criteria":["Validation passes"],
+      "validation_plan":["go test ./internal/ticketplan"]
+    }
+  }],
+  "manager_narrative_rules":[{"field":"story.description","required_role":"prd","min_length":10}],
+  "evidence":[{"field":"story.description","role":"prd","section":"Goal","excerpt":"Produce a valid implementation plan."}]
+}

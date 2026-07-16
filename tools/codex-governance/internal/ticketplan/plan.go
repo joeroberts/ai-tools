@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -28,11 +29,12 @@ var (
 )
 
 type Plan struct {
-	FormatVersion int       `json:"format_version"`
-	Status        string    `json:"status"`
-	Sources       Sources   `json:"sources"`
-	Story         Story     `json:"story"`
-	Subtasks      []Subtask `json:"subtasks"`
+	FormatVersion  int       `json:"format_version"`
+	Status         string    `json:"status"`
+	ContractDigest string    `json:"contract_digest,omitempty"`
+	Sources        Sources   `json:"sources"`
+	Story          Story     `json:"story"`
+	Subtasks       []Subtask `json:"subtasks"`
 }
 
 type Sources struct {
@@ -199,6 +201,47 @@ func (p Plan) ValidateAgainst(repoRoot string) []string {
 	return issues
 }
 
+func (p Plan) ValidateAgainstContract(repoRoot string, contract AuthorityContract) []string {
+	issues := p.ValidateAgainst(repoRoot)
+	digest, err := contract.Digest()
+	if err != nil || contract.ValidateAgainst(repoRoot) != nil {
+		return append(issues, "authority contract is invalid")
+	}
+	if p.ContractDigest == "" {
+		return append(issues, "unsupported legacy ticket plan: missing authority contract digest")
+	}
+	if p.ContractDigest != digest {
+		issues = append(issues, "ticket plan authority contract digest does not match")
+	}
+	byID := map[string]ContractSource{}
+	for _, source := range contract.Sources {
+		byID[source.ID] = source
+	}
+	wantSources := Sources{
+		PRD:     Source{Path: byID[contract.Roles.PRD].Path, Digest: byID[contract.Roles.PRD].Digest},
+		Spec:    Source{Path: byID[contract.Roles.Spec].Path, Digest: byID[contract.Roles.Spec].Digest},
+		Roadmap: Source{Path: byID[contract.Roles.Roadmap].Path, Digest: byID[contract.Roles.Roadmap].Digest},
+	}
+	if p.Sources != wantSources || p.Story.Summary != contract.Story.Summary || p.Story.Description != contract.Story.Description || !reflect.DeepEqual(p.Story.AcceptanceCriteria, contract.Story.AcceptanceCriteria) {
+		issues = append(issues, "ticket plan canonical story or sources do not match authority contract")
+	}
+	return append(issues, validateSubtasksAgainstManifest(p.Subtasks, contract.Slices)...)
+}
+
+func validateSubtasksAgainstManifest(subtasks []Subtask, manifest []ContractSlice) []string {
+	if len(subtasks) != len(manifest) {
+		return []string{"ticket plan subtask count does not match authority contract manifest"}
+	}
+	var issues []string
+	for index, slice := range manifest {
+		subtask, a, s := subtasks[index], slice.Assignment, slice.SourceDerived
+		if subtask.ID != slice.ID || subtask.Summary != s.Summary || subtask.Phase != a.Phase || subtask.ChangeClass != a.ChangeClass || !reflect.DeepEqual(subtask.ReviewBudget, a.ReviewBudget) || subtask.Scope != s.Scope || !reflect.DeepEqual(subtask.NonGoals, s.NonGoals) || !reflect.DeepEqual(subtask.AcceptanceCriteria, s.AcceptanceCriteria) || !reflect.DeepEqual(subtask.ValidationPlan, s.ValidationPlan) || !reflect.DeepEqual(subtask.AllowedPaths, a.AllowedPaths) || subtask.ADR != a.ADR || !reflect.DeepEqual(subtask.Dependencies, a.Dependencies) {
+			issues = append(issues, fmt.Sprintf("ticket plan subtask %d does not match authority contract manifest", index+1))
+		}
+	}
+	return issues
+}
+
 var subtaskTraceFields = []string{"summary", "phase", "change_class", "review_budget", "scope", "non_goals", "acceptance_criteria", "validation_plan", "allowed_paths", "adr", "dependencies"}
 
 func (p Plan) sourceMap() map[string]Source {
@@ -213,7 +256,7 @@ func validSubtask(subtask Subtask) bool {
 }
 
 func validAllowedPath(value string) bool {
-	if value == "" || filepath.IsAbs(value) || strings.ContainsAny(value, "*?[") {
+	if value == "" || filepath.IsAbs(value) || strings.ContainsAny(value, "*?[,\r\n") {
 		return false
 	}
 	for _, segment := range strings.Split(filepath.ToSlash(value), "/") {
@@ -259,7 +302,7 @@ func validTrace(trace TraceMap, fields ...string) bool {
 			return false
 		}
 		for _, ref := range refs {
-			if ref.Authority != "" && (ref.Authority != "assignment" || !isAssignmentTraceField(field)) {
+			if ref.Authority != "" {
 				return false
 			}
 			if !oneOf(ref.Source, "prd", "spec", "roadmap") || strings.TrimSpace(ref.Section) == "" || len(strings.TrimSpace(ref.Excerpt)) < 10 || !hasSubstantiveTokens(ref.Excerpt) {
@@ -279,10 +322,6 @@ func validateTraceability(subject string, trace TraceMap, sections map[string]ma
 		for _, value := range fields[field] {
 			matched := false
 			for _, ref := range trace[field] {
-				if ref.Authority == "assignment" && isAssignmentTraceField(field) {
-					matched = true
-					break
-				}
 				section, ok := sections[ref.Source][strings.TrimSpace(ref.Section)]
 				if !ok {
 					continue

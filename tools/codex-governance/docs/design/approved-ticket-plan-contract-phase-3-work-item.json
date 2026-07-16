@@ -1,0 +1,72 @@
+{
+  "format_version": 1,
+  "governance_status": "ready",
+  "profile": "generic",
+  "source": {
+    "mode": "offline-export",
+    "story_key": "REK-21",
+    "story_url": "https://rekonlabs.atlassian.net/browse/REK-21",
+    "subtask_key": "REK-24",
+    "subtask_url": "https://rekonlabs.atlassian.net/browse/REK-24",
+    "captured_at": "2026-07-16T13:07:29Z",
+    "story_updated_at": "2026-07-16T11:21:39Z",
+    "subtask_updated_at": "2026-07-16T13:07:12Z",
+    "story_description_digest": "sha256:ecb305b066631742937adae5855c7814cfd3ece90b11383b00d54412310d755b",
+    "story_acceptance_criteria_digest": "sha256:ecb305b066631742937adae5855c7814cfd3ece90b11383b00d54412310d755b",
+    "subtask_description_digest": "sha256:66dfc82322f1608843fa1f22d0809f0aaedc481d46ffc4dd062fc5660b0943a4",
+    "subtask_acceptance_criteria_digest": "sha256:66dfc82322f1608843fa1f22d0809f0aaedc481d46ffc4dd062fc5660b0943a4"
+  },
+  "scope": {
+    "phase": "Phase 3",
+    "change_class": "standard",
+    "allowed_paths": [
+      "internal/agentplan",
+      "internal/ticketplan",
+      "testdata/ticket-plans"
+    ],
+    "non_goals": [
+      "A parallel source or slice contract.",
+      "Any change to Jira or publication approval policy."
+    ],
+    "technical_acceptance_criteria": [
+      "Extract the declared slice manifest before manager dispatch.",
+      "Require generated Subtask cardinality, order, IDs, dependencies, budgets, and canonical path arrays to equal the contract manifest.",
+      "Reject omitted, duplicate, reordered, extra, or aggregated-path slices before plan acceptance.",
+      "Confirm the manager catalog renders each distinct source body once while trace records retain PRD, specification, and roadmap role bindings."
+    ],
+    "validation_plan": [
+      "Run focused declared-slice and three-source end-to-end planning tests.",
+      "Run make test, make vet, make build, and git diff --check.",
+      "Obtain independent exact-diff reviewer and verifier evidence from distinct fixed-role executors.",
+      "Run make review-gate for the exact staged diff."
+    ],
+    "file_classification": {
+      "generated_paths": [],
+      "lockfile_paths": []
+    },
+    "review_budget": {
+      "max_changed_files": 8,
+      "max_changed_lines": 700,
+      "max_components": 2
+    }
+  },
+  "git_range": {
+    "base_sha": "ec82464e7642b10c74508ed4f94ef25a1dcfcaff",
+    "head_sha": "ec82464e7642b10c74508ed4f94ef25a1dcfcaff"
+  },
+  "decision": {
+    "adr": "docs/decisions/0001-persist-ticket-plan-authority-contract.md"
+  },
+  "links": {
+    "pull_request": null,
+    "ci_run": null,
+    "review_exception": null,
+    "agent_exception": null
+  },
+  "handoff": {
+    "status": "ready for linked Phase 3 planning baseline",
+    "completed_work": "Completed and reviewed REK-23, recorded its commit in Jira, moved REK-23 to In Review, and transitioned REK-24 to In Progress with read-back.",
+    "blocker": null,
+    "next_action": "Commit this linked Phase 3 planning baseline, run implementation preflight, and implement only the declared-slice-coverage slice."
+  }
+}
