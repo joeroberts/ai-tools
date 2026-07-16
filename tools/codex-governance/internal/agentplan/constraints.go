@@ -56,8 +56,9 @@ type SourceDerivedConstraints struct {
 }
 
 var (
-	constraintPathPattern   = regexp.MustCompile(`(?:[A-Za-z0-9._-]+/)+[A-Za-z0-9._-]+`)
 	constraintBudgetPattern = regexp.MustCompile(`(?i)(\d+) changed files,?\s*(\d+) changed lines,?\s*(?:and )?([^\.\n]+)`)
+	markdownHeadingPattern  = regexp.MustCompile(`^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$`)
+	inlineCodePattern       = regexp.MustCompile("`([^`\\r\\n]*)`")
 )
 
 func DraftConstraints(request Request) (Constraints, error) {
@@ -69,20 +70,10 @@ func DraftConstraints(request Request) (Constraints, error) {
 	if err != nil {
 		return Constraints{}, fmt.Errorf("read specification constraints: %w", err)
 	}
-	paths := constraintPathPattern.FindAllString(string(spec.Data), -1)
-	unique := map[string]bool{}
-	for _, path := range paths {
-		path = strings.TrimSuffix(path, ".")
-		if strings.Contains(path, "..") || strings.HasPrefix(path, "/") || strings.HasPrefix(path, "./") {
-			continue
-		}
-		unique[path] = true
+	pathPool, err := parseAllowedPaths(string(spec.Data))
+	if err != nil {
+		return Constraints{}, fmt.Errorf("parse specification allowed paths: %w", err)
 	}
-	pathPool := make([]string, 0, len(unique))
-	for path := range unique {
-		pathPool = append(pathPool, path)
-	}
-	sort.Strings(pathPool)
 	match := constraintBudgetPattern.FindStringSubmatch(string(spec.Data))
 	if len(match) != 4 {
 		return Constraints{}, fmt.Errorf("specification must state a review budget as '<files> changed files, <lines> changed lines, and <components>'")
@@ -94,6 +85,79 @@ func DraftConstraints(request Request) (Constraints, error) {
 		components[index] = strings.TrimSpace(components[index])
 	}
 	return Constraints{FormatVersion: 1, Sources: sources, PathPool: pathPool, ReviewBudget: ticketplan.ReviewBudget{MaxChangedFiles: files, MaxChangedLines: lines, Components: components}}, nil
+}
+
+// parseAllowedPaths reads only inline-code entries in the Allowed Paths
+// Markdown section. The section may declare paths as prose or list entries.
+func parseAllowedPaths(markdown string) ([]string, error) {
+	lines := strings.Split(markdown, "\n")
+	sectionLevel := 0
+	inSection, inFence := false, false
+	seen := map[string]bool{}
+	var paths []string
+
+	for _, line := range lines {
+		if heading := markdownHeadingPattern.FindStringSubmatch(line); len(heading) == 3 {
+			level := len(heading[1])
+			title := strings.TrimSpace(heading[2])
+			if !inSection && title == "Allowed Paths" {
+				inSection, sectionLevel = true, level
+				continue
+			}
+			if inSection && level <= sectionLevel {
+				break
+			}
+			if inSection {
+				continue
+			}
+		}
+		if !inSection {
+			continue
+		}
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			continue
+		}
+		matches := inlineCodePattern.FindAllStringSubmatch(line, -1)
+		if len(matches) == 0 {
+			continue
+		}
+		for _, match := range matches {
+			path := match[1]
+			if !validConstraintPath(path) {
+				return nil, fmt.Errorf("Allowed Paths contains invalid entry %q", path)
+			}
+			if seen[path] {
+				return nil, fmt.Errorf("Allowed Paths contains duplicate entry %q", path)
+			}
+			seen[path] = true
+			paths = append(paths, path)
+		}
+	}
+	if !inSection {
+		return nil, fmt.Errorf("specification has no Allowed Paths section")
+	}
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("Allowed Paths section contains no entries")
+	}
+	sort.Strings(paths)
+	return paths, nil
+}
+
+func validConstraintPath(path string) bool {
+	if path == "" || filepath.IsAbs(path) || strings.ContainsAny(path, "*?[,\r\n") {
+		return false
+	}
+	for _, segment := range strings.Split(filepath.ToSlash(path), "/") {
+		if segment == "" || segment == "." || segment == ".." {
+			return false
+		}
+	}
+	cleaned := filepath.Clean(filepath.FromSlash(path))
+	return cleaned == filepath.FromSlash(path) && cleaned != "." && cleaned != ".." && !strings.HasPrefix(cleaned, ".."+string(filepath.Separator))
 }
 
 func WriteConstraints(path string, constraints Constraints) error {
