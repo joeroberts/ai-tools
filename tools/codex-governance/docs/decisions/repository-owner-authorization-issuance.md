@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed for stakeholder approval with the publication-enablement work item.
+Accepted.
 
 ## Context
 
