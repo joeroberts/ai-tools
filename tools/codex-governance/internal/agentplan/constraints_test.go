@@ -171,6 +171,18 @@ func TestBuildAuthorityContractFromCanonicalConstraints(t *testing.T) {
 	if err != nil || contract.ValidateAgainst(repoRoot) != nil {
 		t.Fatalf("buildAuthorityContract() error = %v", err)
 	}
+	if contract.Roles != (ticketplan.SourceRoleBindings{PRD: "prd", Spec: "spec", Roadmap: "roadmap"}) {
+		t.Fatalf("authority contract role bindings = %#v", contract.Roles)
+	}
+	evidenceRoles := map[string]bool{}
+	for _, evidence := range contract.Evidence {
+		evidenceRoles[evidence.Role] = true
+	}
+	for _, role := range []string{"prd", "spec", "roadmap"} {
+		if !evidenceRoles[role] {
+			t.Fatalf("authority contract evidence lost %s role binding", role)
+		}
+	}
 	again, err := buildAuthorityContract(constraints)
 	firstDigest, _ := contract.Digest()
 	secondDigest, _ := again.Digest()

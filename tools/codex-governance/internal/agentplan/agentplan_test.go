@@ -3,6 +3,7 @@ package agentplan
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -110,8 +111,9 @@ printf '%s' '{"format_version":1}' > "$output"
 
 func TestDecomposeWritesOwnerOnlyArtifact(t *testing.T) {
 	root := t.TempDir()
-	for _, name := range []string{"prd.md", "spec.md", "roadmap.md"} {
-		if err := os.WriteFile(filepath.Join(root, name), []byte("# Scope\nApproved source.\n"), 0o600); err != nil {
+	for index, name := range []string{"prd.md", "spec.md", "roadmap.md"} {
+		content := fmt.Sprintf("# Scope\nApproved source %d.\n", index+1)
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -302,9 +304,9 @@ func TestBuildSourceCatalogUsesVerifiedNamedSections(t *testing.T) {
 	root := t.TempDir()
 	sources := ticketplan.Sources{}
 	for name, content := range map[string]string{
-		"prd.md":     "# Goal\nDeliver a ticket plan.\n",
-		"spec.md":    "# Scope\nUse deterministic validation.\n",
-		"roadmap.md": "# Phase 1\nPlan contract.\n",
+		"prd.md":     "# Goal\nPRD-BODY delivers a ticket plan.\n",
+		"spec.md":    "# Scope\nSPEC-BODY uses deterministic validation.\n",
+		"roadmap.md": "# Phase 1\nROADMAP-BODY sequences the plan contract.\n",
 	} {
 		path := filepath.Join(root, name)
 		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
@@ -327,6 +329,27 @@ func TestBuildSourceCatalogUsesVerifiedNamedSections(t *testing.T) {
 	catalog, err := buildSourceCatalog(root, sources)
 	if err != nil || !strings.Contains(catalog, "SOURCE prd (prd.md)") || !strings.Contains(catalog, "SECTION Scope") {
 		t.Fatalf("buildSourceCatalog() = %q, %v", catalog, err)
+	}
+	for _, marker := range []string{"SOURCE prd", "SOURCE spec", "SOURCE roadmap", "PRD-BODY", "SPEC-BODY", "ROADMAP-BODY"} {
+		if count := strings.Count(catalog, marker); count != 1 {
+			t.Fatalf("catalog contains %q %d times, want once: %q", marker, count, catalog)
+		}
+	}
+}
+
+func TestBuildSourceCatalogRejectsDuplicateSourceIdentity(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"prd.md", "spec.md", "roadmap.md"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("# Scope\nShared source body.\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sources, err := loadSources(Request{PRDPath: "prd.md", SpecPath: "spec.md", RoadmapPath: "roadmap.md", RepoRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := buildSourceCatalog(root, sources); err == nil || !strings.Contains(err.Error(), "three distinct canonical source identities") {
+		t.Fatalf("buildSourceCatalog() error = %v", err)
 	}
 }
 

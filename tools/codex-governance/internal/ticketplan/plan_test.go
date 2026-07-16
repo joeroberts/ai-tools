@@ -60,6 +60,91 @@ func TestPlanValidateAcceptsNamedRootPaths(t *testing.T) {
 	}
 }
 
+func TestValidateSubtasksAgainstManifestRejectsStructuralDrift(t *testing.T) {
+	manifest := []ContractSlice{
+		contractSlice("one", nil, []string{"internal/agentplan", "internal/ticketplan"}),
+		contractSlice("two", []string{"one"}, []string{"internal/ticketplan"}),
+		contractSlice("three", []string{"one", "two"}, []string{"testdata/ticket-plans"}),
+	}
+	matching := make([]Subtask, len(manifest))
+	for index, slice := range manifest {
+		matching[index] = subtaskFromContractSlice(slice)
+	}
+	if issues := validateSubtasksAgainstManifest(matching, manifest); len(issues) != 0 {
+		t.Fatalf("matching manifest issues = %v", issues)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func([]Subtask) []Subtask
+	}{
+		{"omitted", func(subtasks []Subtask) []Subtask { return subtasks[:2] }},
+		{"duplicate", func(subtasks []Subtask) []Subtask { subtasks[1] = subtasks[0]; return subtasks }},
+		{"reordered", func(subtasks []Subtask) []Subtask {
+			subtasks[0], subtasks[1] = subtasks[1], subtasks[0]
+			return subtasks
+		}},
+		{"extra", func(subtasks []Subtask) []Subtask { return append(subtasks, subtasks[2]) }},
+		{"dependency drift", func(subtasks []Subtask) []Subtask { subtasks[1].Dependencies = nil; return subtasks }},
+		{"budget drift", func(subtasks []Subtask) []Subtask { subtasks[1].ReviewBudget.MaxChangedLines++; return subtasks }},
+		{"path order drift", func(subtasks []Subtask) []Subtask {
+			subtasks[0].AllowedPaths[0], subtasks[0].AllowedPaths[1] = subtasks[0].AllowedPaths[1], subtasks[0].AllowedPaths[0]
+			return subtasks
+		}},
+		{"aggregated paths", func(subtasks []Subtask) []Subtask {
+			subtasks[0].AllowedPaths = []string{"internal/agentplan,internal/ticketplan"}
+			return subtasks
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			copyOfMatching := make([]Subtask, len(matching))
+			for index, subtask := range matching {
+				copyOfMatching[index] = subtask
+				copyOfMatching[index].AllowedPaths = append([]string(nil), subtask.AllowedPaths...)
+				copyOfMatching[index].Dependencies = append([]string(nil), subtask.Dependencies...)
+			}
+			if issues := validateSubtasksAgainstManifest(test.mutate(copyOfMatching), manifest); len(issues) == 0 {
+				t.Fatal("manifest drift was accepted")
+			}
+		})
+	}
+}
+
+func TestPlanValidateRejectsAggregatedAllowedPaths(t *testing.T) {
+	_, plan := validPlan(t)
+	plan.Subtasks[0].AllowedPaths = []string{"internal/agentplan,internal/ticketplan"}
+	if issues := strings.Join(plan.Validate(), "\n"); !strings.Contains(issues, "invalid allowed path") {
+		t.Fatalf("issues = %q", issues)
+	}
+}
+
+func contractSlice(id string, dependencies, allowedPaths []string) ContractSlice {
+	return ContractSlice{
+		ID: id,
+		Assignment: SliceAssignment{
+			Phase: "Phase 3", ChangeClass: "standard",
+			ReviewBudget: ReviewBudget{MaxChangedFiles: 2, MaxChangedLines: 100, Components: []string{"ticketplan"}},
+			AllowedPaths: append([]string(nil), allowedPaths...), Dependencies: append([]string{}, dependencies...),
+			ADR: "docs/decisions/0001-agent-ticket-plan-authority.md",
+		},
+		SourceDerived: SliceSourceDerived{
+			Summary: "Implement " + id, Scope: "Bound " + id,
+			NonGoals: []string{"No unrelated work"}, AcceptanceCriteria: []string{"Validate " + id}, ValidationPlan: []string{"Test " + id},
+		},
+	}
+}
+
+func subtaskFromContractSlice(slice ContractSlice) Subtask {
+	return Subtask{
+		ID: slice.ID, Summary: slice.SourceDerived.Summary, Phase: slice.Assignment.Phase, ChangeClass: slice.Assignment.ChangeClass,
+		ReviewBudget: slice.Assignment.ReviewBudget, Scope: slice.SourceDerived.Scope,
+		NonGoals: append([]string(nil), slice.SourceDerived.NonGoals...), AcceptanceCriteria: append([]string(nil), slice.SourceDerived.AcceptanceCriteria...),
+		ValidationPlan: append([]string(nil), slice.SourceDerived.ValidationPlan...), AllowedPaths: append([]string(nil), slice.Assignment.AllowedPaths...),
+		ADR: slice.Assignment.ADR, Dependencies: append([]string{}, slice.Assignment.Dependencies...),
+	}
+}
+
 func TestContainsNormalizedPathAcceptsDirectoryPathWithTrailingSlash(t *testing.T) {
 	if !containsNormalizedPath("The allowed path is internal/ticketplan/.", "internal/ticketplan") {
 		t.Fatal("directory path with trailing slash was not recognized")

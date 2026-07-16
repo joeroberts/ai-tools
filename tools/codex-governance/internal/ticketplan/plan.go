@@ -225,13 +225,18 @@ func (p Plan) ValidateAgainstContract(repoRoot string, contract AuthorityContrac
 	if p.Sources != wantSources || p.Story.Summary != contract.Story.Summary || p.Story.Description != contract.Story.Description || !reflect.DeepEqual(p.Story.AcceptanceCriteria, contract.Story.AcceptanceCriteria) {
 		issues = append(issues, "ticket plan canonical story or sources do not match authority contract")
 	}
-	if len(p.Subtasks) != len(contract.Slices) {
-		return append(issues, "ticket plan subtask count does not match authority contract")
+	return append(issues, validateSubtasksAgainstManifest(p.Subtasks, contract.Slices)...)
+}
+
+func validateSubtasksAgainstManifest(subtasks []Subtask, manifest []ContractSlice) []string {
+	if len(subtasks) != len(manifest) {
+		return []string{"ticket plan subtask count does not match authority contract manifest"}
 	}
-	for index, slice := range contract.Slices {
-		subtask, a, s := p.Subtasks[index], slice.Assignment, slice.SourceDerived
+	var issues []string
+	for index, slice := range manifest {
+		subtask, a, s := subtasks[index], slice.Assignment, slice.SourceDerived
 		if subtask.ID != slice.ID || subtask.Summary != s.Summary || subtask.Phase != a.Phase || subtask.ChangeClass != a.ChangeClass || !reflect.DeepEqual(subtask.ReviewBudget, a.ReviewBudget) || subtask.Scope != s.Scope || !reflect.DeepEqual(subtask.NonGoals, s.NonGoals) || !reflect.DeepEqual(subtask.AcceptanceCriteria, s.AcceptanceCriteria) || !reflect.DeepEqual(subtask.ValidationPlan, s.ValidationPlan) || !reflect.DeepEqual(subtask.AllowedPaths, a.AllowedPaths) || subtask.ADR != a.ADR || !reflect.DeepEqual(subtask.Dependencies, a.Dependencies) {
-			issues = append(issues, fmt.Sprintf("ticket plan subtask %d does not match authority contract", index+1))
+			issues = append(issues, fmt.Sprintf("ticket plan subtask %d does not match authority contract manifest", index+1))
 		}
 	}
 	return issues
@@ -251,7 +256,7 @@ func validSubtask(subtask Subtask) bool {
 }
 
 func validAllowedPath(value string) bool {
-	if value == "" || filepath.IsAbs(value) || strings.ContainsAny(value, "*?[") {
+	if value == "" || filepath.IsAbs(value) || strings.ContainsAny(value, "*?[,\r\n") {
 		return false
 	}
 	for _, segment := range strings.Split(filepath.ToSlash(value), "/") {

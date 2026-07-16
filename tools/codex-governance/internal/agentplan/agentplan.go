@@ -143,20 +143,25 @@ func generateAfterPhase2Approval(request Request, runners Runners) (Result, erro
 	if err != nil {
 		return Result{}, err
 	}
-	catalog, err := buildSourceCatalog(request.RepoRoot, sources)
-	if err != nil {
-		return Result{}, err
-	}
 	constraints, err := LoadConstraints(request.ConstraintsPath, sources)
 	if err != nil {
 		return Result{}, fmt.Errorf("load approved constraints: %w", err)
 	}
-	key := sha256.Sum256([]byte(sources.PRD.Digest + sources.Spec.Digest + sources.Roadmap.Digest))
-	workItem := "ticket-plan:" + hex.EncodeToString(key[:8])
+	// Build and validate the authority contract before catalog construction or
+	// manager dispatch. Its ordered Slices are the declared slice manifest.
 	contract, err := buildAuthorityContract(constraints)
 	if err != nil {
 		return Result{}, err
 	}
+	if err := contract.ValidateAgainst(request.RepoRoot); err != nil {
+		return Result{}, fmt.Errorf("validate authority contract: %w", err)
+	}
+	catalog, err := buildSourceCatalog(request.RepoRoot, sources)
+	if err != nil {
+		return Result{}, err
+	}
+	key := sha256.Sum256([]byte(sources.PRD.Digest + sources.Spec.Digest + sources.Roadmap.Digest))
+	workItem := "ticket-plan:" + hex.EncodeToString(key[:8])
 	contractPath := filepath.Join(request.RuntimeRoot, "ticket-plan-runs", strings.ReplaceAll(workItem, ":", "-"), "authority-contract.json")
 	contractDigest, err := contract.Digest()
 	if existing, loadErr := ticketplan.LoadAuthorityContract(contractPath, request.RepoRoot); loadErr == nil {
@@ -427,6 +432,7 @@ var catalogHeadingPattern = regexp.MustCompile(`(?m)^#{1,6}[ \t]+(.+?)[ \t]*#*[ 
 
 func buildSourceCatalog(repoRoot string, sources ticketplan.Sources) (string, error) {
 	var builder strings.Builder
+	canonicalPaths, digests := map[string]bool{}, map[string]bool{}
 	for _, entry := range []struct {
 		Name   string
 		Source ticketplan.Source
@@ -439,6 +445,10 @@ func buildSourceCatalog(repoRoot string, sources ticketplan.Sources) (string, er
 		if err != nil {
 			return "", fmt.Errorf("load %s source catalog: %w", entry.Name, err)
 		}
+		if file.RelativePath != entry.Source.Path || file.Digest != entry.Source.Digest || canonicalPaths[file.CanonicalPath] || digests[file.Digest] {
+			return "", fmt.Errorf("source catalog requires three distinct canonical source identities")
+		}
+		canonicalPaths[file.CanonicalPath], digests[file.Digest] = true, true
 		matches := catalogHeadingPattern.FindAllSubmatchIndex(file.Data, -1)
 		if len(matches) == 0 {
 			return "", fmt.Errorf("%s source catalog requires Markdown headings", entry.Name)
