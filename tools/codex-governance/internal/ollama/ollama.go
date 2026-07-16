@@ -9,12 +9,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -99,7 +101,14 @@ func setResidency(client *http.Client, policy Policy, modelName string, loaded b
 	for {
 		status, err := LoadedStatus(client, policy, modelName)
 		if err != nil {
-			return err
+			if loaded || !isLoopbackConnectionRefused(policy.Endpoint, err) {
+				return err
+			}
+			if time.Now().After(deadline) {
+				return fmt.Errorf("post-stop residency verification failed after connection refusal: %w", err)
+			}
+			time.Sleep(100 * time.Millisecond)
+			continue
 		}
 		if status.Loaded == loaded {
 			return nil
@@ -109,6 +118,19 @@ func setResidency(client *http.Client, policy Policy, modelName string, loaded b
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+func isLoopbackConnectionRefused(endpoint string, err error) bool {
+	parsed, parseErr := url.Parse(endpoint)
+	if parseErr != nil {
+		return false
+	}
+	host := parsed.Hostname()
+	loopback := host == "localhost"
+	if address := net.ParseIP(host); address != nil {
+		loopback = address.IsLoopback()
+	}
+	return loopback && errors.Is(err, syscall.ECONNREFUSED)
 }
 
 // InstalledModel is immutable local model metadata returned by a read-only

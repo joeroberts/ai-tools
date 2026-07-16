@@ -2,11 +2,32 @@ package ollama
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return function(request)
+}
+
+func jsonResponse(request *http.Request, body string) *http.Response {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Status:     http.StatusText(http.StatusOK),
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Request:    request,
+	}
+}
 
 func TestRunStreamsResponseUntilDone(t *testing.T) {
 	policy := testPolicy(Model{Name: "local-model", BenchmarkApproved: true, AllowedRoles: []string{"reviewer"}, AllowedTaskTypes: []string{"ticket-plan-review"}, MaxInputBytes: 100})
@@ -158,6 +179,104 @@ func TestSetResidencyLoadsWithoutPromptAndVerifiesLoaded(t *testing.T) {
 	policy.Endpoint = server.URL
 	if err := SetResidency(Client(policy), policy, "local-model", true); err != nil {
 		t.Fatalf("SetResidency() = %v", err)
+	}
+}
+
+func TestSetResidencyRetriesPostStopConnectionRefusal(t *testing.T) {
+	policy := testPolicy(Model{Name: "local-model", BenchmarkApproved: true, AllowedRoles: []string{"reviewer"}, AllowedTaskTypes: []string{"ticket-plan-review"}, MaxInputBytes: 100})
+	policy.Endpoint = "http://127.0.0.1:11434"
+	statusCalls := 0
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		switch request.URL.Path {
+		case "/api/tags":
+			return jsonResponse(request, `{"models":[{"name":"local-model","digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}`), nil
+		case "/api/generate":
+			return jsonResponse(request, `{"done":true}`), nil
+		case "/api/ps":
+			statusCalls++
+			if statusCalls == 1 {
+				return nil, &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}
+			}
+			return jsonResponse(request, `{"models":[]}`), nil
+		default:
+			t.Fatalf("unexpected request path %q", request.URL.Path)
+			return nil, nil
+		}
+	})}
+
+	if err := setResidency(client, policy, "local-model", false, 250*time.Millisecond); err != nil {
+		t.Fatalf("setResidency() = %v", err)
+	}
+	if statusCalls != 2 {
+		t.Fatalf("status calls = %d, want 2", statusCalls)
+	}
+}
+
+func TestSetResidencyFailsAfterPersistentPostStopConnectionRefusal(t *testing.T) {
+	policy := testPolicy(Model{Name: "local-model", BenchmarkApproved: true, AllowedRoles: []string{"reviewer"}, AllowedTaskTypes: []string{"ticket-plan-review"}, MaxInputBytes: 100})
+	policy.Endpoint = "http://localhost:11434"
+	statusCalls := 0
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		switch request.URL.Path {
+		case "/api/tags":
+			return jsonResponse(request, `{"models":[{"name":"local-model","digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}`), nil
+		case "/api/generate":
+			return jsonResponse(request, `{"done":true}`), nil
+		case "/api/ps":
+			statusCalls++
+			return nil, &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}
+		default:
+			t.Fatalf("unexpected request path %q", request.URL.Path)
+			return nil, nil
+		}
+	})}
+
+	err := setResidency(client, policy, "local-model", false, 10*time.Millisecond)
+	if err == nil || !errors.Is(err, syscall.ECONNREFUSED) || !strings.Contains(err.Error(), "post-stop residency verification failed after connection refusal") {
+		t.Fatalf("setResidency() error = %v", err)
+	}
+	if statusCalls < 2 {
+		t.Fatalf("status calls = %d, want at least 2", statusCalls)
+	}
+}
+
+func TestSetResidencyDoesNotRetryConnectionErrorsOutsidePostStopBoundary(t *testing.T) {
+	tests := []struct {
+		name   string
+		loaded bool
+		cause  error
+	}{
+		{name: "load connection refusal", loaded: true, cause: syscall.ECONNREFUSED},
+		{name: "stop connection reset", loaded: false, cause: syscall.ECONNRESET},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			policy := testPolicy(Model{Name: "local-model", BenchmarkApproved: true, AllowedRoles: []string{"reviewer"}, AllowedTaskTypes: []string{"ticket-plan-review"}, MaxInputBytes: 100})
+			policy.Endpoint = "http://127.0.0.1:11434"
+			statusCalls := 0
+			client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				switch request.URL.Path {
+				case "/api/tags":
+					return jsonResponse(request, `{"models":[{"name":"local-model","digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}`), nil
+				case "/api/generate":
+					return jsonResponse(request, `{"done":true}`), nil
+				case "/api/ps":
+					statusCalls++
+					return nil, &net.OpError{Op: "dial", Net: "tcp", Err: test.cause}
+				default:
+					t.Fatalf("unexpected request path %q", request.URL.Path)
+					return nil, nil
+				}
+			})}
+
+			err := setResidency(client, policy, "local-model", test.loaded, time.Second)
+			if err == nil || !errors.Is(err, test.cause) {
+				t.Fatalf("setResidency() error = %v", err)
+			}
+			if statusCalls != 1 {
+				t.Fatalf("status calls = %d, want 1", statusCalls)
+			}
+		})
 	}
 }
 
