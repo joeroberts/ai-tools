@@ -225,6 +225,42 @@ func TestUnknownAdapterTaskEscalates(t *testing.T) {
 	}
 }
 
+func TestWaitAndReconcileTerminalOutcomes(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		script    string
+		wantState string
+	}{
+		{name: "completed", script: "#!/bin/sh\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--output-last-message\" ]; then shift; result=$1; break; fi\n  shift\ndone\nprintf '%s' '{\"status\":\"complete\"}' > \"$result\"\n", wantState: StateImplementationComplete},
+		{name: "failed", script: "#!/bin/sh\necho adapter failed >&2\nexit 1\n", wantState: StateEscalated},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			binary := filepath.Join(t.TempDir(), "codex")
+			if err := os.WriteFile(binary, []byte(test.script), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			run := Run{State: StateQueued}
+			adapter := NewHeadlessCodexAdapter(binary, t.TempDir(), t.TempDir())
+			if err := Launch(&run, TaskBundle{}, adapter); err != nil {
+				t.Fatal(err)
+			}
+			if err := WaitAndReconcile(&run, adapter, run.ResultRef); err != nil {
+				t.Fatalf("WaitAndReconcile() error = %v", err)
+			}
+			if run.State != test.wantState || run.Attempts != 1 {
+				t.Fatalf("run = %#v", run)
+			}
+			if test.wantState == StateImplementationComplete {
+				if data, err := os.ReadFile(run.ResultRef); err != nil || string(data) != `{"status":"complete"}` {
+					t.Fatalf("result = %q, %v", data, err)
+				}
+			} else if refs := adapter.DiagnosticReferences(run.TaskID); len(refs) != 2 {
+				t.Fatalf("diagnostic references = %#v", refs)
+			}
+		})
+	}
+}
+
 func TestCodexThreadID(t *testing.T) {
 	id, ok := codexThreadID([]byte(`{"type":"thread.started","thread_id":"019f5c26-6390-70b2-b2ba-3b747156c0dd"}`))
 	if !ok || id != "019f5c26-6390-70b2-b2ba-3b747156c0dd" {

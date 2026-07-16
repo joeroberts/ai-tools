@@ -1158,15 +1158,25 @@ func runImplementationStart(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "resolve runtime root: %v\n", err)
 		return 2
 	}
-	if err := implementation.StartHeadless(&run, bundle, *repoRoot, runtimeRoot, *codexBin); err != nil {
-		fmt.Fprintf(stderr, "start implementation: %v\n", err)
-		return 1
-	}
+	diagnostics, startErr := implementation.StartHeadless(&run, bundle, *repoRoot, runtimeRoot, *codexBin)
 	if err := implementation.SaveRun(*runPath, run); err != nil {
 		fmt.Fprintf(stderr, "save implementation run: %v\n", err)
 		return 2
 	}
-	fmt.Fprintf(stdout, "PASS implementation started %s\n", run.TaskID)
+	return reportImplementationStart(run, diagnostics, startErr, stdout, stderr)
+}
+
+func reportImplementationStart(run implementation.Run, diagnostics []string, startErr error, stdout, stderr io.Writer) int {
+	if startErr != nil || run.State == implementation.StateEscalated {
+		if startErr != nil {
+			fmt.Fprintf(stderr, "start implementation: %v\n", startErr)
+		}
+		for _, path := range diagnostics {
+			fmt.Fprintf(stderr, "private diagnostic: %s\n", path)
+		}
+		return 1
+	}
+	fmt.Fprintf(stdout, "PASS implementation completed %s\n", run.TaskID)
 	return 0
 }
 

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"codex-governance/internal/implementation"
 	"codex-governance/internal/ticketplan"
 )
 
@@ -21,6 +22,31 @@ func TestRunHelp(t *testing.T) {
 	}
 	if got := stdout.String(); got == "" {
 		t.Fatal("Run() wrote no help output")
+	}
+}
+
+func TestReportImplementationStartTerminalOutcomes(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		run         implementation.Run
+		diagnostics []string
+		startErr    error
+		wantCode    int
+		wantOutput  string
+	}{
+		{name: "completed", run: implementation.Run{TaskID: "codex-42", State: implementation.StateImplementationComplete}, wantCode: 0, wantOutput: "PASS implementation completed codex-42"},
+		{name: "escalated", run: implementation.Run{State: implementation.StateEscalated}, diagnostics: []string{"/private/run.stdout.log", "/private/run.stderr.log"}, wantCode: 1, wantOutput: "private diagnostic: /private/run.stderr.log"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := reportImplementationStart(test.run, test.diagnostics, test.startErr, &stdout, &stderr); code != test.wantCode {
+				t.Fatalf("code = %d", code)
+			}
+			output := stdout.String() + stderr.String()
+			if !strings.Contains(output, test.wantOutput) {
+				t.Fatalf("output = %q, want %q", output, test.wantOutput)
+			}
+		})
 	}
 }
 
