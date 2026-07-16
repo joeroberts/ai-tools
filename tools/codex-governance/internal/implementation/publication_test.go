@@ -127,6 +127,53 @@ func TestValidatePublicationWorktreeRequiresExactBranchCommitAndBase(t *testing.
 	}
 }
 
+func TestVersion2AuthorizationValidatesIndependentLineageAndTarget(t *testing.T) {
+	worktree := t.TempDir()
+	publicationGit(t, worktree, "init")
+	publicationGit(t, worktree, "config", "user.email", "test@example.test")
+	publicationGit(t, worktree, "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(worktree, "base.txt"), []byte("base\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	publicationGit(t, worktree, "add", "base.txt")
+	publicationGit(t, worktree, "commit", "-m", "implementation base")
+	implementationBase := strings.TrimSpace(publicationGit(t, worktree, "rev-parse", "HEAD"))
+	targetBranch := strings.TrimSpace(publicationGit(t, worktree, "branch", "--show-current"))
+	if err := os.WriteFile(filepath.Join(worktree, "target.txt"), []byte("target\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	publicationGit(t, worktree, "add", "target.txt")
+	publicationGit(t, worktree, "commit", "-m", "target update")
+	expectedTarget := strings.TrimSpace(publicationGit(t, worktree, "rev-parse", "HEAD"))
+	publicationGit(t, worktree, "remote", "add", "origin", worktree)
+	publicationGit(t, worktree, "switch", "-c", "codex/CG-42-implementation")
+	if err := os.WriteFile(filepath.Join(worktree, "change.txt"), []byte("change\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	publicationGit(t, worktree, "add", "change.txt")
+	publicationGit(t, worktree, "commit", "-m", "change")
+	commitSHA := strings.TrimSpace(publicationGit(t, worktree, "rev-parse", "HEAD"))
+	authorization := SignedPublicationAuthorization{Payload: PublicationAuthorizationPayload{
+		FormatVersion: 2, Remote: "origin", PRTargetBranch: targetBranch,
+		ImplementationBaseSHA: implementationBase, ExpectedTargetSHA: expectedTarget, CommitSHA: commitSHA,
+	}}
+	if err := ValidateAuthorizedLineage(worktree, authorization); err != nil {
+		t.Fatalf("validate v2 lineage: %v", err)
+	}
+	if err := ValidateAuthorizedRemoteBase(worktree, authorization); err != nil {
+		t.Fatalf("validate v2 target: %v", err)
+	}
+	authorization.Payload.ExpectedTargetSHA = implementationBase
+	if err := ValidateAuthorizedRemoteBase(worktree, authorization); err == nil {
+		t.Fatal("accepted a moved version-2 target ref")
+	}
+	authorization.Payload.ExpectedTargetSHA = expectedTarget
+	authorization.Payload.ImplementationBaseSHA = strings.Repeat("a", 40)
+	if err := ValidateAuthorizedLineage(worktree, authorization); err == nil {
+		t.Fatal("accepted a commit outside the version-2 implementation lineage")
+	}
+}
+
 func TestGitHubRepositoryRequiresOwnerNameIdentity(t *testing.T) {
 	if repository, err := GitHubRepository("github.com/acme/repo"); err != nil || repository != "acme/repo" {
 		t.Fatalf("GitHubRepository() = %q, %v", repository, err)

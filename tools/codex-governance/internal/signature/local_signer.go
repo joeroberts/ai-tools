@@ -18,11 +18,17 @@ type LocalSigner struct {
 }
 
 func CreateLocalExportSigner(path string) (TrustedKey, error) {
-	if _, err := os.Stat(path); err == nil {
-		return TrustedKey{}, fmt.Errorf("refusing to overwrite local signer: %s", path)
-	} else if !os.IsNotExist(err) {
-		return TrustedKey{}, err
-	}
+	return createLocalSigner(path, "export-issuer")
+}
+
+// CreateLocalRepositoryOwnerSigner creates the owner-only private key used to
+// authorize a repository's remote publication. The caller must explicitly add
+// the returned public key to repository policy.
+func CreateLocalRepositoryOwnerSigner(path string) (TrustedKey, error) {
+	return createLocalSigner(path, "repository-owner")
+}
+
+func createLocalSigner(path, role string) (TrustedKey, error) {
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return TrustedKey{}, err
@@ -30,18 +36,54 @@ func CreateLocalExportSigner(path string) (TrustedKey, error) {
 	keyID := Digest(publicKey)[:20]
 	signer := LocalSigner{KeyID: keyID, PrivateKey: base64.StdEncoding.EncodeToString(privateKey)}
 	data := []byte(fmt.Sprintf("{\n  \"key_id\": %q,\n  \"private_key\": %q\n}\n", signer.KeyID, signer.PrivateKey))
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := ensureOwnerOnlyDirectory(filepath.Dir(path)); err != nil {
 		return TrustedKey{}, err
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	file, err := os.OpenFile(filepath.Clean(path), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if os.IsExist(err) {
+		return TrustedKey{}, fmt.Errorf("refusing to overwrite local signer: %s", path)
+	}
+	if err != nil {
 		return TrustedKey{}, err
 	}
-	return TrustedKey{KeyID: keyID, Role: "export-issuer", Algorithm: Algorithm, PublicKey: base64.StdEncoding.EncodeToString(publicKey)}, nil
+	_, writeErr := file.Write(data)
+	closeErr := file.Close()
+	if writeErr != nil || closeErr != nil {
+		_ = os.Remove(filepath.Clean(path))
+		if writeErr != nil {
+			return TrustedKey{}, writeErr
+		}
+		return TrustedKey{}, closeErr
+	}
+	return TrustedKey{KeyID: keyID, Role: role, Algorithm: Algorithm, PublicKey: base64.StdEncoding.EncodeToString(publicKey)}, nil
 }
 
 // LoadLocalExportSigner loads owner-only private material for a local export
 // operation. The caller must never serialize the returned private key.
 func LoadLocalExportSigner(path string) (string, ed25519.PrivateKey, error) {
+	return loadLocalSigner(path)
+}
+
+// LoadLocalRepositoryOwnerSigner loads owner-only private material used solely
+// for explicit publication authorization issuance.
+func LoadLocalRepositoryOwnerSigner(path string) (TrustedKey, ed25519.PrivateKey, error) {
+	keyID, privateKey, err := loadLocalSigner(path)
+	if err != nil {
+		return TrustedKey{}, nil, err
+	}
+	publicKey := privateKey.Public().(ed25519.PublicKey)
+	return TrustedKey{
+		KeyID:     keyID,
+		Role:      "repository-owner",
+		Algorithm: Algorithm,
+		PublicKey: base64.StdEncoding.EncodeToString(publicKey),
+	}, privateKey, nil
+}
+
+func loadLocalSigner(path string) (string, ed25519.PrivateKey, error) {
+	if err := validateOwnerOnlyDirectory(filepath.Dir(path)); err != nil {
+		return "", nil, err
+	}
 	info, err := os.Stat(path)
 	if err != nil {
 		return "", nil, err
@@ -64,5 +106,27 @@ func LoadLocalExportSigner(path string) (string, ed25519.PrivateKey, error) {
 	if err != nil || len(privateKey) != ed25519.PrivateKeySize {
 		return "", nil, fmt.Errorf("decode local signer private key")
 	}
-	return signer.KeyID, ed25519.PrivateKey(privateKey), nil
+	key := ed25519.PrivateKey(privateKey)
+	if signer.KeyID != Digest(key.Public().(ed25519.PublicKey))[:20] {
+		return "", nil, fmt.Errorf("local signer key ID does not match private key")
+	}
+	return signer.KeyID, key, nil
+}
+
+func ensureOwnerOnlyDirectory(path string) error {
+	if err := os.MkdirAll(filepath.Clean(path), 0o700); err != nil {
+		return err
+	}
+	return validateOwnerOnlyDirectory(path)
+}
+
+func validateOwnerOnlyDirectory(path string) error {
+	info, err := os.Stat(filepath.Clean(path))
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("local signer directory must be owner-only")
+	}
+	return nil
 }

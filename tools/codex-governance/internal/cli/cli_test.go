@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"codex-governance/internal/config"
 	"codex-governance/internal/implementation"
+	"codex-governance/internal/signature"
 	"codex-governance/internal/ticketplan"
 )
 
@@ -67,6 +70,171 @@ func TestRunInitAndConfigCheck(t *testing.T) {
 	if code := Run([]string{"config", "check", "--repo-root", root}, &stdout, &stderr); code != 0 {
 		t.Fatalf("config check returned %d: %s", code, stderr.String())
 	}
+}
+
+func TestRunBootstrapPublishOwnerRequiresApprovalAndCreatesOwnerOnlySigner(t *testing.T) {
+	root := t.TempDir()
+	if code := Run([]string{"init", "--repo-root", root}, &bytes.Buffer{}, &bytes.Buffer{}); code != 0 {
+		t.Fatalf("init returned %d", code)
+	}
+	signer := filepath.Join(ownerOnlyTestDir(t), "repository-owner.json")
+	if code := Run([]string{"implementation", "bootstrap-publish-owner", "--repo-root", root, "--signer", signer}, &bytes.Buffer{}, &bytes.Buffer{}); code != 2 {
+		t.Fatalf("bootstrap without approval = %d", code)
+	}
+	if _, err := os.Stat(signer); !os.IsNotExist(err) {
+		t.Fatalf("bootstrap without approval created signer: %v", err)
+	}
+	inside := filepath.Join(root, "repository-owner.json")
+	if code := Run([]string{"implementation", "bootstrap-publish-owner", "--repo-root", root, "--signer", inside, "--approve"}, &bytes.Buffer{}, &bytes.Buffer{}); code != 1 {
+		t.Fatalf("bootstrap with repository-contained signer = %d", code)
+	}
+	if _, err := os.Stat(inside); !os.IsNotExist(err) {
+		t.Fatalf("bootstrap created repository-contained signer: %v", err)
+	}
+	if code := Run([]string{"implementation", "bootstrap-publish-owner", "--repo-root", root, "--signer", signer, "--approve"}, &bytes.Buffer{}, &bytes.Buffer{}); code != 0 {
+		t.Fatalf("approved bootstrap = %d", code)
+	}
+	info, err := os.Stat(signer)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("signer permissions = %v, %v", info.Mode().Perm(), err)
+	}
+}
+
+func TestRunIssuePublishBindsSignerTargetAndLineageWithoutRemoteMutation(t *testing.T) {
+	root := t.TempDir()
+	if code := Run([]string{"init", "--repo-root", root}, &bytes.Buffer{}, &bytes.Buffer{}); code != 0 {
+		t.Fatalf("init returned %d", code)
+	}
+	signer := filepath.Join(ownerOnlyTestDir(t), "repository-owner.json")
+	if code := Run([]string{"implementation", "bootstrap-publish-owner", "--repo-root", root, "--signer", signer, "--approve"}, &bytes.Buffer{}, &bytes.Buffer{}); code != 0 {
+		t.Fatalf("bootstrap returned %d", code)
+	}
+	cfg, err := config.Load(filepath.Join(root, "governance.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Signing.RepositoryID = "github.test/acme/repo"
+	localKey, _, err := signature.LoadLocalRepositoryOwnerSigner(signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherKey, err := signature.CreateLocalRepositoryOwnerSigner(filepath.Join(ownerOnlyTestDir(t), "other-owner.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := range cfg.Signing.TrustedKeys {
+		if cfg.Signing.TrustedKeys[index].Role == "repository-owner" {
+			cfg.Signing.TrustedKeys[index].PublicKey = otherKey.PublicKey
+		}
+	}
+	if err := config.Save(filepath.Join(root, "governance.yml"), cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	remote := t.TempDir()
+	cliGit(t, remote, "init", "--bare")
+	worktree := t.TempDir()
+	cliGit(t, worktree, "init")
+	cliGit(t, worktree, "config", "user.email", "test@example.test")
+	cliGit(t, worktree, "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(worktree, "base.txt"), []byte("base\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cliGit(t, worktree, "add", "base.txt")
+	cliGit(t, worktree, "commit", "-m", "base")
+	baseSHA := strings.TrimSpace(cliGit(t, worktree, "rev-parse", "HEAD"))
+	cliGit(t, worktree, "remote", "add", "origin", remote)
+	cliGit(t, worktree, "push", "origin", "HEAD:refs/heads/main")
+	cliGit(t, worktree, "switch", "-c", "codex/REK-30-implementation")
+	if err := os.WriteFile(filepath.Join(worktree, "change.txt"), []byte("change\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cliGit(t, worktree, "add", "change.txt")
+	cliGit(t, worktree, "commit", "-m", "change")
+	commitSHA := strings.TrimSpace(cliGit(t, worktree, "rev-parse", "HEAD"))
+	run := implementation.Run{
+		FormatVersion: implementation.FormatVersion, ID: "run-issue-publish", WorkItemKey: "REK-30",
+		Adapter: "headless-codex", State: implementation.StateLocallyCommitted, BaseSHA: baseSHA,
+		Branch: "codex/REK-30-implementation", CommitSHA: commitSHA, TaskBundleDigest: "sha256:fixture",
+		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	}
+	runPath := filepath.Join(t.TempDir(), "run.json")
+	if err := implementation.SaveRun(runPath, run); err != nil {
+		t.Fatal(err)
+	}
+	remoteBefore := cliGit(t, worktree, "ls-remote", "origin", "refs/heads/main")
+	issue := func(output string) int {
+		return Run([]string{
+			"implementation", "issue-publish", "--run", runPath, "--signer", signer,
+			"--output", output, "--worktree", worktree, "--remote", "origin",
+			"--target-branch", "main", "--repo-root", root, "--approve",
+		}, &bytes.Buffer{}, &bytes.Buffer{})
+	}
+	rejectedOutput := filepath.Join(t.TempDir(), "rejected.json")
+	if code := issue(rejectedOutput); code != 1 {
+		t.Fatalf("issuance with mismatched trusted public key = %d", code)
+	}
+	if _, err := os.Stat(rejectedOutput); !os.IsNotExist(err) {
+		t.Fatalf("mismatched signer wrote authorization: %v", err)
+	}
+	for index := range cfg.Signing.TrustedKeys {
+		if cfg.Signing.TrustedKeys[index].Role == "repository-owner" {
+			cfg.Signing.TrustedKeys[index].PublicKey = localKey.PublicKey
+		}
+	}
+	if err := config.Save(filepath.Join(root, "governance.yml"), cfg); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(ownerOnlyTestDir(t), "authorization.json")
+	if code := issue(output); code != 0 {
+		t.Fatalf("approved issuance = %d", code)
+	}
+	if remoteAfter := cliGit(t, worktree, "ls-remote", "origin", "refs/heads/main"); remoteAfter != remoteBefore {
+		t.Fatalf("issuance mutated remote ref: before=%q after=%q", remoteBefore, remoteAfter)
+	}
+	authorization, err := implementation.LoadSignedPublicationAuthorization(output, cfg, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if authorization.Payload.FormatVersion != 2 || authorization.Payload.ImplementationBaseSHA != baseSHA || authorization.Payload.ExpectedTargetSHA != baseSHA || authorization.Payload.CommitSHA != commitSHA {
+		t.Fatalf("issued payload = %#v", authorization.Payload)
+	}
+	info, err := os.Stat(output)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("authorization permissions = %v, %v", info.Mode().Perm(), err)
+	}
+	tooLong := filepath.Join(t.TempDir(), "too-long.json")
+	code := Run([]string{
+		"implementation", "issue-publish", "--run", runPath, "--signer", signer,
+		"--output", tooLong, "--worktree", worktree, "--remote", "origin",
+		"--target-branch", "main", "--repo-root", root, "--expires-in", "25h", "--approve",
+	}, &bytes.Buffer{}, &bytes.Buffer{})
+	if code != 2 {
+		t.Fatalf("issuance with unbounded expiry = %d", code)
+	}
+	if _, err := os.Stat(tooLong); !os.IsNotExist(err) {
+		t.Fatalf("unbounded expiry wrote authorization: %v", err)
+	}
+}
+
+func cliGit(t *testing.T, directory string, args ...string) string {
+	t.Helper()
+	command := exec.Command("git", args...)
+	command.Dir = directory
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, output)
+	}
+	return string(output)
+}
+
+func ownerOnlyTestDir(t *testing.T) string {
+	t.Helper()
+	directory := t.TempDir()
+	if err := os.Chmod(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return directory
 }
 
 func TestRunValidateHelp(t *testing.T) {

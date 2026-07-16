@@ -25,6 +25,8 @@ import (
 	"codex-governance/internal/workitem"
 )
 
+const maxPublicationAuthorizationLifetime = 24 * time.Hour
+
 const usage = `codex-governance
 
 Usage:
@@ -60,6 +62,8 @@ Usage:
   codex-governance implementation metrics --run PATH
   codex-governance implementation audit --run PATH --output PATH
   codex-governance implementation commit --run PATH --worktree PATH --branch NAME --message TEXT --approve
+  codex-governance implementation bootstrap-publish-owner --signer PATH --approve [--repo-root PATH]
+  codex-governance implementation issue-publish --run PATH --signer PATH --output PATH --worktree PATH --remote NAME --target-branch NAME --approve [--expires-in DURATION] [--repo-root PATH]
   codex-governance implementation authorize-publish --authorization PATH --run PATH --repo-root PATH
   codex-governance implementation push --run PATH --authorization PATH --review-evidence PATH --worktree PATH --repo-root PATH [--runtime-root PATH] --approve
   codex-governance implementation create-pr --run PATH --authorization PATH --review-evidence PATH --worktree PATH --title TEXT [--body TEXT] --repo-root PATH [--runtime-root PATH] --approve
@@ -1044,8 +1048,8 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 }
 
 func runImplementation(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 || !oneOf(args[0], "preflight", "start", "reconcile", "verify", "review", "verification", "remediate", "assess", "evidence", "status", "metrics", "audit", "commit", "authorize-publish", "push", "create-pr") {
-		fmt.Fprintln(stderr, "usage: codex-governance implementation preflight|start|reconcile|verify|review|verification|remediate|assess|evidence|status|metrics|audit|commit|authorize-publish|push|create-pr")
+	if len(args) == 0 || !oneOf(args[0], "preflight", "start", "reconcile", "verify", "review", "verification", "remediate", "assess", "evidence", "status", "metrics", "audit", "commit", "bootstrap-publish-owner", "issue-publish", "authorize-publish", "push", "create-pr") {
+		fmt.Fprintln(stderr, "usage: codex-governance implementation preflight|start|reconcile|verify|review|verification|remediate|assess|evidence|status|metrics|audit|commit|bootstrap-publish-owner|issue-publish|authorize-publish|push|create-pr")
 		return 2
 	}
 	if args[0] == "start" {
@@ -1080,6 +1084,12 @@ func runImplementation(args []string, stdout, stderr io.Writer) int {
 	}
 	if args[0] == "commit" {
 		return runImplementationCommit(args[1:], stdout, stderr)
+	}
+	if args[0] == "bootstrap-publish-owner" {
+		return runImplementationBootstrapPublishOwner(args[1:], stdout, stderr)
+	}
+	if args[0] == "issue-publish" {
+		return runImplementationIssuePublish(args[1:], stdout, stderr)
 	}
 	if args[0] == "authorize-publish" {
 		return runImplementationAuthorizePublish(args[1:], stdout, stderr)
@@ -1482,6 +1492,234 @@ func runImplementationCommit(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func runImplementationBootstrapPublishOwner(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("implementation bootstrap-publish-owner", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	signerPath := flags.String("signer", "", "owner-only repository-owner signer path")
+	repoRoot := flags.String("repo-root", ".", "repository root")
+	approve := flags.Bool("approve", false, "explicitly authorize repository-owner signer bootstrap")
+	if err := flags.Parse(args); err != nil || *signerPath == "" || !*approve || flags.NArg() != 0 {
+		return 2
+	}
+	if err := requirePathOutsideRepository(*repoRoot, *signerPath); err != nil {
+		fmt.Fprintf(stderr, "validate repository-owner signer path: %v\n", err)
+		return 1
+	}
+	configPath := filepath.Join(*repoRoot, "governance.yml")
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load governance config: %v\n", err)
+		return 2
+	}
+	for _, key := range cfg.Signing.TrustedKeys {
+		if key.Role == "repository-owner" {
+			fmt.Fprintln(stderr, "repository-owner trust is already configured; refusing to overwrite")
+			return 1
+		}
+	}
+	key, err := signature.CreateLocalRepositoryOwnerSigner(*signerPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "create repository-owner signer: %v\n", err)
+		return 1
+	}
+	cfg.Signing.TrustedKeys = append(cfg.Signing.TrustedKeys, config.TrustedKey{KeyID: key.KeyID, Role: key.Role, Algorithm: key.Algorithm, PublicKey: key.PublicKey})
+	if err := config.Save(configPath, cfg); err != nil {
+		if removeErr := os.Remove(filepath.Clean(*signerPath)); removeErr != nil {
+			fmt.Fprintf(stderr, "save governance config: %v; remove untrusted signer: %v\n", err, removeErr)
+			return 1
+		}
+		fmt.Fprintf(stderr, "save governance config: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "PASS bootstrapped repository-owner signer %s\n", key.KeyID)
+	return 0
+}
+
+func runImplementationIssuePublish(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("implementation issue-publish", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	runPath := flags.String("run", "", "implementation-run JSON")
+	signerPath := flags.String("signer", "", "owner-only repository-owner signer path")
+	outputPath := flags.String("output", "", "owner-only authorization output path")
+	worktreePath := flags.String("worktree", "", "worktree containing the authorized commit")
+	remote := flags.String("remote", "", "Git remote name")
+	targetBranch := flags.String("target-branch", "", "pull request target branch")
+	expiresIn := flags.Duration("expires-in", time.Hour, "authorization lifetime")
+	repoRoot := flags.String("repo-root", ".", "repository root")
+	approve := flags.Bool("approve", false, "explicitly authorize signed publication authorization issuance")
+	if err := flags.Parse(args); err != nil || !*approve || *runPath == "" || *signerPath == "" || *outputPath == "" || *worktreePath == "" || *remote == "" || *targetBranch == "" || flags.NArg() != 0 {
+		return 2
+	}
+	if *expiresIn <= 0 || *expiresIn > maxPublicationAuthorizationLifetime {
+		fmt.Fprintf(stderr, "expires-in must be positive and no greater than %s\n", maxPublicationAuthorizationLifetime)
+		return 2
+	}
+	if err := requirePathOutsideRepository(*repoRoot, *signerPath); err != nil {
+		fmt.Fprintf(stderr, "validate repository-owner signer path: %v\n", err)
+		return 1
+	}
+	if _, err := os.Stat(*outputPath); err == nil {
+		fmt.Fprintln(stderr, "refusing to overwrite signed publication authorization")
+		return 1
+	} else if !os.IsNotExist(err) {
+		fmt.Fprintf(stderr, "check authorization output: %v\n", err)
+		return 2
+	}
+	run, err := implementation.LoadRun(*runPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load implementation run: %v\n", err)
+		return 2
+	}
+	if run.State != implementation.StateLocallyCommitted {
+		fmt.Fprintln(stderr, "implementation run is not ready for publication authorization")
+		return 1
+	}
+	cfg, err := config.Load(filepath.Join(*repoRoot, "governance.yml"))
+	if err != nil {
+		fmt.Fprintf(stderr, "load governance config: %v\n", err)
+		return 2
+	}
+	repositoryID, err := cfg.PublicationRepositoryID()
+	if err != nil {
+		fmt.Fprintf(stderr, "read publication repository identity: %v\n", err)
+		return 2
+	}
+	localKey, privateKey, err := signature.LoadLocalRepositoryOwnerSigner(*signerPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load repository-owner signer: %v\n", err)
+		return 1
+	}
+	if !repositoryOwnerSignerTrusted(cfg, localKey) {
+		fmt.Fprintln(stderr, "repository-owner signer is not trusted by current policy")
+		return 1
+	}
+	remoteURL, err := implementation.RemoteURL(*worktreePath, *remote)
+	if err != nil {
+		fmt.Fprintf(stderr, "read remote URL: %v\n", err)
+		return 1
+	}
+	targetSHA, err := implementation.RemoteBranchSHA(*worktreePath, *remote, *targetBranch)
+	if err != nil {
+		fmt.Fprintf(stderr, "read remote target: %v\n", err)
+		return 1
+	}
+	payload := implementation.PublicationAuthorizationPayload{FormatVersion: 2, WorkItemKey: run.WorkItemKey, RunID: run.ID, RepositoryID: repositoryID, Remote: *remote, RemoteFingerprint: implementation.RemoteFingerprint(remoteURL), Branch: run.Branch, ImplementationBaseSHA: run.BaseSHA, ExpectedTargetSHA: targetSHA, CommitSHA: run.CommitSHA, PRTargetBranch: *targetBranch, AllowedOperations: []string{"push", "create-pr"}}
+	authorization := implementation.SignedPublicationAuthorization{Payload: payload}
+	if err := implementation.ValidatePublicationWorktree(*worktreePath, run); err != nil {
+		fmt.Fprintf(stderr, "validate authorized worktree: %v\n", err)
+		return 1
+	}
+	if err := implementation.ValidateAuthorizedLineage(*worktreePath, authorization); err != nil {
+		fmt.Fprintf(stderr, "validate authorization lineage: %v\n", err)
+		return 1
+	}
+	encodedPayload, err := json.Marshal(payload)
+	if err != nil {
+		fmt.Fprintf(stderr, "encode publication authorization: %v\n", err)
+		return 2
+	}
+	now := time.Now().UTC()
+	expiresAt := now.Add(*expiresIn)
+	envelope, err := signature.Sign(encodedPayload, localKey.KeyID, localKey.Role, privateKey, now, &expiresAt)
+	if err != nil {
+		fmt.Fprintf(stderr, "sign publication authorization: %v\n", err)
+		return 1
+	}
+	encoded, err := json.MarshalIndent(envelope, "", "  ")
+	if err != nil {
+		fmt.Fprintf(stderr, "encode signed publication authorization: %v\n", err)
+		return 2
+	}
+	if err := requireOwnerOnlyDirectory(filepath.Dir(*outputPath)); err != nil {
+		fmt.Fprintf(stderr, "create authorization directory: %v\n", err)
+		return 2
+	}
+	file, err := os.OpenFile(filepath.Clean(*outputPath), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		fmt.Fprintf(stderr, "write signed publication authorization: %v\n", err)
+		return 1
+	}
+	_, writeErr := file.Write(append(encoded, '\n'))
+	closeErr := file.Close()
+	if writeErr != nil || closeErr != nil {
+		if removeErr := os.Remove(filepath.Clean(*outputPath)); removeErr != nil && !os.IsNotExist(removeErr) {
+			fmt.Fprintf(stderr, "write signed publication authorization: %v; remove partial authorization: %v\n", firstError(writeErr, closeErr), removeErr)
+			return 1
+		}
+		fmt.Fprintf(stderr, "write signed publication authorization: %v\n", firstError(writeErr, closeErr))
+		return 1
+	}
+	fmt.Fprintln(stdout, "PASS issued version-2 signed publication authorization")
+	return 0
+}
+
+func repositoryOwnerSignerTrusted(cfg config.Config, localKey signature.TrustedKey) bool {
+	for _, key := range cfg.Signing.TrustedKeys {
+		if key.KeyID == localKey.KeyID && key.Role == localKey.Role && key.Algorithm == localKey.Algorithm && key.PublicKey == localKey.PublicKey {
+			return true
+		}
+	}
+	return false
+}
+
+func requirePathOutsideRepository(repoRoot, path string) error {
+	rootPath, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return fmt.Errorf("resolve repository root: %w", err)
+	}
+	root, err := filepath.EvalSymlinks(rootPath)
+	if err != nil {
+		return fmt.Errorf("resolve repository root: %w", err)
+	}
+	candidate, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("resolve signer path: %w", err)
+	}
+	for ancestor := candidate; ; ancestor = filepath.Dir(ancestor) {
+		resolved, resolveErr := filepath.EvalSymlinks(ancestor)
+		if resolveErr == nil {
+			relative, relErr := filepath.Rel(root, resolved)
+			if relErr != nil {
+				return fmt.Errorf("compare signer path to repository: %w", relErr)
+			}
+			if relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))) {
+				return fmt.Errorf("repository-owner signer must be outside repository root")
+			}
+			return nil
+		}
+		if !os.IsNotExist(resolveErr) {
+			return fmt.Errorf("resolve signer path: %w", resolveErr)
+		}
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			return fmt.Errorf("resolve signer path: no existing ancestor")
+		}
+	}
+}
+
+func requireOwnerOnlyDirectory(path string) error {
+	if err := os.MkdirAll(filepath.Clean(path), 0o700); err != nil {
+		return err
+	}
+	info, err := os.Stat(filepath.Clean(path))
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("authorization directory must be owner-only")
+	}
+	return nil
+}
+
+func firstError(errors ...error) error {
+	for _, err := range errors {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func runImplementationAuthorizePublish(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("implementation authorize-publish", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -1557,6 +1795,10 @@ func runImplementationPush(args []string, stdout, stderr io.Writer) int {
 	}
 	if err := implementation.ValidatePublicationWorktree(*worktreePath, run); err != nil {
 		fmt.Fprintf(stderr, "validate authorized worktree refs: %v\n", err)
+		return 1
+	}
+	if err := implementation.ValidateAuthorizedLineage(*worktreePath, authorization); err != nil {
+		fmt.Fprintf(stderr, "validate authorized commit lineage: %v\n", err)
 		return 1
 	}
 	if err := validatePublicationReviewEvidence(*reviewEvidencePath, *worktreePath, run); err != nil {
@@ -1642,6 +1884,10 @@ func runImplementationCreatePR(args []string, stdout, stderr io.Writer) int {
 	}
 	if err := implementation.ValidatePublicationWorktree(*worktreePath, run); err != nil {
 		fmt.Fprintf(stderr, "validate authorized worktree refs: %v\n", err)
+		return 1
+	}
+	if err := implementation.ValidateAuthorizedLineage(*worktreePath, authorization); err != nil {
+		fmt.Fprintf(stderr, "validate authorized commit lineage: %v\n", err)
 		return 1
 	}
 	if err := validatePublicationReviewEvidence(*reviewEvidencePath, *worktreePath, run); err != nil {
