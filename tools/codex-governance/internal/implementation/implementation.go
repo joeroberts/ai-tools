@@ -84,6 +84,10 @@ type ProcessMetadata interface{ ProcessID(string) int }
 
 type ResultReference interface{ ResultReference(string) string }
 
+// DiagnosticReference exposes private adapter artifacts that can help an
+// operator diagnose a terminal failure without printing their contents.
+type DiagnosticReference interface{ DiagnosticReferences(string) []string }
+
 type FakeAdapter struct {
 	mu    sync.Mutex
 	next  int
@@ -196,6 +200,33 @@ func Reconcile(run *Run, adapter Adapter, resultPath string) error {
 		return run.Transition(StateEscalated)
 	default:
 		return fmt.Errorf("adapter returned invalid status %q", status)
+	}
+}
+
+// WaitAndReconcile retains ownership of one already-launched task until it is
+// terminal. It never dispatches, retries, or replaces that task.
+func WaitAndReconcile(run *Run, adapter Adapter, resultPath string) error {
+	for {
+		status, err := adapter.Status(run.TaskID)
+		if err != nil {
+			if transitionErr := run.Transition(StateEscalated); transitionErr != nil {
+				return transitionErr
+			}
+			return fmt.Errorf("check adapter status: %w", err)
+		}
+		if status == AdapterRunning {
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+		if err := Reconcile(run, adapter, resultPath); err != nil {
+			if run.State == StateRunning {
+				if transitionErr := run.Transition(StateEscalated); transitionErr != nil {
+					return transitionErr
+				}
+			}
+			return fmt.Errorf("reconcile terminal adapter status: %w", err)
+		}
+		return nil
 	}
 }
 
@@ -379,21 +410,29 @@ func VerifyDispatchReadiness(run Run, bundle TaskBundle, bundlePath string, cfg 
 	return nil
 }
 
-// StartHeadless creates the disposable worktree and starts an explicitly
-// approved headless Codex process. It does not commit, push, or create a PR.
-func StartHeadless(run *Run, bundle TaskBundle, repoRoot, runtimeRoot, codexBinary string) error {
+// StartHeadless creates the disposable worktree, retains ownership of the
+// explicitly approved headless Codex process until it is terminal, and
+// reconciles it. It does not commit, push, or create a PR.
+func StartHeadless(run *Run, bundle TaskBundle, repoRoot, runtimeRoot, codexBinary string) ([]string, error) {
 	if run.Adapter != "headless-codex" || run.State != StatePreflight {
-		return fmt.Errorf("run is not ready for headless Codex execution")
+		return nil, fmt.Errorf("run is not ready for headless Codex execution")
 	}
 	worktreePath := filepath.Join(runtimeRoot, "worktrees", run.ID)
 	if err := worktree.Create(repoRoot, run.BaseSHA, worktreePath); err != nil {
-		return err
+		return nil, err
 	}
 	if err := run.Transition(StateQueued); err != nil {
-		return err
+		return nil, err
 	}
 	adapter := NewHeadlessCodexAdapter(codexBinary, worktreePath, filepath.Join(runtimeRoot, "runs", run.ID, "results"))
-	return Launch(run, bundle, adapter)
+	if err := Launch(run, bundle, adapter); err != nil {
+		return nil, err
+	}
+	var diagnostics []string
+	if references, ok := interface{}(adapter).(DiagnosticReference); ok {
+		diagnostics = references.DiagnosticReferences(run.TaskID)
+	}
+	return diagnostics, WaitAndReconcile(run, adapter, run.ResultRef)
 }
 
 // ReconcilePersisted is deliberately conservative: an unavailable process or

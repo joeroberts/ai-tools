@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -29,6 +30,68 @@ func TestCreateLocalExportSignerWritesOwnerOnlyKey(t *testing.T) {
 	keyID, privateKey, err := LoadLocalExportSigner(path)
 	if err != nil || keyID != key.KeyID || len(privateKey) != ed25519.PrivateKeySize {
 		t.Fatalf("LoadLocalExportSigner() = %q, %d, %v", keyID, len(privateKey), err)
+	}
+}
+
+func TestRepositoryOwnerSignerRefusesOverwriteAndUnsafePermissions(t *testing.T) {
+	permissiveDirectory := t.TempDir()
+	if err := os.Chmod(permissiveDirectory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreateLocalRepositoryOwnerSigner(filepath.Join(permissiveDirectory, "unsafe-owner.json")); err == nil {
+		t.Fatal("CreateLocalRepositoryOwnerSigner() accepted a permissive directory")
+	}
+	safeDirectory := t.TempDir()
+	if err := os.Chmod(safeDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(safeDirectory, "repository-owner.json")
+	key, err := CreateLocalRepositoryOwnerSigner(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key.Role != "repository-owner" {
+		t.Fatalf("signer role = %q", key.Role)
+	}
+	loadedKey, _, err := LoadLocalRepositoryOwnerSigner(path)
+	if err != nil || loadedKey != key {
+		t.Fatalf("loaded repository-owner key = %#v, %v", loadedKey, err)
+	}
+	if _, err := CreateLocalRepositoryOwnerSigner(path); err == nil {
+		t.Fatal("CreateLocalRepositoryOwnerSigner() overwrote an existing signer")
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := LoadLocalRepositoryOwnerSigner(path); err == nil {
+		t.Fatal("LoadLocalRepositoryOwnerSigner() accepted unsafe permissions")
+	}
+	tamperedDirectory := t.TempDir()
+	if err := os.Chmod(tamperedDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	tamperedPath := filepath.Join(tamperedDirectory, "repository-owner.json")
+	if _, err := CreateLocalRepositoryOwnerSigner(tamperedPath); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(tamperedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var signer LocalSigner
+	if err := json.Unmarshal(data, &signer); err != nil {
+		t.Fatal(err)
+	}
+	signer.KeyID = "sha256:wrong"
+	data, err = json.Marshal(signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tamperedPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := LoadLocalRepositoryOwnerSigner(tamperedPath); err == nil {
+		t.Fatal("LoadLocalRepositoryOwnerSigner() accepted mismatched key material")
 	}
 }
 

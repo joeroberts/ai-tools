@@ -121,6 +121,15 @@ func (a *HeadlessCodexAdapter) ResultReference(taskID string) string {
 	return ""
 }
 
+func (a *HeadlessCodexAdapter) DiagnosticReferences(taskID string) []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if task, ok := a.tasks[taskID]; ok {
+		return []string{task.resultPath + ".stdout.log", task.stderrPath}
+	}
+	return nil
+}
+
 func (a *HeadlessCodexAdapter) Cancel(taskID string) error {
 	a.mu.Lock()
 	task, ok := a.tasks[taskID]

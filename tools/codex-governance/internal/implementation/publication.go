@@ -18,17 +18,19 @@ import (
 // PublicationAuthorizationPayload is the signed, externally issued authority
 // for one run's remote publication. The CLI verifies it; it never signs it.
 type PublicationAuthorizationPayload struct {
-	FormatVersion     int      `json:"format_version"`
-	WorkItemKey       string   `json:"work_item_key"`
-	RunID             string   `json:"run_id"`
-	RepositoryID      string   `json:"repository_id"`
-	Remote            string   `json:"remote"`
-	RemoteFingerprint string   `json:"remote_fingerprint"`
-	Branch            string   `json:"branch"`
-	ExpectedBaseSHA   string   `json:"expected_base_sha"`
-	CommitSHA         string   `json:"commit_sha"`
-	PRTargetBranch    string   `json:"pr_target_branch"`
-	AllowedOperations []string `json:"allowed_operations"`
+	FormatVersion         int      `json:"format_version"`
+	WorkItemKey           string   `json:"work_item_key"`
+	RunID                 string   `json:"run_id"`
+	RepositoryID          string   `json:"repository_id"`
+	Remote                string   `json:"remote"`
+	RemoteFingerprint     string   `json:"remote_fingerprint"`
+	Branch                string   `json:"branch"`
+	ExpectedBaseSHA       string   `json:"expected_base_sha"`
+	ImplementationBaseSHA string   `json:"implementation_base_sha,omitempty"`
+	ExpectedTargetSHA     string   `json:"expected_target_sha,omitempty"`
+	CommitSHA             string   `json:"commit_sha"`
+	PRTargetBranch        string   `json:"pr_target_branch"`
+	AllowedOperations     []string `json:"allowed_operations"`
 }
 
 type SignedPublicationAuthorization struct {
@@ -80,7 +82,11 @@ func LoadSignedPublicationAuthorization(path string, cfg config.Config, now time
 
 func ValidateSignedPublication(run Run, authorization SignedPublicationAuthorization, operation, remoteURL, repositoryID string) error {
 	payload := authorization.Payload
-	if repositoryID == "" || payload.RepositoryID != repositoryID || payload.WorkItemKey != run.WorkItemKey || payload.RunID != run.ID || payload.Branch != run.Branch || payload.ExpectedBaseSHA != run.BaseSHA || payload.CommitSHA != run.CommitSHA || payload.RemoteFingerprint != RemoteFingerprint(remoteURL) || !allowsOperation(payload.AllowedOperations, operation) {
+	implementationBase := payload.ExpectedBaseSHA
+	if payload.FormatVersion == 2 {
+		implementationBase = payload.ImplementationBaseSHA
+	}
+	if repositoryID == "" || payload.RepositoryID != repositoryID || payload.WorkItemKey != run.WorkItemKey || payload.RunID != run.ID || payload.Branch != run.Branch || implementationBase != run.BaseSHA || payload.CommitSHA != run.CommitSHA || payload.RemoteFingerprint != RemoteFingerprint(remoteURL) || !allowsOperation(payload.AllowedOperations, operation) {
 		return fmt.Errorf("signed remote publication authorization does not match this run")
 	}
 	if operation == "push" && run.State != StateLocallyCommitted {
@@ -134,8 +140,14 @@ func ConsumeSignedAuthorization(runtimeRoot string, authorization SignedPublicat
 }
 
 func validatePublicationPayload(payload PublicationAuthorizationPayload) error {
-	if payload.FormatVersion != 1 || payload.WorkItemKey == "" || payload.RunID == "" || payload.RepositoryID == "" || payload.Remote == "" || payload.RemoteFingerprint == "" || !strings.HasPrefix(payload.Branch, "codex/") || len(payload.ExpectedBaseSHA) < 7 || len(payload.CommitSHA) < 7 || len(payload.AllowedOperations) == 0 {
+	if (payload.FormatVersion != 1 && payload.FormatVersion != 2) || payload.WorkItemKey == "" || payload.RunID == "" || payload.RepositoryID == "" || payload.Remote == "" || payload.RemoteFingerprint == "" || !strings.HasPrefix(payload.Branch, "codex/") || len(payload.CommitSHA) < 7 || len(payload.AllowedOperations) == 0 {
 		return fmt.Errorf("signed publication authorization payload is invalid")
+	}
+	if payload.FormatVersion == 1 && len(payload.ExpectedBaseSHA) < 7 {
+		return fmt.Errorf("signed publication authorization payload is invalid")
+	}
+	if payload.FormatVersion == 2 && (len(payload.ImplementationBaseSHA) < 7 || len(payload.ExpectedTargetSHA) < 7 || payload.ExpectedBaseSHA != "") {
+		return fmt.Errorf("signed publication authorization version-2 lineage is invalid")
 	}
 	seen := map[string]bool{}
 	for _, operation := range payload.AllowedOperations {
@@ -177,12 +189,26 @@ func ValidatePublicationWorktree(worktree string, run Run) error {
 	if strings.TrimSpace(string(branch)) != run.CommitSHA {
 		return fmt.Errorf("worktree branch does not match authorized commit")
 	}
-	base, err := git(worktree, "merge-base", run.BaseSHA, run.CommitSHA)
-	if err != nil {
-		return fmt.Errorf("verify authorized base: %w: %s", err, base)
+	return nil
+}
+
+// ValidateAuthorizedLineage requires the authorized commit to descend from
+// the implementation base and, for v2 authorizations, the independently bound
+// remote target SHA.
+func ValidateAuthorizedLineage(worktree string, authorization SignedPublicationAuthorization) error {
+	payload := authorization.Payload
+	bases := []string{payload.ExpectedBaseSHA}
+	if payload.FormatVersion == 2 {
+		bases = []string{payload.ImplementationBaseSHA, payload.ExpectedTargetSHA}
 	}
-	if strings.TrimSpace(string(base)) != run.BaseSHA {
-		return fmt.Errorf("authorized commit is not based on the expected base SHA")
+	for _, base := range bases {
+		output, err := git(worktree, "merge-base", base, payload.CommitSHA)
+		if err != nil {
+			return fmt.Errorf("verify authorized lineage: %w: %s", err, output)
+		}
+		if strings.TrimSpace(string(output)) != base {
+			return fmt.Errorf("authorized commit does not descend from bound SHA")
+		}
 	}
 	return nil
 }
@@ -191,15 +217,33 @@ func ValidatePublicationWorktree(worktree string, run Run) error {
 // ref has moved since its expected base SHA was signed.
 func ValidateAuthorizedRemoteBase(worktree string, authorization SignedPublicationAuthorization) error {
 	payload := authorization.Payload
+	expectedTarget := payload.ExpectedBaseSHA
+	if payload.FormatVersion == 2 {
+		expectedTarget = payload.ExpectedTargetSHA
+	}
 	output, err := git(worktree, "ls-remote", "--exit-code", payload.Remote, "refs/heads/"+payload.PRTargetBranch)
 	if err != nil {
 		return fmt.Errorf("read authorized target ref: %w: %s", err, output)
 	}
 	fields := strings.Fields(string(output))
-	if len(fields) < 2 || fields[0] != payload.ExpectedBaseSHA || fields[1] != "refs/heads/"+payload.PRTargetBranch {
+	if len(fields) < 2 || fields[0] != expectedTarget || fields[1] != "refs/heads/"+payload.PRTargetBranch {
 		return fmt.Errorf("authorized target ref does not match expected base SHA")
 	}
 	return nil
+}
+
+// RemoteBranchSHA reads the exact target SHA that an owner intends to bind.
+// It uses Git's read-only remote query and performs no publication action.
+func RemoteBranchSHA(worktree, remote, branch string) (string, error) {
+	output, err := git(worktree, "ls-remote", "--exit-code", remote, "refs/heads/"+branch)
+	if err != nil {
+		return "", fmt.Errorf("read remote target ref: %w: %s", err, output)
+	}
+	fields := strings.Fields(string(output))
+	if len(fields) < 2 || len(fields[0]) < 7 || fields[1] != "refs/heads/"+branch {
+		return "", fmt.Errorf("remote target ref is invalid")
+	}
+	return fields[0], nil
 }
 
 // PrepareSignedPush records the crash-safe state immediately before the
