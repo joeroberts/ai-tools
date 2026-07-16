@@ -277,3 +277,62 @@ func TestLoadConstraintsRejectsMissingAssignmentPhaseTraceability(t *testing.T) 
 		t.Fatalf("LoadConstraints() error = %v", err)
 	}
 }
+
+func TestDraftConstraintsReadsOnlyAllowedPathsSection(t *testing.T) {
+	constraints, err := draftConstraintsForSpec(t, "# Overview\n`outside/path` must not be included.\n\n## Allowed Paths\n\nImplementation is limited to `AGENTS.md`, `testdata`, and `internal/agentplan`.\n- `docs/design`\n\n## Review Budget\n\n4 changed files, 350 changed lines, and parser tests. `also/outside`\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"AGENTS.md", "docs/design", "internal/agentplan", "testdata"}
+	if strings.Join(constraints.PathPool, ",") != strings.Join(want, ",") {
+		t.Fatalf("PathPool = %#v, want %#v", constraints.PathPool, want)
+	}
+}
+
+func TestDraftConstraintsReadsCanonicalProseAllowedPaths(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	constraints, err := DraftConstraints(Request{
+		PRDPath:     "docs/design/constraint-path-parser-prd.md",
+		SpecPath:    "docs/design/constraint-path-parser-spec.md",
+		RoadmapPath: "docs/roadmaps/go-cli-migration.md",
+		RepoRoot:    repoRoot,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"docs/design", "internal/agentplan", "testdata/ticket-plans"}
+	if strings.Join(constraints.PathPool, ",") != strings.Join(want, ",") {
+		t.Fatalf("PathPool = %#v, want %#v", constraints.PathPool, want)
+	}
+}
+
+func TestDraftConstraintsRejectsInvalidAndDuplicateAllowedPaths(t *testing.T) {
+	for name, entry := range map[string]string{
+		"absolute":  "`/outside`",
+		"traversal": "`internal/../outside`",
+		"wildcard":  "`internal/*`",
+		"duplicate": "`docs/design`\n- `docs/design`",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := draftConstraintsForSpec(t, "## Allowed Paths\n\n"+entry+"\n\n## Review Budget\n\n4 changed files, 350 changed lines, and parser tests.\n")
+			if err == nil || !strings.Contains(err.Error(), "Allowed Paths") {
+				t.Fatalf("DraftConstraints() error = %v", err)
+			}
+		})
+	}
+}
+
+func draftConstraintsForSpec(t *testing.T, spec string) (Constraints, error) {
+	t.Helper()
+	root := t.TempDir()
+	for path, data := range map[string]string{
+		"prd.md":     "# Goal\nUnique PRD source.\n",
+		"spec.md":    spec,
+		"roadmap.md": "# Phase 1\nUnique roadmap source.\n",
+	} {
+		if err := os.WriteFile(filepath.Join(root, path), []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return DraftConstraints(Request{PRDPath: "prd.md", SpecPath: "spec.md", RoadmapPath: "roadmap.md", RepoRoot: root})
+}
