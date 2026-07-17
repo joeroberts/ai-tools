@@ -10,8 +10,10 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"codex-governance/internal/ollama"
+	gruntime "codex-governance/internal/runtime"
 	"codex-governance/internal/ticketplan"
 )
 
@@ -341,12 +343,264 @@ exit 1
 		t.Fatal(err)
 	}
 	output := filepath.Join(root, "private", "decomposition.json")
-	if _, err := Decompose(Request{PRDPath: filepath.Join(root, "prd.md"), SpecPath: filepath.Join(root, "spec.md"), RoadmapPath: filepath.Join(root, "roadmap.md"), OutputPath: output, RepoRoot: root, RuntimeRoot: filepath.Join(root, "runtime")}, CodexRunner{Binary: binary, WorkDir: root}); err != nil {
+	if _, err := Decompose(Request{PRDPath: filepath.Join(root, "prd.md"), SpecPath: filepath.Join(root, "spec.md"), RoadmapPath: filepath.Join(root, "roadmap.md"), OutputPath: output, RepoRoot: root, RuntimeRoot: filepath.Join(root, "runtime"), ManagerTimeout: 5 * time.Second, ManagerWaitDelay: time.Second}, CodexRunner{Binary: binary, WorkDir: root}); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(output)
 	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("decomposition permissions = %v, %v", info.Mode().Perm(), err)
+	}
+}
+
+func TestCodexRunnerPersistsPrivateJSONLDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	binary := filepath.Join(root, "fake-codex")
+	script := `#!/bin/sh
+result=""
+json=false
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--json" ]; then json=true; fi
+  if [ "$1" = "--output-last-message" ]; then shift; result="$1"; fi
+  shift
+done
+[ "$json" = true ] || exit 9
+[ ! -e "$result" ] || exit 8
+printf '%s\n' '{"type":"thread.started"}'
+printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1}}'
+printf '%s' '{"format_version":1}' > "$result"
+printf '%s\n' 'manager stderr' >&2
+`
+	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runtimeRoot := filepath.Join(root, "runtime")
+	result, err := runRole(Request{RuntimeRoot: runtimeRoot, ManagerTimeout: 5 * time.Second, ManagerWaitDelay: time.Second}, "ticket-plan:test", "manager", 1, CodexRunner{Binary: binary, WorkDir: root}, "prompt", `{}`)
+	if err != nil || string(result) != `{"format_version":1}` {
+		t.Fatalf("runRole() = %q, %v", result, err)
+	}
+	dir := filepath.Join(runtimeRoot, "ticket-plan-runs", "ticket-plan-test", "manager-1")
+	dirInfo, err := os.Stat(dir)
+	if err != nil || dirInfo.Mode().Perm() != 0o700 {
+		t.Fatalf("diagnostic directory permissions = %v, %v", dirInfo, err)
+	}
+	for _, name := range []string{"codex.jsonl", "stderr.log", "schema.json", "result.json"} {
+		info, statErr := os.Stat(filepath.Join(dir, name))
+		if statErr != nil {
+			t.Fatalf("diagnostic %s: %v", name, statErr)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Fatalf("diagnostic %s permissions = %v", name, info.Mode().Perm())
+		}
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "codex.jsonl"))
+	if err != nil || !strings.Contains(string(data), `"turn.completed"`) || !strings.Contains(string(data), `"input_tokens":1`) {
+		t.Fatalf("terminal usage event = %q, %v", data, err)
+	}
+	assertLedgerStates(t, runtimeRoot, "started", "completed", "closed")
+}
+
+func TestCodexRunnerWaitDelayClosesInheritedOutputPipes(t *testing.T) {
+	root := t.TempDir()
+	binary := filepath.Join(root, "fake-codex")
+	script := `#!/bin/sh
+result=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--output-last-message" ]; then shift; result="$1"; fi
+  shift
+done
+(sleep 5) &
+printf '%s' '{"format_version":1}' > "$result"
+`
+	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runtimeRoot := filepath.Join(root, "runtime")
+	started := time.Now()
+	_, err := runRole(Request{RuntimeRoot: runtimeRoot, ManagerTimeout: time.Second, ManagerWaitDelay: 100 * time.Millisecond}, "ticket-plan:test", "manager", 1, CodexRunner{Binary: binary, WorkDir: root}, "prompt", `{}`)
+	if err == nil {
+		t.Fatal("manager with inherited output pipe unexpectedly succeeded")
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("WaitDelay did not bound inherited output pipe: %s", elapsed)
+	}
+	assertLedgerStates(t, runtimeRoot, "started", "failed", "closed")
+}
+
+func TestCodexRunnerClosesTimeoutAndCancellationFailures(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		context func() (context.Context, context.CancelFunc)
+		timeout time.Duration
+	}{
+		{name: "timeout", context: func() (context.Context, context.CancelFunc) { return context.WithCancel(context.Background()) }, timeout: 150 * time.Millisecond},
+		{name: "cancellation", context: func() (context.Context, context.CancelFunc) {
+			ctx, cancel := context.WithCancel(context.Background())
+			return ctx, cancel
+		}, timeout: time.Second},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			binary := filepath.Join(root, "fake-codex")
+			if err := os.WriteFile(binary, []byte("#!/bin/sh\nresult=\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--output-last-message\" ]; then shift; result=\"$1\"; fi\n  shift\ndone\nprintf ready > \"$(dirname \"$result\")/ready\"\nsleep 5\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := test.context()
+			defer cancel()
+			runtimeRoot := filepath.Join(root, "runtime")
+			ready := filepath.Join(runtimeRoot, "ticket-plan-runs", "ticket-plan-test", "manager-1", "ready")
+			readyObserved := make(chan bool, 1)
+			if test.name == "cancellation" {
+				go func() {
+					readyObserved <- waitForFile(ready, 2*time.Second)
+					cancel()
+				}()
+			}
+			started := time.Now()
+			_, err := runRole(Request{RuntimeRoot: runtimeRoot, Context: ctx, ManagerTimeout: test.timeout, ManagerWaitDelay: 100 * time.Millisecond}, "ticket-plan:test", "manager", 1, CodexRunner{Binary: binary, WorkDir: root}, "prompt", `{}`)
+			if err == nil {
+				t.Fatal("controlled manager cancellation unexpectedly succeeded")
+			}
+			if test.name == "cancellation" && !<-readyObserved {
+				t.Fatal("manager did not publish its bounded ready marker")
+			}
+			if elapsed := time.Since(started); elapsed > 2*time.Second {
+				t.Fatalf("controlled manager cancellation took %s", elapsed)
+			}
+			assertLedgerStates(t, runtimeRoot, "started", "failed", "closed")
+		})
+	}
+}
+
+func waitForFile(path string, deadline time.Duration) bool {
+	timer := time.NewTimer(deadline)
+	defer timer.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return true
+		}
+		select {
+		case <-timer.C:
+			return false
+		case <-ticker.C:
+		}
+	}
+}
+
+func TestFailureReconciliationUsesPrivateFallbackAndAttemptsClosed(t *testing.T) {
+	root := t.TempDir()
+	artifact := filepath.Join(root, "blocked-artifact")
+	if err := os.WriteFile(artifact, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	originalRecord := recordExecutionEvent
+	defer func() { recordExecutionEvent = originalRecord }()
+	var states []string
+	recordExecutionEvent = func(_ string, event gruntime.Event) error {
+		states = append(states, event.State)
+		if event.State == "failed" {
+			return errors.New("failed ledger remains unavailable")
+		}
+		return nil
+	}
+	runErr := errors.New("manager deadline exceeded")
+	_, err := finishRole(root, "ticket-plan:test", "manager-ticket-plan-1", "manager", 1, artifact, nil, runErr)
+	if !errors.Is(err, runErr) || !strings.Contains(err.Error(), "failed ledger remains unavailable") {
+		t.Fatalf("finishRole() error = %v", err)
+	}
+	if got := strings.Join(states, ","); got != "failed,closed" {
+		t.Fatalf("terminal attempts = %q, want failed,closed", got)
+	}
+	fallbacks, err := filepath.Glob(filepath.Join(root, "ticket-plan-failures", "*.txt"))
+	if err != nil || len(fallbacks) != 1 {
+		t.Fatalf("fallback diagnostics = %v, %v", fallbacks, err)
+	}
+	fallback, err := os.ReadFile(fallbacks[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diagnostic := string(fallback); !strings.Contains(diagnostic, runErr.Error()) || !strings.Contains(diagnostic, "create failure diagnostics") {
+		t.Fatalf("fallback diagnostic does not preserve both failures: %q", diagnostic)
+	}
+	info, err := os.Stat(fallbacks[0])
+	if err != nil {
+		t.Fatalf("stat fallback diagnostic: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("fallback mode = %v, want 0600", info.Mode().Perm())
+	}
+	dirInfo, err := os.Stat(filepath.Dir(fallbacks[0]))
+	if err != nil {
+		t.Fatalf("stat fallback diagnostic directory: %v", err)
+	}
+	if dirInfo.Mode().Perm() != 0o700 {
+		t.Fatalf("fallback directory mode = %v, want 0700", dirInfo.Mode().Perm())
+	}
+}
+
+func TestTerminalReconciliationAttemptsCompletionAndRetriesClose(t *testing.T) {
+	root := t.TempDir()
+	originalRecord := recordExecutionEvent
+	defer func() { recordExecutionEvent = originalRecord }()
+	completedErr := errors.New("completed ledger unavailable")
+	closeErr := errors.New("close ledger temporarily unavailable")
+	var states []string
+	closeCalls := 0
+	recordExecutionEvent = func(_ string, event gruntime.Event) error {
+		states = append(states, event.State)
+		if event.State == "completed" {
+			return completedErr
+		}
+		if event.State == "closed" {
+			closeCalls++
+			if closeCalls == 1 {
+				return closeErr
+			}
+		}
+		return nil
+	}
+	_, err := finishRole(root, "ticket-plan:test", "reviewer-ticket-plan-1", "reviewer", 1, filepath.Join(root, "artifacts"), []byte(`{"status":"approved"}`), nil)
+	if !errors.Is(err, completedErr) || !errors.Is(err, closeErr) {
+		t.Fatalf("finishRole() error = %v", err)
+	}
+	if got := strings.Join(states, ","); got != "completed,closed,closed" {
+		t.Fatalf("terminal attempts = %q, want completed,closed,closed", got)
+	}
+}
+
+func TestValidateManagerLifecycleRejectsNonPositiveValues(t *testing.T) {
+	for _, request := range []Request{{ManagerWaitDelay: time.Second}, {ManagerTimeout: time.Second}, {ManagerTimeout: -time.Second, ManagerWaitDelay: time.Second}, {ManagerTimeout: time.Second, ManagerWaitDelay: -time.Second}} {
+		if err := validateManagerLifecycle(request); err == nil {
+			t.Fatalf("validateManagerLifecycle(%+v) unexpectedly passed", request)
+		}
+	}
+}
+
+func assertLedgerStates(t *testing.T, root string, expected ...string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, "execution-ledger.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != len(expected) {
+		t.Fatalf("ledger events = %q", data)
+	}
+	for index, line := range lines {
+		var event struct {
+			State     string `json:"state"`
+			ResultRef string `json:"result_ref"`
+		}
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.State != expected[index] {
+			t.Fatalf("ledger state %d = %q, want %q", index, event.State, expected[index])
+		}
+		if (event.State == "completed" || event.State == "failed" || event.State == "closed") && event.ResultRef == "" {
+			t.Fatalf("ledger state %q lacks diagnostic reference", event.State)
+		}
 	}
 }
 

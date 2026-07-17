@@ -5,13 +5,16 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"codex-governance/internal/ollama"
 	gruntime "codex-governance/internal/runtime"
@@ -21,11 +24,15 @@ import (
 type Request struct {
 	PRDPath, SpecPath, RoadmapPath, OutputPath, RepoRoot, RuntimeRoot, ConstraintsPath string
 	Progress                                                                           func(string)
+	Context                                                                            context.Context
+	ManagerTimeout, ManagerWaitDelay                                                   time.Duration
 }
 
 type Result struct{ PlanPath, WorkItem string }
 
 var marshalDecomposition = json.MarshalIndent
+
+var recordExecutionEvent = gruntime.Record
 
 type Runner interface {
 	Run(context.Context, string, string, string) ([]byte, error)
@@ -65,8 +72,15 @@ type CodexRunner struct {
 }
 
 func (r CodexRunner) Run(ctx context.Context, role, prompt, schema string) ([]byte, error) {
+	return r.run(ctx, role, prompt, schema, "", 0)
+}
+
+func (r CodexRunner) run(ctx context.Context, role, prompt, schema, diagnosticsDir string, waitDelay time.Duration) ([]byte, error) {
 	if role != "manager" {
 		return nil, fmt.Errorf("hosted Codex runner is restricted to the manager role")
+	}
+	if diagnosticsDir != "" {
+		return r.runWithDiagnostics(ctx, role, prompt, schema, diagnosticsDir, waitDelay)
 	}
 	dir, err := os.MkdirTemp("", "codex-governance-agent-")
 	if err != nil {
@@ -85,6 +99,57 @@ func (r CodexRunner) Run(ctx context.Context, role, prompt, schema string) ([]by
 	return os.ReadFile(outputPath)
 }
 
+func (r CodexRunner) runWithDiagnostics(ctx context.Context, role, prompt, schema, dir string, waitDelay time.Duration) ([]byte, error) {
+	if err := makePrivateDirectory(dir); err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return nil, err
+	}
+	schemaPath := filepath.Join(dir, "schema.json")
+	resultPath := filepath.Join(dir, "result.json")
+	stdoutPath := filepath.Join(dir, "codex.jsonl")
+	stderrPath := filepath.Join(dir, "stderr.log")
+	for _, path := range []string{schemaPath, resultPath, stdoutPath, stderrPath} {
+		if _, err := os.Stat(path); err == nil {
+			return nil, fmt.Errorf("refusing to overwrite manager diagnostic: %s", path)
+		} else if !os.IsNotExist(err) {
+			return nil, err
+		}
+	}
+	if err := writeNewPrivateFile(schemaPath, []byte(schema)); err != nil {
+		return nil, err
+	}
+	stdout, err := openNewPrivateFile(stdoutPath)
+	if err != nil {
+		return nil, err
+	}
+	defer stdout.Close()
+	stderr, err := openNewPrivateFile(stderrPath)
+	if err != nil {
+		return nil, err
+	}
+	defer stderr.Close()
+
+	cmd := exec.CommandContext(ctx, r.Binary, "--ask-for-approval", "never", "exec", "--ephemeral", "--sandbox", "read-only", "--skip-git-repo-check", "--json", "--output-schema", schemaPath, "--output-last-message", resultPath, prompt)
+	cmd.Dir = r.WorkDir
+	// Non-*os.File writers make os/exec own copy pipes. WaitDelay therefore
+	// bounds both a canceled process and descendants that inherit those pipes.
+	cmd.Stdout, cmd.Stderr = io.MultiWriter(stdout), io.MultiWriter(stderr)
+	cmd.WaitDelay = waitDelay
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("Codex %s run (diagnostics: %s): %s", role, dir, gruntime.Redact(err.Error()))
+	}
+	if err := os.Chmod(resultPath, 0o600); err != nil {
+		return nil, fmt.Errorf("secure Codex %s result (diagnostics: %s): %w", role, dir, err)
+	}
+	result, err := os.ReadFile(resultPath)
+	if err != nil {
+		return nil, fmt.Errorf("read Codex %s result (diagnostics: %s): %w", role, dir, err)
+	}
+	return result, nil
+}
+
 func Generate(request Request, runners Runners) (Result, error) {
 	return generateAfterPhase2Approval(request, runners)
 }
@@ -94,6 +159,9 @@ func Generate(request Request, runners Runners) (Result, error) {
 func Decompose(request Request, manager Runner) (Result, error) {
 	if !isCodexRunner(manager) {
 		return Result{}, fmt.Errorf("manager runner must be a hosted CodexRunner")
+	}
+	if err := validateManagerLifecycle(request); err != nil {
+		return Result{}, err
 	}
 	sources, err := loadSources(request)
 	if err != nil {
@@ -105,7 +173,7 @@ func Decompose(request Request, manager Runner) (Result, error) {
 	}
 	key := sha256.Sum256([]byte(sources.PRD.Digest + sources.Spec.Digest + sources.Roadmap.Digest))
 	workItem := "ticket-plan:" + hex.EncodeToString(key[:8])
-	planBytes, err := runRole(request.RuntimeRoot, workItem, "manager", 1, manager, decompositionPrompt(sources, catalog), planSchemaRange(1, 8))
+	planBytes, err := runRole(request, workItem, "manager", 1, manager, decompositionPrompt(sources, catalog), planSchemaRange(1, 8))
 	if err != nil {
 		return Result{}, err
 	}
@@ -132,6 +200,9 @@ func writeDecomposition(path string, plan ticketplan.Plan) error {
 // gate has confirmed that Phase 2 is approved.
 func generateAfterPhase2Approval(request Request, runners Runners) (Result, error) {
 	if err := validateRunners(runners); err != nil {
+		return Result{}, err
+	}
+	if err := validateManagerLifecycle(request); err != nil {
 		return Result{}, err
 	}
 	progress := func(message string) {
@@ -185,7 +256,7 @@ func generateAfterPhase2Approval(request Request, runners Runners) (Result, erro
 		if feedback != "" {
 			prompt = remediationPrompt(sources, catalog, constraints, feedback)
 		}
-		planBytes, err := runRole(request.RuntimeRoot, workItem, "manager", cycle, runners.Manager, prompt, planSchema(constraints))
+		planBytes, err := runRole(request, workItem, "manager", cycle, runners.Manager, prompt, planSchema(constraints))
 		if err != nil {
 			return Result{}, err
 		}
@@ -204,7 +275,7 @@ func generateAfterPhase2Approval(request Request, runners Runners) (Result, erro
 		}
 		serialized, _ := json.Marshal(plan)
 		progress(fmt.Sprintf("Dispatching independent reviewer (cycle %d/2)", cycle))
-		result, err := runRole(request.RuntimeRoot, workItem, "reviewer", cycle, runners.Reviewer, reviewPrompt("reviewer", serialized), reviewSchema())
+		result, err := runRole(request, workItem, "reviewer", cycle, runners.Reviewer, reviewPrompt("reviewer", serialized), reviewSchema())
 		if err != nil {
 			return Result{}, err
 		}
@@ -235,7 +306,7 @@ func generateAfterPhase2Approval(request Request, runners Runners) (Result, erro
 	}
 	progress("Reviewer unloaded and verifier residency verified")
 	progress("Dispatching independent verifier")
-	result, err := runRole(request.RuntimeRoot, workItem, "verifier", 1, runners.Verifier, reviewPrompt("verifier", serialized), reviewSchema())
+	result, err := runRole(request, workItem, "verifier", 1, runners.Verifier, reviewPrompt("verifier", serialized), reviewSchema())
 	if err != nil {
 		return Result{}, err
 	}
@@ -468,38 +539,153 @@ func buildSourceCatalog(repoRoot string, sources ticketplan.Sources) (string, er
 	return builder.String(), nil
 }
 
-func runRole(root, workItem, role string, cycle int, runner Runner, prompt, schema string) ([]byte, error) {
+func validateManagerLifecycle(request Request) error {
+	if request.ManagerTimeout <= 0 {
+		return fmt.Errorf("manager timeout must be positive")
+	}
+	if request.ManagerWaitDelay <= 0 {
+		return fmt.Errorf("manager wait delay must be positive")
+	}
+	return nil
+}
+
+func runRole(request Request, workItem, role string, cycle int, runner Runner, prompt, schema string) ([]byte, error) {
+	root := request.RuntimeRoot
 	id := fmt.Sprintf("%s-ticket-plan-%d", role, cycle)
-	if err := gruntime.Record(root, gruntime.Event{WorkItem: workItem, AgentID: id, Role: role, State: "started"}); err != nil {
+	if err := recordExecutionEvent(root, gruntime.Event{WorkItem: workItem, AgentID: id, Role: role, State: "started"}); err != nil {
 		return nil, err
 	}
-	result, err := runner.Run(context.Background(), role, prompt, schema)
-	if err != nil {
-		artifactDir := filepath.Join(root, "ticket-plan-runs", strings.ReplaceAll(workItem, ":", "-"))
-		if mkdirErr := os.MkdirAll(artifactDir, 0o700); mkdirErr == nil {
-			ref := filepath.Join(artifactDir, fmt.Sprintf("%s-%d-error.txt", role, cycle))
-			if writeErr := os.WriteFile(ref, []byte(err.Error()+"\n"), 0o600); writeErr == nil {
-				_ = gruntime.Record(root, gruntime.Event{WorkItem: workItem, AgentID: id, Role: role, State: "failed", ResultRef: ref})
-				_ = gruntime.Record(root, gruntime.Event{WorkItem: workItem, AgentID: id, Role: role, State: "closed", ResultRef: ref})
-			}
-		}
-		return nil, err
+	ctx := request.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if role == "manager" {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, request.ManagerTimeout)
+		defer cancel()
 	}
 	artifactDir := filepath.Join(root, "ticket-plan-runs", strings.ReplaceAll(workItem, ":", "-"))
-	if err := os.MkdirAll(artifactDir, 0o700); err != nil {
-		return nil, err
+	if managed, ok := runner.(CodexRunner); ok && role == "manager" {
+		artifactDir = filepath.Join(artifactDir, fmt.Sprintf("%s-%d", role, cycle))
+		result, err := managed.run(ctx, role, prompt, schema, artifactDir, request.ManagerWaitDelay)
+		return finishRole(root, workItem, id, role, cycle, artifactDir, result, err)
+	}
+	result, err := runner.Run(ctx, role, prompt, schema)
+	return finishRole(root, workItem, id, role, cycle, artifactDir, result, err)
+}
+
+func finishRole(root, workItem, id, role string, cycle int, artifactDir string, result []byte, runErr error) ([]byte, error) {
+	if runErr != nil {
+		ref, reconciliation := persistFailureDiagnostic(root, artifactDir, role, cycle, runErr)
+		reconciliation = append(reconciliation, reconcileTerminalEvents(root, workItem, id, role, "failed", ref)...)
+		return nil, joinReconciliation(runErr, reconciliation)
+	}
+	var reconciliation []error
+	if err := makePrivateDirectory(artifactDir); err != nil {
+		reconciliation = append(reconciliation, fmt.Errorf("create result diagnostics: %w", err))
+	}
+	if err := os.Chmod(artifactDir, 0o700); err != nil {
+		reconciliation = append(reconciliation, fmt.Errorf("secure result diagnostics: %w", err))
 	}
 	ref := filepath.Join(artifactDir, fmt.Sprintf("%s-%d.json", role, cycle))
-	if err := os.WriteFile(ref, result, 0o600); err != nil {
-		return nil, err
+	if role == "manager" && strings.HasSuffix(artifactDir, fmt.Sprintf("%s-%d", role, cycle)) {
+		ref = filepath.Join(artifactDir, "result.json")
+	} else if err := writeNewPrivateFile(ref, result); err != nil {
+		reconciliation = append(reconciliation, fmt.Errorf("persist result diagnostics: %w", err))
 	}
-	if err := gruntime.Record(root, gruntime.Event{WorkItem: workItem, AgentID: id, Role: role, State: "completed", ResultRef: ref}); err != nil {
-		return nil, err
+	if len(reconciliation) != 0 {
+		fallback, fallbackErrors := persistFallbackDiagnostic(root, role, cycle, errors.Join(reconciliation...))
+		reconciliation = append(reconciliation, fallbackErrors...)
+		if fallback != "" {
+			ref = fallback
+		}
 	}
-	if err := gruntime.Record(root, gruntime.Event{WorkItem: workItem, AgentID: id, Role: role, State: "closed", ResultRef: ref}); err != nil {
+	reconciliation = append(reconciliation, reconcileTerminalEvents(root, workItem, id, role, "completed", ref)...)
+	if err := joinReconciliation(nil, reconciliation); err != nil {
 		return nil, err
 	}
 	return result, nil
+}
+
+// persistFailureDiagnostic records the original run error. If the primary
+// manager artifact cannot be written, it uses a real, private fallback rather
+// than inventing a diagnostic reference.
+func persistFailureDiagnostic(root, artifactDir, role string, cycle int, runErr error) (string, []error) {
+	ref := filepath.Join(artifactDir, fmt.Sprintf("%s-%d-error-%d.txt", role, cycle, time.Now().UnixNano()))
+	if err := makePrivateDirectory(artifactDir); err != nil {
+		return failureFallback(root, role, cycle, runErr, fmt.Errorf("create failure diagnostics: %w", err))
+	}
+	if err := os.Chmod(artifactDir, 0o700); err != nil {
+		return failureFallback(root, role, cycle, runErr, fmt.Errorf("secure failure diagnostics: %w", err))
+	}
+	if err := writeNewPrivateFile(ref, []byte(gruntime.Redact(runErr.Error())+"\n")); err != nil {
+		return failureFallback(root, role, cycle, runErr, fmt.Errorf("persist failure diagnostics: %w", err))
+	}
+	return ref, nil
+}
+
+func failureFallback(root, role string, cycle int, runErr, primary error) (string, []error) {
+	ref, fallbackErrors := persistFallbackDiagnostic(root, role, cycle, errors.Join(runErr, primary))
+	return ref, append([]error{primary}, fallbackErrors...)
+}
+
+func persistFallbackDiagnostic(root, role string, cycle int, diagnostic error) (string, []error) {
+	dir := filepath.Join(root, "ticket-plan-failures")
+	if err := makePrivateDirectory(dir); err != nil {
+		return "", []error{fmt.Errorf("create fallback diagnostics: %w", err)}
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return "", []error{fmt.Errorf("secure fallback diagnostics: %w", err)}
+	}
+	ref := filepath.Join(dir, fmt.Sprintf("%s-%d-error-%d.txt", role, cycle, time.Now().UnixNano()))
+	if err := writeNewPrivateFile(ref, []byte(gruntime.Redact(diagnostic.Error())+"\n")); err != nil {
+		return "", []error{fmt.Errorf("persist fallback diagnostics: %w", err)}
+	}
+	return ref, nil
+}
+
+// reconcileTerminalEvents makes all terminal attempts even when a preceding
+// diagnostic or ledger write fails. A failed close gets one bounded retry; no
+// work is re-dispatched during reconciliation.
+func reconcileTerminalEvents(root, workItem, id, role, state, ref string) []error {
+	var reconciliation []error
+	if err := recordExecutionEvent(root, gruntime.Event{WorkItem: workItem, AgentID: id, Role: role, State: state, ResultRef: ref}); err != nil {
+		reconciliation = append(reconciliation, fmt.Errorf("record %s state: %w", state, err))
+	}
+	closeEvent := gruntime.Event{WorkItem: workItem, AgentID: id, Role: role, State: "closed", ResultRef: ref}
+	if err := recordExecutionEvent(root, closeEvent); err != nil {
+		reconciliation = append(reconciliation, fmt.Errorf("record closed state: %w", err))
+		if retryErr := recordExecutionEvent(root, closeEvent); retryErr != nil {
+			reconciliation = append(reconciliation, fmt.Errorf("retry closed state: %w", retryErr))
+		}
+	}
+	return reconciliation
+}
+
+func joinReconciliation(original error, reconciliation []error) error {
+	if len(reconciliation) == 0 {
+		return original
+	}
+	errorsToJoin := make([]error, 0, len(reconciliation)+1)
+	if original != nil {
+		errorsToJoin = append(errorsToJoin, original)
+	}
+	errorsToJoin = append(errorsToJoin, reconciliation...)
+	return errors.Join(errorsToJoin...)
+}
+
+func openNewPrivateFile(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+}
+
+func writeNewPrivateFile(path string, data []byte) error {
+	file, err := openNewPrivateFile(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	_, err = file.Write(data)
+	return err
 }
 
 type reviewResult struct {
