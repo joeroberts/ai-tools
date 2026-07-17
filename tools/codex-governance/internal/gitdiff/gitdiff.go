@@ -15,7 +15,7 @@ type Change struct {
 }
 
 func Changes(repoRoot, baseSHA, headSHA string) ([]Change, error) {
-	command := exec.Command("git", "diff", "--numstat", baseSHA+"..."+headSHA)
+	command := exec.Command("git", "diff", "--relative", "--numstat", baseSHA+"..."+headSHA)
 	command.Dir = filepath.Clean(repoRoot)
 	output, err := command.Output()
 	if err != nil {
@@ -51,7 +51,7 @@ func Changes(repoRoot, baseSHA, headSHA string) ([]Change, error) {
 // files are rejected so a caller cannot accidentally omit them from scope and
 // review-budget accounting.
 func WorkingChanges(repoRoot string) ([]Change, error) {
-	command := exec.Command("git", "diff", "--numstat", "HEAD")
+	command := exec.Command("git", "diff", "--relative", "--numstat", "HEAD")
 	command.Dir = filepath.Clean(repoRoot)
 	output, err := command.Output()
 	if err != nil {
