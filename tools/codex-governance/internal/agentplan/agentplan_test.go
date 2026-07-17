@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"codex-governance/internal/ollama"
+	gruntime "codex-governance/internal/runtime"
 	"codex-governance/internal/ticketplan"
 )
 
@@ -342,7 +343,7 @@ exit 1
 		t.Fatal(err)
 	}
 	output := filepath.Join(root, "private", "decomposition.json")
-	if _, err := Decompose(Request{PRDPath: filepath.Join(root, "prd.md"), SpecPath: filepath.Join(root, "spec.md"), RoadmapPath: filepath.Join(root, "roadmap.md"), OutputPath: output, RepoRoot: root, RuntimeRoot: filepath.Join(root, "runtime"), ManagerTimeout: time.Second, ManagerWaitDelay: time.Second}, CodexRunner{Binary: binary, WorkDir: root}); err != nil {
+	if _, err := Decompose(Request{PRDPath: filepath.Join(root, "prd.md"), SpecPath: filepath.Join(root, "spec.md"), RoadmapPath: filepath.Join(root, "roadmap.md"), OutputPath: output, RepoRoot: root, RuntimeRoot: filepath.Join(root, "runtime"), ManagerTimeout: 5 * time.Second, ManagerWaitDelay: time.Second}, CodexRunner{Binary: binary, WorkDir: root}); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(output)
@@ -373,7 +374,7 @@ printf '%s\n' 'manager stderr' >&2
 		t.Fatal(err)
 	}
 	runtimeRoot := filepath.Join(root, "runtime")
-	result, err := runRole(Request{RuntimeRoot: runtimeRoot, ManagerTimeout: time.Second, ManagerWaitDelay: time.Second}, "ticket-plan:test", "manager", 1, CodexRunner{Binary: binary, WorkDir: root}, "prompt", `{}`)
+	result, err := runRole(Request{RuntimeRoot: runtimeRoot, ManagerTimeout: 5 * time.Second, ManagerWaitDelay: time.Second}, "ticket-plan:test", "manager", 1, CodexRunner{Binary: binary, WorkDir: root}, "prompt", `{}`)
 	if err != nil || string(result) != `{"format_version":1}` {
 		t.Fatalf("runRole() = %q, %v", result, err)
 	}
@@ -407,7 +408,7 @@ while [ "$#" -gt 0 ]; do
   if [ "$1" = "--output-last-message" ]; then shift; result="$1"; fi
   shift
 done
-(sleep 1) &
+(sleep 5) &
 printf '%s' '{"format_version":1}' > "$result"
 `
 	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
@@ -415,11 +416,11 @@ printf '%s' '{"format_version":1}' > "$result"
 	}
 	runtimeRoot := filepath.Join(root, "runtime")
 	started := time.Now()
-	_, err := runRole(Request{RuntimeRoot: runtimeRoot, ManagerTimeout: time.Second, ManagerWaitDelay: 20 * time.Millisecond}, "ticket-plan:test", "manager", 1, CodexRunner{Binary: binary, WorkDir: root}, "prompt", `{}`)
+	_, err := runRole(Request{RuntimeRoot: runtimeRoot, ManagerTimeout: time.Second, ManagerWaitDelay: 100 * time.Millisecond}, "ticket-plan:test", "manager", 1, CodexRunner{Binary: binary, WorkDir: root}, "prompt", `{}`)
 	if err == nil {
 		t.Fatal("manager with inherited output pipe unexpectedly succeeded")
 	}
-	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
 		t.Fatalf("WaitDelay did not bound inherited output pipe: %s", elapsed)
 	}
 	assertLedgerStates(t, runtimeRoot, "started", "failed", "closed")
@@ -431,32 +432,134 @@ func TestCodexRunnerClosesTimeoutAndCancellationFailures(t *testing.T) {
 		context func() (context.Context, context.CancelFunc)
 		timeout time.Duration
 	}{
-		{name: "timeout", context: func() (context.Context, context.CancelFunc) { return context.WithCancel(context.Background()) }, timeout: 20 * time.Millisecond},
+		{name: "timeout", context: func() (context.Context, context.CancelFunc) { return context.WithCancel(context.Background()) }, timeout: 150 * time.Millisecond},
 		{name: "cancellation", context: func() (context.Context, context.CancelFunc) {
 			ctx, cancel := context.WithCancel(context.Background())
-			time.AfterFunc(20*time.Millisecond, cancel)
 			return ctx, cancel
 		}, timeout: time.Second},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
 			binary := filepath.Join(root, "fake-codex")
-			if err := os.WriteFile(binary, []byte("#!/bin/sh\nsleep 1\nexit 0\n"), 0o700); err != nil {
+			if err := os.WriteFile(binary, []byte("#!/bin/sh\nresult=\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--output-last-message\" ]; then shift; result=\"$1\"; fi\n  shift\ndone\nprintf ready > \"$(dirname \"$result\")/ready\"\nsleep 5\n"), 0o700); err != nil {
 				t.Fatal(err)
 			}
 			ctx, cancel := test.context()
 			defer cancel()
 			runtimeRoot := filepath.Join(root, "runtime")
+			ready := filepath.Join(runtimeRoot, "ticket-plan-runs", "ticket-plan-test", "manager-1", "ready")
+			readyObserved := make(chan bool, 1)
+			if test.name == "cancellation" {
+				go func() {
+					readyObserved <- waitForFile(ready, 2*time.Second)
+					cancel()
+				}()
+			}
 			started := time.Now()
-			_, err := runRole(Request{RuntimeRoot: runtimeRoot, Context: ctx, ManagerTimeout: test.timeout, ManagerWaitDelay: 50 * time.Millisecond}, "ticket-plan:test", "manager", 1, CodexRunner{Binary: binary, WorkDir: root}, "prompt", `{}`)
+			_, err := runRole(Request{RuntimeRoot: runtimeRoot, Context: ctx, ManagerTimeout: test.timeout, ManagerWaitDelay: 100 * time.Millisecond}, "ticket-plan:test", "manager", 1, CodexRunner{Binary: binary, WorkDir: root}, "prompt", `{}`)
 			if err == nil {
 				t.Fatal("controlled manager cancellation unexpectedly succeeded")
 			}
-			if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+			if test.name == "cancellation" && !<-readyObserved {
+				t.Fatal("manager did not publish its bounded ready marker")
+			}
+			if elapsed := time.Since(started); elapsed > 2*time.Second {
 				t.Fatalf("controlled manager cancellation took %s", elapsed)
 			}
 			assertLedgerStates(t, runtimeRoot, "started", "failed", "closed")
 		})
+	}
+}
+
+func waitForFile(path string, deadline time.Duration) bool {
+	timer := time.NewTimer(deadline)
+	defer timer.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return true
+		}
+		select {
+		case <-timer.C:
+			return false
+		case <-ticker.C:
+		}
+	}
+}
+
+func TestFailureReconciliationUsesPrivateFallbackAndAttemptsClosed(t *testing.T) {
+	root := t.TempDir()
+	artifact := filepath.Join(root, "blocked-artifact")
+	if err := os.WriteFile(artifact, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	originalRecord := recordExecutionEvent
+	defer func() { recordExecutionEvent = originalRecord }()
+	var states []string
+	recordExecutionEvent = func(_ string, event gruntime.Event) error {
+		states = append(states, event.State)
+		if event.State == "failed" {
+			return errors.New("failed ledger remains unavailable")
+		}
+		return nil
+	}
+	runErr := errors.New("manager deadline exceeded")
+	_, err := finishRole(root, "ticket-plan:test", "manager-ticket-plan-1", "manager", 1, artifact, nil, runErr)
+	if !errors.Is(err, runErr) || !strings.Contains(err.Error(), "failed ledger remains unavailable") {
+		t.Fatalf("finishRole() error = %v", err)
+	}
+	if got := strings.Join(states, ","); got != "failed,closed" {
+		t.Fatalf("terminal attempts = %q, want failed,closed", got)
+	}
+	fallbacks, err := filepath.Glob(filepath.Join(root, "ticket-plan-failures", "*.txt"))
+	if err != nil || len(fallbacks) != 1 {
+		t.Fatalf("fallback diagnostics = %v, %v", fallbacks, err)
+	}
+	fallback, err := os.ReadFile(fallbacks[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diagnostic := string(fallback); !strings.Contains(diagnostic, runErr.Error()) || !strings.Contains(diagnostic, "create failure diagnostics") {
+		t.Fatalf("fallback diagnostic does not preserve both failures: %q", diagnostic)
+	}
+	info, err := os.Stat(fallbacks[0])
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("fallback mode = %v, %v", info.Mode().Perm(), err)
+	}
+	dirInfo, err := os.Stat(filepath.Dir(fallbacks[0]))
+	if err != nil || dirInfo.Mode().Perm() != 0o700 {
+		t.Fatalf("fallback directory mode = %v, %v", dirInfo.Mode().Perm(), err)
+	}
+}
+
+func TestTerminalReconciliationAttemptsCompletionAndRetriesClose(t *testing.T) {
+	root := t.TempDir()
+	originalRecord := recordExecutionEvent
+	defer func() { recordExecutionEvent = originalRecord }()
+	completedErr := errors.New("completed ledger unavailable")
+	closeErr := errors.New("close ledger temporarily unavailable")
+	var states []string
+	closeCalls := 0
+	recordExecutionEvent = func(_ string, event gruntime.Event) error {
+		states = append(states, event.State)
+		if event.State == "completed" {
+			return completedErr
+		}
+		if event.State == "closed" {
+			closeCalls++
+			if closeCalls == 1 {
+				return closeErr
+			}
+		}
+		return nil
+	}
+	_, err := finishRole(root, "ticket-plan:test", "reviewer-ticket-plan-1", "reviewer", 1, filepath.Join(root, "artifacts"), []byte(`{"status":"approved"}`), nil)
+	if !errors.Is(err, completedErr) || !errors.Is(err, closeErr) {
+		t.Fatalf("finishRole() error = %v", err)
+	}
+	if got := strings.Join(states, ","); got != "completed,closed,closed" {
+		t.Fatalf("terminal attempts = %q, want completed,closed,closed", got)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -30,6 +31,8 @@ type Request struct {
 type Result struct{ PlanPath, WorkItem string }
 
 var marshalDecomposition = json.MarshalIndent
+
+var recordExecutionEvent = gruntime.Record
 
 type Runner interface {
 	Run(context.Context, string, string, string) ([]byte, error)
@@ -549,7 +552,7 @@ func validateManagerLifecycle(request Request) error {
 func runRole(request Request, workItem, role string, cycle int, runner Runner, prompt, schema string) ([]byte, error) {
 	root := request.RuntimeRoot
 	id := fmt.Sprintf("%s-ticket-plan-%d", role, cycle)
-	if err := gruntime.Record(root, gruntime.Event{WorkItem: workItem, AgentID: id, Role: role, State: "started"}); err != nil {
+	if err := recordExecutionEvent(root, gruntime.Event{WorkItem: workItem, AgentID: id, Role: role, State: "started"}); err != nil {
 		return nil, err
 	}
 	ctx := request.Context
@@ -573,43 +576,102 @@ func runRole(request Request, workItem, role string, cycle int, runner Runner, p
 
 func finishRole(root, workItem, id, role string, cycle int, artifactDir string, result []byte, runErr error) ([]byte, error) {
 	if runErr != nil {
-		if err := makePrivateDirectory(artifactDir); err != nil {
-			return nil, fmt.Errorf("%w (create failure diagnostics: %v)", runErr, err)
-		}
-		if err := os.Chmod(artifactDir, 0o700); err != nil {
-			return nil, fmt.Errorf("%w (secure failure diagnostics: %v)", runErr, err)
-		}
-		ref := filepath.Join(artifactDir, fmt.Sprintf("%s-%d-error-%d.txt", role, cycle, time.Now().UnixNano()))
-		if err := writeNewPrivateFile(ref, []byte(gruntime.Redact(runErr.Error())+"\n")); err != nil {
-			return nil, fmt.Errorf("%w (persist failure diagnostics: %v)", runErr, err)
-		}
-		if err := gruntime.Record(root, gruntime.Event{WorkItem: workItem, AgentID: id, Role: role, State: "failed", ResultRef: ref}); err != nil {
-			return nil, fmt.Errorf("%w (record failed state: %v)", runErr, err)
-		}
-		if err := gruntime.Record(root, gruntime.Event{WorkItem: workItem, AgentID: id, Role: role, State: "closed", ResultRef: ref}); err != nil {
-			return nil, fmt.Errorf("%w (record closed state: %v)", runErr, err)
-		}
-		return nil, runErr
+		ref, reconciliation := persistFailureDiagnostic(root, artifactDir, role, cycle, runErr)
+		reconciliation = append(reconciliation, reconcileTerminalEvents(root, workItem, id, role, "failed", ref)...)
+		return nil, joinReconciliation(runErr, reconciliation)
 	}
+	var reconciliation []error
 	if err := makePrivateDirectory(artifactDir); err != nil {
-		return nil, err
+		reconciliation = append(reconciliation, fmt.Errorf("create result diagnostics: %w", err))
 	}
 	if err := os.Chmod(artifactDir, 0o700); err != nil {
-		return nil, err
+		reconciliation = append(reconciliation, fmt.Errorf("secure result diagnostics: %w", err))
 	}
 	ref := filepath.Join(artifactDir, fmt.Sprintf("%s-%d.json", role, cycle))
 	if role == "manager" && strings.HasSuffix(artifactDir, fmt.Sprintf("%s-%d", role, cycle)) {
 		ref = filepath.Join(artifactDir, "result.json")
 	} else if err := writeNewPrivateFile(ref, result); err != nil {
-		return nil, err
+		reconciliation = append(reconciliation, fmt.Errorf("persist result diagnostics: %w", err))
 	}
-	if err := gruntime.Record(root, gruntime.Event{WorkItem: workItem, AgentID: id, Role: role, State: "completed", ResultRef: ref}); err != nil {
-		return nil, err
+	if len(reconciliation) != 0 {
+		fallback, fallbackErrors := persistFallbackDiagnostic(root, role, cycle, errors.Join(reconciliation...))
+		reconciliation = append(reconciliation, fallbackErrors...)
+		if fallback != "" {
+			ref = fallback
+		}
 	}
-	if err := gruntime.Record(root, gruntime.Event{WorkItem: workItem, AgentID: id, Role: role, State: "closed", ResultRef: ref}); err != nil {
+	reconciliation = append(reconciliation, reconcileTerminalEvents(root, workItem, id, role, "completed", ref)...)
+	if err := joinReconciliation(nil, reconciliation); err != nil {
 		return nil, err
 	}
 	return result, nil
+}
+
+// persistFailureDiagnostic records the original run error. If the primary
+// manager artifact cannot be written, it uses a real, private fallback rather
+// than inventing a diagnostic reference.
+func persistFailureDiagnostic(root, artifactDir, role string, cycle int, runErr error) (string, []error) {
+	ref := filepath.Join(artifactDir, fmt.Sprintf("%s-%d-error-%d.txt", role, cycle, time.Now().UnixNano()))
+	if err := makePrivateDirectory(artifactDir); err != nil {
+		return failureFallback(root, role, cycle, runErr, fmt.Errorf("create failure diagnostics: %w", err))
+	}
+	if err := os.Chmod(artifactDir, 0o700); err != nil {
+		return failureFallback(root, role, cycle, runErr, fmt.Errorf("secure failure diagnostics: %w", err))
+	}
+	if err := writeNewPrivateFile(ref, []byte(gruntime.Redact(runErr.Error())+"\n")); err != nil {
+		return failureFallback(root, role, cycle, runErr, fmt.Errorf("persist failure diagnostics: %w", err))
+	}
+	return ref, nil
+}
+
+func failureFallback(root, role string, cycle int, runErr, primary error) (string, []error) {
+	ref, fallbackErrors := persistFallbackDiagnostic(root, role, cycle, errors.Join(runErr, primary))
+	return ref, append([]error{primary}, fallbackErrors...)
+}
+
+func persistFallbackDiagnostic(root, role string, cycle int, diagnostic error) (string, []error) {
+	dir := filepath.Join(root, "ticket-plan-failures")
+	if err := makePrivateDirectory(dir); err != nil {
+		return "", []error{fmt.Errorf("create fallback diagnostics: %w", err)}
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return "", []error{fmt.Errorf("secure fallback diagnostics: %w", err)}
+	}
+	ref := filepath.Join(dir, fmt.Sprintf("%s-%d-error-%d.txt", role, cycle, time.Now().UnixNano()))
+	if err := writeNewPrivateFile(ref, []byte(gruntime.Redact(diagnostic.Error())+"\n")); err != nil {
+		return "", []error{fmt.Errorf("persist fallback diagnostics: %w", err)}
+	}
+	return ref, nil
+}
+
+// reconcileTerminalEvents makes all terminal attempts even when a preceding
+// diagnostic or ledger write fails. A failed close gets one bounded retry; no
+// work is re-dispatched during reconciliation.
+func reconcileTerminalEvents(root, workItem, id, role, state, ref string) []error {
+	var reconciliation []error
+	if err := recordExecutionEvent(root, gruntime.Event{WorkItem: workItem, AgentID: id, Role: role, State: state, ResultRef: ref}); err != nil {
+		reconciliation = append(reconciliation, fmt.Errorf("record %s state: %w", state, err))
+	}
+	closeEvent := gruntime.Event{WorkItem: workItem, AgentID: id, Role: role, State: "closed", ResultRef: ref}
+	if err := recordExecutionEvent(root, closeEvent); err != nil {
+		reconciliation = append(reconciliation, fmt.Errorf("record closed state: %w", err))
+		if retryErr := recordExecutionEvent(root, closeEvent); retryErr != nil {
+			reconciliation = append(reconciliation, fmt.Errorf("retry closed state: %w", retryErr))
+		}
+	}
+	return reconciliation
+}
+
+func joinReconciliation(original error, reconciliation []error) error {
+	if len(reconciliation) == 0 {
+		return original
+	}
+	errorsToJoin := make([]error, 0, len(reconciliation)+1)
+	if original != nil {
+		errorsToJoin = append(errorsToJoin, original)
+	}
+	errorsToJoin = append(errorsToJoin, reconciliation...)
+	return errors.Join(errorsToJoin...)
 }
 
 func openNewPrivateFile(path string) (*os.File, error) {
