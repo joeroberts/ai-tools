@@ -524,12 +524,18 @@ func TestFailureReconciliationUsesPrivateFallbackAndAttemptsClosed(t *testing.T)
 		t.Fatalf("fallback diagnostic does not preserve both failures: %q", diagnostic)
 	}
 	info, err := os.Stat(fallbacks[0])
-	if err != nil || info.Mode().Perm() != 0o600 {
-		t.Fatalf("fallback mode = %v, %v", info.Mode().Perm(), err)
+	if err != nil {
+		t.Fatalf("stat fallback diagnostic: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("fallback mode = %v, want 0600", info.Mode().Perm())
 	}
 	dirInfo, err := os.Stat(filepath.Dir(fallbacks[0]))
-	if err != nil || dirInfo.Mode().Perm() != 0o700 {
-		t.Fatalf("fallback directory mode = %v, %v", dirInfo.Mode().Perm(), err)
+	if err != nil {
+		t.Fatalf("stat fallback diagnostic directory: %v", err)
+	}
+	if dirInfo.Mode().Perm() != 0o700 {
+		t.Fatalf("fallback directory mode = %v, want 0700", dirInfo.Mode().Perm())
 	}
 }
 
