@@ -557,6 +557,7 @@ func planSchema(constraints Constraints) string {
 	files, lines := []int{}, []int{}
 	maxPaths, maxComponents, maxDependencies := 0, 0, 0
 	maxNonGoals, maxAcceptance, maxValidation, maxReferences := 1, 1, 1, 1
+	nonGoals, acceptanceCriteria, validationPlan := []string{}, []string{}, []string{}
 	for _, subtask := range constraints.Subtasks {
 		ids = append(ids, subtask.ID)
 		phases = append(phases, subtask.Phase)
@@ -568,6 +569,9 @@ func planSchema(constraints Constraints) string {
 		maxDependencies = max(maxDependencies, len(subtask.Dependencies))
 		maxReferences = max(maxReferences, largestTraceSet(subtask.Traceability))
 		if source := subtask.SourceDerived; source != nil {
+			nonGoals = append(nonGoals, source.NonGoals...)
+			acceptanceCriteria = append(acceptanceCriteria, source.AcceptanceCriteria...)
+			validationPlan = append(validationPlan, source.ValidationPlan...)
 			maxNonGoals = max(maxNonGoals, len(source.NonGoals))
 			maxAcceptance = max(maxAcceptance, len(source.AcceptanceCriteria))
 			maxValidation = max(maxValidation, len(source.ValidationPlan))
@@ -576,7 +580,7 @@ func planSchema(constraints Constraints) string {
 	}
 	if constraints.Story != nil {
 		count := len(constraints.Story.AcceptanceCriteria)
-		properties["story"].(map[string]any)["properties"].(map[string]any)["acceptance_criteria"] = boundedStringArray(nil, count, count)
+		properties["story"].(map[string]any)["properties"].(map[string]any)["acceptance_criteria"] = boundedStringArray(constraints.Story.AcceptanceCriteria, count, count)
 		maxReferences = max(maxReferences, largestTraceSet(constraints.Story.Traceability))
 	}
 
@@ -591,9 +595,9 @@ func planSchema(constraints Constraints) string {
 	// from the approved dependency arrays. minItems remains zero so an initial
 	// slice stays valid when a later slice has dependencies.
 	subtaskProperties["dependencies"] = boundedStringArray(ids, 0, maxDependencies)
-	boundArray(subtaskProperties["non_goals"], maxNonGoals)
-	boundArray(subtaskProperties["acceptance_criteria"], maxAcceptance)
-	boundArray(subtaskProperties["validation_plan"], maxValidation)
+	subtaskProperties["non_goals"] = boundedStringArray(nonGoals, 1, maxNonGoals)
+	subtaskProperties["acceptance_criteria"] = boundedStringArray(acceptanceCriteria, 1, maxAcceptance)
+	subtaskProperties["validation_plan"] = boundedStringArray(validationPlan, 1, maxValidation)
 	boundArray(schema["$defs"].(map[string]any)["references"], maxReferences)
 
 	encoded, err := json.Marshal(schema)

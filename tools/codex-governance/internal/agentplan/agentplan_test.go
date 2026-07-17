@@ -24,6 +24,14 @@ func TestPlanSchemasUseApprovedEnumsAndBoundedArrays(t *testing.T) {
 		AcceptedPaths               []string `json:"accepted_paths"`
 		RejectedPreAssignmentPaths  []string `json:"rejected_pre_assignment_paths"`
 		RejectedPostAssignmentPaths []string `json:"rejected_post_assignment_paths"`
+		AcceptedStoryAcceptance     []string `json:"accepted_story_acceptance_criteria"`
+		RejectedStoryAcceptance     []string `json:"rejected_story_acceptance_criteria"`
+		AcceptedNonGoals            []string `json:"accepted_non_goals"`
+		RejectedNonGoals            []string `json:"rejected_non_goals"`
+		AcceptedAcceptance          []string `json:"accepted_acceptance_criteria"`
+		RejectedAcceptance          []string `json:"rejected_acceptance_criteria"`
+		AcceptedValidation          []string `json:"accepted_validation_plan"`
+		RejectedValidation          []string `json:"rejected_validation_plan"`
 	}
 	if err := json.Unmarshal(data, &fixtures); err != nil {
 		t.Fatal(err)
@@ -31,16 +39,31 @@ func TestPlanSchemasUseApprovedEnumsAndBoundedArrays(t *testing.T) {
 	constraints := Constraints{
 		PathPool:     fixtures.AcceptedPaths,
 		ReviewBudget: ticketplan.ReviewBudget{MaxChangedFiles: 12, MaxChangedLines: 900, Components: []string{"schema", "lifecycle"}},
-		Story: &StoryConstraints{AcceptanceCriteria: []string{"schema works", "lifecycle works"}, Traceability: ticketplan.TraceMap{
+		Story: &StoryConstraints{AcceptanceCriteria: fixtures.AcceptedStoryAcceptance, Traceability: ticketplan.TraceMap{
 			"acceptance_criteria": {{Source: "prd"}, {Source: "spec"}},
 		}},
 		Subtasks: []SubtaskConstraints{
-			{ID: "schema", Phase: "Phase 1", ChangeClass: "standard", AllowedPaths: []string{"AGENTS.md", "internal/agentplan"}, ReviewBudget: ticketplan.ReviewBudget{MaxChangedFiles: 6, MaxChangedLines: 450, Components: []string{"schema"}}, Dependencies: []string{}, SourceDerived: &SourceDerivedConstraints{NonGoals: []string{"no lifecycle"}, AcceptanceCriteria: []string{"root paths work", "invalid paths fail"}, ValidationPlan: []string{"go test"}}},
-			{ID: "lifecycle", Phase: "Phase 2", ChangeClass: "standard", AllowedPaths: []string{"internal/agentplan"}, ReviewBudget: ticketplan.ReviewBudget{MaxChangedFiles: 5, MaxChangedLines: 400, Components: []string{"lifecycle"}}, Dependencies: []string{"schema"}, SourceDerived: &SourceDerivedConstraints{NonGoals: []string{"no retry"}, AcceptanceCriteria: []string{"timeouts close"}, ValidationPlan: []string{"go test"}}},
+			{ID: "schema", Phase: "Phase 1", ChangeClass: "standard", AllowedPaths: []string{"AGENTS.md", "internal/agentplan"}, ReviewBudget: ticketplan.ReviewBudget{MaxChangedFiles: 6, MaxChangedLines: 450, Components: []string{"schema"}}, Dependencies: []string{}, SourceDerived: &SourceDerivedConstraints{NonGoals: fixtures.AcceptedNonGoals[:1], AcceptanceCriteria: fixtures.AcceptedAcceptance[:2], ValidationPlan: fixtures.AcceptedValidation}},
+			{ID: "lifecycle", Phase: "Phase 2", ChangeClass: "standard", AllowedPaths: []string{"internal/agentplan"}, ReviewBudget: ticketplan.ReviewBudget{MaxChangedFiles: 5, MaxChangedLines: 400, Components: []string{"lifecycle"}}, Dependencies: []string{"schema"}, SourceDerived: &SourceDerivedConstraints{NonGoals: fixtures.AcceptedNonGoals[1:], AcceptanceCriteria: fixtures.AcceptedAcceptance[2:], ValidationPlan: fixtures.AcceptedValidation}},
 		},
 	}
 
-	post := schemaProperties(t, planSchema(constraints))
+	postSchema := planSchema(constraints)
+	post := schemaProperties(t, postSchema)
+	story := schemaStoryProperties(t, postSchema)
+	for _, value := range fixtures.AcceptedStoryAcceptance {
+		if !schemaAllowsArray(story["acceptance_criteria"].(map[string]any), []string{value, value}) {
+			t.Errorf("approved story acceptance criterion rejected: %q", value)
+		}
+	}
+	for _, value := range fixtures.RejectedStoryAcceptance {
+		if schemaAllowsArray(story["acceptance_criteria"].(map[string]any), []string{value, value}) {
+			t.Errorf("unapproved story acceptance criterion accepted: %q", value)
+		}
+	}
+	if schemaAllowsArray(story["acceptance_criteria"].(map[string]any), append(fixtures.AcceptedStoryAcceptance, fixtures.AcceptedStoryAcceptance[0])) {
+		t.Fatal("story acceptance criteria accepted an array over its approved bound")
+	}
 	if !schemaAllowsString(post["id"].(map[string]any), "schema") || schemaAllowsString(post["id"].(map[string]any), "outside") {
 		t.Fatal("Subtask ID enum does not match the assigned ID set")
 	}
@@ -72,6 +95,31 @@ func TestPlanSchemasUseApprovedEnumsAndBoundedArrays(t *testing.T) {
 	if !schemaAllowsArray(dependencies, nil) || !schemaAllowsArray(dependencies, []string{"schema"}) || schemaAllowsArray(dependencies, []string{"outside"}) || schemaAllowsArray(dependencies, []string{"schema", "lifecycle"}) {
 		t.Fatal("dependency enum or zero/one-item bounds do not match approved constraints")
 	}
+	for _, test := range []struct {
+		name     string
+		schema   map[string]any
+		accepted []string
+		rejected []string
+		over     []string
+	}{
+		{"non-goal", post["non_goals"].(map[string]any), fixtures.AcceptedNonGoals, fixtures.RejectedNonGoals, []string{fixtures.AcceptedNonGoals[0], fixtures.AcceptedNonGoals[1]}},
+		{"acceptance criterion", post["acceptance_criteria"].(map[string]any), fixtures.AcceptedAcceptance, fixtures.RejectedAcceptance, append(fixtures.AcceptedAcceptance, fixtures.AcceptedAcceptance[0])},
+		{"validation step", post["validation_plan"].(map[string]any), fixtures.AcceptedValidation, fixtures.RejectedValidation, append(fixtures.AcceptedValidation, fixtures.AcceptedValidation[0])},
+	} {
+		for _, value := range test.accepted {
+			if !schemaAllowsArray(test.schema, []string{value}) {
+				t.Errorf("approved %s rejected: %q", test.name, value)
+			}
+		}
+		for _, value := range test.rejected {
+			if schemaAllowsArray(test.schema, []string{value}) {
+				t.Errorf("unapproved %s accepted: %q", test.name, value)
+			}
+		}
+		if schemaAllowsArray(test.schema, test.over) {
+			t.Errorf("%s array over approved bound accepted: %#v", test.name, test.over)
+		}
+	}
 
 	preSchema := planSchemaRange(1, 8)
 	pre := schemaProperties(t, preSchema)
@@ -95,6 +143,15 @@ func schemaProperties(t *testing.T, value string) map[string]any {
 		t.Fatalf("parse schema: %v", err)
 	}
 	return schema["properties"].(map[string]any)["subtasks"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)
+}
+
+func schemaStoryProperties(t *testing.T, value string) map[string]any {
+	t.Helper()
+	var schema map[string]any
+	if err := json.Unmarshal([]byte(value), &schema); err != nil {
+		t.Fatalf("parse schema: %v", err)
+	}
+	return schema["properties"].(map[string]any)["story"].(map[string]any)["properties"].(map[string]any)
 }
 
 func schemaAllowsString(schema map[string]any, value string) bool {
