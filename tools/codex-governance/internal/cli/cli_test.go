@@ -309,7 +309,7 @@ func TestRunUnknownCommand(t *testing.T) {
 func TestRunJiraPlanGenerateDryRun(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	code := Run([]string{"jira", "plan", "generate", "--prd", "prd.md", "--spec", "spec.md", "--roadmap", "roadmap.md", "--constraints", "constraints.json", "--output", "plan.json", "--dry-run"}, &stdout, &stderr)
+	code := Run([]string{"jira", "plan", "generate", "--prd", "prd.md", "--spec", "spec.md", "--roadmap", "roadmap.md", "--constraints", "constraints.json", "--output", "plan.json", "--manager-timeout", "1m", "--manager-wait-delay", "5s", "--dry-run"}, &stdout, &stderr)
 	if code != 0 || !bytes.Contains(stdout.Bytes(), []byte("DRY RUN would dispatch hosted manager and local reviewer/verifier")) {
 		t.Fatalf("generate dry run = %d, stdout=%q, stderr=%q", code, stdout.String(), stderr.String())
 	}
@@ -360,9 +360,34 @@ func TestRunJiraWorkUpdateApproveRequiresCredentials(t *testing.T) {
 func TestRunJiraPlanGenerateVerboseDryRun(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	code := Run([]string{"jira", "plan", "generate", "--prd", "prd.md", "--spec", "spec.md", "--roadmap", "roadmap.md", "--constraints", "constraints.json", "--output", "plan.json", "--dry-run", "--verbose"}, &stdout, &stderr)
+	code := Run([]string{"jira", "plan", "generate", "--prd", "prd.md", "--spec", "spec.md", "--roadmap", "roadmap.md", "--constraints", "constraints.json", "--output", "plan.json", "--manager-timeout", "1m", "--manager-wait-delay", "5s", "--dry-run", "--verbose"}, &stdout, &stderr)
 	if code != 0 || !bytes.Contains(stdout.Bytes(), []byte("DRY RUN would dispatch hosted manager and local reviewer/verifier")) {
 		t.Fatalf("verbose generate dry run = %d, stderr=%q", code, stderr.String())
+	}
+}
+
+func TestRunJiraPlanCommandsRejectInvalidManagerTiming(t *testing.T) {
+	generate := []string{"jira", "plan", "generate", "--prd", "prd.md", "--spec", "spec.md", "--roadmap", "roadmap.md", "--constraints", "constraints.json", "--output", "plan.json", "--dry-run"}
+	decompose := []string{"jira", "plan", "decompose", "--prd", "prd.md", "--spec", "spec.md", "--roadmap", "roadmap.md", "--output", "plan.json"}
+	for _, test := range []struct {
+		name string
+		args []string
+	}{
+		{name: "generate missing", args: generate},
+		{name: "generate zero timeout", args: append(append([]string{}, generate...), "--manager-timeout", "0s", "--manager-wait-delay", "1s")},
+		{name: "generate negative wait", args: append(append([]string{}, generate...), "--manager-timeout", "1s", "--manager-wait-delay=-1s")},
+		{name: "decompose missing", args: decompose},
+		{name: "decompose negative timeout", args: append(append([]string{}, decompose...), "--manager-timeout=-1s", "--manager-wait-delay", "1s")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := Run(test.args, &stdout, &stderr); code != 2 {
+				t.Fatalf("Run() = %d, stdout=%q, stderr=%q", code, stdout.String(), stderr.String())
+			}
+			if !strings.Contains(stderr.String(), "requires positive --manager-timeout and --manager-wait-delay") {
+				t.Fatalf("timing error is not actionable: %q", stderr.String())
+			}
+		})
 	}
 }
 

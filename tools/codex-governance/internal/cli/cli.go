@@ -1,13 +1,16 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"codex-governance/internal/agentplan"
@@ -41,8 +44,8 @@ Usage:
   codex-governance jira export create --story KEY --subtask KEY --signer PATH --output PATH --approve [--repo-root PATH]
   codex-governance jira work update --issue KEY --kind commit|blocker [commit or blocker fields] [--approve]
   codex-governance jira work finalize --issue KEY --pr URL [--approve]
-  codex-governance jira plan decompose --prd PATH --spec PATH --roadmap PATH --output PATH [--repo-root PATH] [--runtime-root PATH] [--codex-bin PATH]
-  codex-governance jira plan generate --prd PATH --spec PATH --roadmap PATH --constraints PATH --output PATH --policy PATH --reviewer-model NAME --verifier-model NAME [--repo-root PATH] [--runtime-root PATH] [--codex-bin PATH] [--dry-run] [--verbose]
+  codex-governance jira plan decompose --prd PATH --spec PATH --roadmap PATH --output PATH --manager-timeout DURATION --manager-wait-delay DURATION [--repo-root PATH] [--runtime-root PATH] [--codex-bin PATH]
+  codex-governance jira plan generate --prd PATH --spec PATH --roadmap PATH --constraints PATH --output PATH --policy PATH --reviewer-model NAME --verifier-model NAME --manager-timeout DURATION --manager-wait-delay DURATION [--repo-root PATH] [--runtime-root PATH] [--codex-bin PATH] [--dry-run] [--verbose]
   codex-governance jira plan validate --plan PATH --contract PATH [--repo-root PATH]
   codex-governance jira plan approve --plan PATH --workflow PATH --approved-by ID --approve [--repo-root PATH]
   codex-governance jira plan create --plan PATH --workflow PATH (--dry-run|--approve) [--result PATH --repo-root PATH]
@@ -577,7 +580,13 @@ func runJiraPlanDecompose(args []string, stdout, stderr io.Writer) int {
 	repoRoot := flags.String("repo-root", ".", "repository root")
 	runtimeRootPath := flags.String("runtime-root", "", "owner-only runtime directory")
 	codexBin := flags.String("codex-bin", "codex", "hosted Codex executable")
+	managerTimeout := flags.Duration("manager-timeout", 0, "positive hosted manager deadline")
+	managerWaitDelay := flags.Duration("manager-wait-delay", 0, "positive hosted manager process wait bound")
 	if err := flags.Parse(args); err != nil || *prd == "" || *spec == "" || *roadmapPath == "" || *output == "" || flags.NArg() != 0 {
+		return 2
+	}
+	if *managerTimeout <= 0 || *managerWaitDelay <= 0 {
+		fmt.Fprintln(stderr, "jira plan decompose requires positive --manager-timeout and --manager-wait-delay values")
 		return 2
 	}
 	if *runtimeRootPath == "" {
@@ -588,7 +597,9 @@ func runJiraPlanDecompose(args []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 	}
-	result, err := agentplan.Decompose(agentplan.Request{PRDPath: *prd, SpecPath: *spec, RoadmapPath: *roadmapPath, OutputPath: *output, RepoRoot: *repoRoot, RuntimeRoot: *runtimeRootPath}, agentplan.CodexRunner{Binary: *codexBin, WorkDir: *repoRoot})
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	result, err := agentplan.Decompose(agentplan.Request{PRDPath: *prd, SpecPath: *spec, RoadmapPath: *roadmapPath, OutputPath: *output, RepoRoot: *repoRoot, RuntimeRoot: *runtimeRootPath, Context: ctx, ManagerTimeout: *managerTimeout, ManagerWaitDelay: *managerWaitDelay}, agentplan.CodexRunner{Binary: *codexBin, WorkDir: *repoRoot})
 	if err != nil {
 		fmt.Fprintf(stderr, "decompose ticket plan: %v\n", err)
 		return 1
@@ -685,9 +696,15 @@ func runJiraPlanGenerate(args []string, stdout, stderr io.Writer) int {
 	policyPath := flags.String("policy", "", "owner-only local Ollama policy")
 	reviewerModel := flags.String("reviewer-model", "", "allowlisted local Ollama reviewer model")
 	verifierModel := flags.String("verifier-model", "", "allowlisted local Ollama verifier model")
+	managerTimeout := flags.Duration("manager-timeout", 0, "positive hosted manager deadline")
+	managerWaitDelay := flags.Duration("manager-wait-delay", 0, "positive hosted manager process wait bound")
 	dryRun := flags.Bool("dry-run", false, "show the governed dispatch without running agents")
 	verbose := flags.Bool("verbose", false, "report orchestration progress without printing agent content")
 	if err := flags.Parse(args); err != nil || *prd == "" || *spec == "" || *roadmapPath == "" || *constraints == "" || *output == "" || flags.NArg() != 0 {
+		return 2
+	}
+	if *managerTimeout <= 0 || *managerWaitDelay <= 0 {
+		fmt.Fprintln(stderr, "jira plan generate requires positive --manager-timeout and --manager-wait-delay values")
 		return 2
 	}
 	if *dryRun {
@@ -712,8 +729,11 @@ func runJiraPlanGenerate(args []string, stdout, stderr io.Writer) int {
 	}
 	request := agentplan.Request{
 		PRDPath: *prd, SpecPath: *spec, RoadmapPath: *roadmapPath, OutputPath: *output, ConstraintsPath: *constraints,
-		RepoRoot: *repoRoot, RuntimeRoot: *runtimeRoot,
+		RepoRoot: *repoRoot, RuntimeRoot: *runtimeRoot, ManagerTimeout: *managerTimeout, ManagerWaitDelay: *managerWaitDelay,
 	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	request.Context = ctx
 	if *verbose {
 		request.Progress = func(message string) { fmt.Fprintln(stderr, message) }
 	}
