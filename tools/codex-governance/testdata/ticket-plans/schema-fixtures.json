@@ -1,0 +1,21 @@
+{
+  "accepted_paths": [
+    "AGENTS.md",
+    "testdata",
+    "internal/agentplan",
+    ".github/workflows"
+  ],
+  "rejected_pre_assignment_paths": [
+    "AGENTS.md, testdata",
+    "../outside",
+    "internal/../outside",
+    "https://example.invalid/path",
+    "internal/*",
+    "line\nbreak"
+  ],
+  "rejected_post_assignment_paths": [
+    "AGENTS.md, testdata",
+    "docs",
+    "https://example.invalid/path"
+  ]
+}

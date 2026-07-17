@@ -2,16 +2,171 @@ package agentplan
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
 	"codex-governance/internal/ollama"
 	"codex-governance/internal/ticketplan"
 )
+
+func TestPlanSchemasUseApprovedEnumsAndBoundedArrays(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "ticket-plans", "schema-fixtures.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixtures struct {
+		AcceptedPaths               []string `json:"accepted_paths"`
+		RejectedPreAssignmentPaths  []string `json:"rejected_pre_assignment_paths"`
+		RejectedPostAssignmentPaths []string `json:"rejected_post_assignment_paths"`
+	}
+	if err := json.Unmarshal(data, &fixtures); err != nil {
+		t.Fatal(err)
+	}
+	constraints := Constraints{
+		PathPool:     fixtures.AcceptedPaths,
+		ReviewBudget: ticketplan.ReviewBudget{MaxChangedFiles: 12, MaxChangedLines: 900, Components: []string{"schema", "lifecycle"}},
+		Story: &StoryConstraints{AcceptanceCriteria: []string{"schema works", "lifecycle works"}, Traceability: ticketplan.TraceMap{
+			"acceptance_criteria": {{Source: "prd"}, {Source: "spec"}},
+		}},
+		Subtasks: []SubtaskConstraints{
+			{ID: "schema", Phase: "Phase 1", ChangeClass: "standard", AllowedPaths: []string{"AGENTS.md", "internal/agentplan"}, ReviewBudget: ticketplan.ReviewBudget{MaxChangedFiles: 6, MaxChangedLines: 450, Components: []string{"schema"}}, Dependencies: []string{}, SourceDerived: &SourceDerivedConstraints{NonGoals: []string{"no lifecycle"}, AcceptanceCriteria: []string{"root paths work", "invalid paths fail"}, ValidationPlan: []string{"go test"}}},
+			{ID: "lifecycle", Phase: "Phase 2", ChangeClass: "standard", AllowedPaths: []string{"internal/agentplan"}, ReviewBudget: ticketplan.ReviewBudget{MaxChangedFiles: 5, MaxChangedLines: 400, Components: []string{"lifecycle"}}, Dependencies: []string{"schema"}, SourceDerived: &SourceDerivedConstraints{NonGoals: []string{"no retry"}, AcceptanceCriteria: []string{"timeouts close"}, ValidationPlan: []string{"go test"}}},
+		},
+	}
+
+	post := schemaProperties(t, planSchema(constraints))
+	if !schemaAllowsString(post["id"].(map[string]any), "schema") || schemaAllowsString(post["id"].(map[string]any), "outside") {
+		t.Fatal("Subtask ID enum does not match the assigned ID set")
+	}
+	if !schemaAllowsString(post["phase"].(map[string]any), "Phase 2") || schemaAllowsString(post["phase"].(map[string]any), "Phase 3") {
+		t.Fatal("phase enum does not match approved phases")
+	}
+	oversizedProtocol := strings.Repeat("tool_event:", 30) + "https://example.invalid/result"
+	for _, path := range fixtures.AcceptedPaths {
+		if !schemaAllowsArray(post["allowed_paths"].(map[string]any), []string{path}) {
+			t.Errorf("approved path rejected: %q", path)
+		}
+	}
+	for _, path := range append(fixtures.RejectedPostAssignmentPaths, oversizedProtocol) {
+		if schemaAllowsArray(post["allowed_paths"].(map[string]any), []string{path}) {
+			t.Errorf("unapproved or oversized path accepted: %q", path)
+		}
+	}
+	if schemaAllowsArray(post["allowed_paths"].(map[string]any), []string{"AGENTS.md", "testdata", "internal/agentplan"}) {
+		t.Fatal("allowed_paths accepted an array over the approved per-Subtask bound")
+	}
+	budget := post["review_budget"].(map[string]any)["properties"].(map[string]any)
+	if !schemaAllowsInteger(budget["max_changed_files"].(map[string]any), 5) || schemaAllowsInteger(budget["max_changed_files"].(map[string]any), 7) {
+		t.Fatal("review budget enum does not match approved values")
+	}
+	if schemaAllowsArray(budget["components"].(map[string]any), []string{"schema", "lifecycle"}) {
+		t.Fatal("components accepted an array over the approved per-Subtask bound")
+	}
+	dependencies := post["dependencies"].(map[string]any)
+	if !schemaAllowsArray(dependencies, nil) || !schemaAllowsArray(dependencies, []string{"schema"}) || schemaAllowsArray(dependencies, []string{"outside"}) || schemaAllowsArray(dependencies, []string{"schema", "lifecycle"}) {
+		t.Fatal("dependency enum or zero/one-item bounds do not match approved constraints")
+	}
+
+	preSchema := planSchemaRange(1, 8)
+	pre := schemaProperties(t, preSchema)
+	for _, path := range fixtures.AcceptedPaths {
+		if !schemaAllowsArray(pre["allowed_paths"].(map[string]any), []string{path}) {
+			t.Errorf("bounded decomposition schema rejected valid path %q", path)
+		}
+	}
+	for _, path := range append(fixtures.RejectedPreAssignmentPaths, oversizedProtocol) {
+		if schemaAllowsArray(pre["allowed_paths"].(map[string]any), []string{path}) {
+			t.Errorf("bounded decomposition schema accepted invalid path %q", path)
+		}
+	}
+	assertManagerArraysBounded(t, preSchema)
+}
+
+func schemaProperties(t *testing.T, value string) map[string]any {
+	t.Helper()
+	var schema map[string]any
+	if err := json.Unmarshal([]byte(value), &schema); err != nil {
+		t.Fatalf("parse schema: %v", err)
+	}
+	return schema["properties"].(map[string]any)["subtasks"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)
+}
+
+func schemaAllowsString(schema map[string]any, value string) bool {
+	if limit, ok := schema["maxLength"].(float64); ok && len(value) > int(limit) {
+		return false
+	}
+	if pattern, ok := schema["pattern"].(string); ok {
+		matched, err := regexp.MatchString(pattern, value)
+		if err != nil || !matched {
+			return false
+		}
+	}
+	values, ok := schema["enum"].([]any)
+	if !ok {
+		return true
+	}
+	for _, candidate := range values {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
+}
+
+func schemaAllowsInteger(schema map[string]any, value int) bool {
+	for _, candidate := range schema["enum"].([]any) {
+		if candidate == float64(value) {
+			return true
+		}
+	}
+	return false
+}
+
+func schemaAllowsArray(schema map[string]any, values []string) bool {
+	if minimum, ok := schema["minItems"].(float64); ok && len(values) < int(minimum) {
+		return false
+	}
+	if maximum, ok := schema["maxItems"].(float64); ok && len(values) > int(maximum) {
+		return false
+	}
+	items := schema["items"].(map[string]any)
+	for _, value := range values {
+		if !schemaAllowsString(items, value) {
+			return false
+		}
+	}
+	return true
+}
+
+func assertManagerArraysBounded(t *testing.T, value string) {
+	t.Helper()
+	var schema map[string]any
+	if err := json.Unmarshal([]byte(value), &schema); err != nil {
+		t.Fatal(err)
+	}
+	properties := schema["properties"].(map[string]any)
+	subtasks := properties["subtasks"].(map[string]any)
+	subtaskProperties := subtasks["items"].(map[string]any)["properties"].(map[string]any)
+	arrays := []map[string]any{
+		properties["story"].(map[string]any)["properties"].(map[string]any)["acceptance_criteria"].(map[string]any),
+		subtasks,
+		subtaskProperties["review_budget"].(map[string]any)["properties"].(map[string]any)["components"].(map[string]any),
+		subtaskProperties["non_goals"].(map[string]any), subtaskProperties["acceptance_criteria"].(map[string]any),
+		subtaskProperties["validation_plan"].(map[string]any), subtaskProperties["allowed_paths"].(map[string]any),
+		subtaskProperties["dependencies"].(map[string]any), schema["$defs"].(map[string]any)["references"].(map[string]any),
+	}
+	for index, array := range arrays {
+		if _, ok := array["maxItems"].(float64); !ok {
+			t.Errorf("manager output array %d lacks maxItems", index)
+		}
+	}
+}
 
 func TestWriteDecompositionReturnsMarshalError(t *testing.T) {
 	original := marshalDecomposition
