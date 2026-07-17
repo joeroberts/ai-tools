@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"codex-governance/internal/ollama"
@@ -184,7 +185,7 @@ func generateAfterPhase2Approval(request Request, runners Runners) (Result, erro
 		if feedback != "" {
 			prompt = remediationPrompt(sources, catalog, constraints, feedback)
 		}
-		planBytes, err := runRole(request.RuntimeRoot, workItem, "manager", cycle, runners.Manager, prompt, planSchema(len(constraints.Subtasks)))
+		planBytes, err := runRole(request.RuntimeRoot, workItem, "manager", cycle, runners.Manager, prompt, planSchema(constraints))
 		if err != nil {
 			return Result{}, err
 		}
@@ -543,8 +544,117 @@ func remediationPrompt(s ticketplan.Sources, catalog string, constraints Constra
 func reviewPrompt(role string, plan []byte) string {
 	return fmt.Sprintf("You are an independent local %s. Review this ticket plan for source traceability, bounded scope, acceptance criteria, validation, allowed paths, and ADR references. Return only JSON matching {\"status\":\"approved|changes_requested|blocked\",\"summary\":\"concise finding summary\"}; use status approved only if it is ready. Do not write files or Jira. Plan: %s", role, plan)
 }
-func planSchema(subtaskCount int) string {
-	return planSchemaRange(subtaskCount, subtaskCount)
+func planSchema(constraints Constraints) string {
+	var schema map[string]any
+	if err := json.Unmarshal([]byte(planSchemaRange(len(constraints.Subtasks), len(constraints.Subtasks))), &schema); err != nil {
+		panic(fmt.Sprintf("parse static ticket-plan schema: %v", err))
+	}
+	properties := schema["properties"].(map[string]any)
+	subtaskProperties := properties["subtasks"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)
+	budgetProperties := subtaskProperties["review_budget"].(map[string]any)["properties"].(map[string]any)
+
+	ids, phases, classes := []string{}, []string{}, []string{}
+	files, lines := []int{}, []int{}
+	maxPaths, maxComponents, maxDependencies := 0, 0, 0
+	maxNonGoals, maxAcceptance, maxValidation, maxReferences := 1, 1, 1, 1
+	nonGoals, acceptanceCriteria, validationPlan := []string{}, []string{}, []string{}
+	for _, subtask := range constraints.Subtasks {
+		ids = append(ids, subtask.ID)
+		phases = append(phases, subtask.Phase)
+		classes = append(classes, subtask.ChangeClass)
+		files = append(files, subtask.ReviewBudget.MaxChangedFiles)
+		lines = append(lines, subtask.ReviewBudget.MaxChangedLines)
+		maxPaths = max(maxPaths, len(subtask.AllowedPaths))
+		maxComponents = max(maxComponents, len(subtask.ReviewBudget.Components))
+		maxDependencies = max(maxDependencies, len(subtask.Dependencies))
+		maxReferences = max(maxReferences, largestTraceSet(subtask.Traceability))
+		if source := subtask.SourceDerived; source != nil {
+			nonGoals = append(nonGoals, source.NonGoals...)
+			acceptanceCriteria = append(acceptanceCriteria, source.AcceptanceCriteria...)
+			validationPlan = append(validationPlan, source.ValidationPlan...)
+			maxNonGoals = max(maxNonGoals, len(source.NonGoals))
+			maxAcceptance = max(maxAcceptance, len(source.AcceptanceCriteria))
+			maxValidation = max(maxValidation, len(source.ValidationPlan))
+			maxReferences = max(maxReferences, largestTraceSet(source.Traceability))
+		}
+	}
+	if constraints.Story != nil {
+		count := len(constraints.Story.AcceptanceCriteria)
+		properties["story"].(map[string]any)["properties"].(map[string]any)["acceptance_criteria"] = boundedStringArray(constraints.Story.AcceptanceCriteria, count, count)
+		maxReferences = max(maxReferences, largestTraceSet(constraints.Story.Traceability))
+	}
+
+	subtaskProperties["id"] = enumStringSchema(ids)
+	subtaskProperties["phase"] = enumStringSchema(phases)
+	subtaskProperties["change_class"] = enumStringSchema(classes)
+	budgetProperties["max_changed_files"] = enumIntegerSchema(files)
+	budgetProperties["max_changed_lines"] = enumIntegerSchema(lines)
+	budgetProperties["components"] = boundedStringArray(constraints.ReviewBudget.Components, 1, maxComponents)
+	subtaskProperties["allowed_paths"] = boundedStringArray(constraints.PathPool, 1, maxPaths)
+	// Dependency items may name any assigned Subtask, while the maximum comes
+	// from the approved dependency arrays. minItems remains zero so an initial
+	// slice stays valid when a later slice has dependencies.
+	subtaskProperties["dependencies"] = boundedStringArray(ids, 0, maxDependencies)
+	subtaskProperties["non_goals"] = boundedStringArray(nonGoals, 1, maxNonGoals)
+	subtaskProperties["acceptance_criteria"] = boundedStringArray(acceptanceCriteria, 1, maxAcceptance)
+	subtaskProperties["validation_plan"] = boundedStringArray(validationPlan, 1, maxValidation)
+	boundArray(schema["$defs"].(map[string]any)["references"], maxReferences)
+
+	encoded, err := json.Marshal(schema)
+	if err != nil {
+		panic(fmt.Sprintf("serialize ticket-plan schema: %v", err))
+	}
+	return string(encoded)
+}
+
+func enumStringSchema(values []string) map[string]any {
+	return map[string]any{"type": "string", "enum": uniqueSorted(values)}
+}
+
+func enumIntegerSchema(values []int) map[string]any {
+	seen := map[int]bool{}
+	unique := []int{}
+	for _, value := range values {
+		if !seen[value] {
+			seen[value] = true
+			unique = append(unique, value)
+		}
+	}
+	sort.Ints(unique)
+	return map[string]any{"type": "integer", "enum": unique}
+}
+
+func boundedStringArray(values []string, minimum, maximum int) map[string]any {
+	items := map[string]any{"type": "string"}
+	if len(values) > 0 {
+		items["enum"] = uniqueSorted(values)
+	}
+	return map[string]any{"type": "array", "minItems": minimum, "maxItems": maximum, "items": items}
+}
+
+func uniqueSorted(values []string) []string {
+	seen := map[string]bool{}
+	result := []string{}
+	for _, value := range values {
+		if value != "" && !seen[value] {
+			seen[value] = true
+			result = append(result, value)
+		}
+	}
+	sort.Strings(result)
+	return result
+}
+
+func largestTraceSet(trace ticketplan.TraceMap) int {
+	maximum := 0
+	for _, references := range trace {
+		maximum = max(maximum, len(references))
+	}
+	return maximum
+}
+
+func boundArray(value any, maximum int) {
+	value.(map[string]any)["maxItems"] = maximum
 }
 
 func planSchemaRange(minSubtasks, maxSubtasks int) string {
@@ -561,7 +671,7 @@ func planSchemaRange(minSubtasks, maxSubtasks int) string {
     "story":{"type":"object","properties":{
       "summary":{"type":"string"},
       "description":{"type":"string"},
-      "acceptance_criteria":{"type":"array","items":{"type":"string"}},
+      "acceptance_criteria":{"type":"array","minItems":1,"maxItems":64,"items":{"type":"string"}},
       "traceability":{"$ref":"#/$defs/story_traceability"}
     },"required":["summary","description","acceptance_criteria","traceability"],"additionalProperties":false},
     "subtasks":{"type":"array","minItems":%d,"maxItems":%d,"items":{"type":"object","properties":{
@@ -569,14 +679,14 @@ func planSchemaRange(minSubtasks, maxSubtasks int) string {
       "summary":{"type":"string"},
 	      "phase":{"type":"string"},
 	      "change_class":{"type":"string","enum":["trivial","standard","high-risk"]},
-	      "review_budget":{"type":"object","properties":{"max_changed_files":{"type":"integer"},"max_changed_lines":{"type":"integer"},"components":{"type":"array","items":{"type":"string"}}},"required":["max_changed_files","max_changed_lines","components"],"additionalProperties":false},
+	      "review_budget":{"type":"object","properties":{"max_changed_files":{"type":"integer"},"max_changed_lines":{"type":"integer"},"components":{"type":"array","minItems":1,"maxItems":16,"items":{"type":"string"}}},"required":["max_changed_files","max_changed_lines","components"],"additionalProperties":false},
       "scope":{"type":"string"},
-      "non_goals":{"type":"array","items":{"type":"string"}},
-      "acceptance_criteria":{"type":"array","items":{"type":"string"}},
-      "validation_plan":{"type":"array","items":{"type":"string"}},
-      "allowed_paths":{"type":"array","items":{"type":"string","pattern":"^[^*?\\[\\]/]+(?:/[^*?\\[\\]/]+)+$"}},
+	      "non_goals":{"type":"array","minItems":1,"maxItems":64,"items":{"type":"string"}},
+	      "acceptance_criteria":{"type":"array","minItems":1,"maxItems":64,"items":{"type":"string"}},
+	      "validation_plan":{"type":"array","minItems":1,"maxItems":64,"items":{"type":"string"}},
+	      "allowed_paths":{"type":"array","minItems":1,"maxItems":64,"items":{"type":"string","minLength":1,"maxLength":256,"pattern":"^(?:[^.*?\\[\\],/\\r\\n][^*?\\[\\],/\\r\\n]*|\\.[^.*?\\[\\],/\\r\\n][^*?\\[\\],/\\r\\n]*|\\.\\.[^*?\\[\\],/\\r\\n]+)(?:/(?:[^.*?\\[\\],/\\r\\n][^*?\\[\\],/\\r\\n]*|\\.[^.*?\\[\\],/\\r\\n][^*?\\[\\],/\\r\\n]*|\\.\\.[^*?\\[\\],/\\r\\n]+))*$"}},
 	      "adr":{"type":"string","pattern":"^No ADR needed: .{10,}$"},
-      "dependencies":{"type":"array","items":{"type":"string"}},
+	      "dependencies":{"type":"array","minItems":0,"maxItems":8,"items":{"type":"string"}},
       "traceability":{"$ref":"#/$defs/subtask_traceability"}
     },"required":["id","summary","phase","change_class","review_budget","scope","non_goals","acceptance_criteria","validation_plan","allowed_paths","adr","dependencies","traceability"],"additionalProperties":false}}
   },
@@ -587,7 +697,7 @@ func planSchemaRange(minSubtasks, maxSubtasks int) string {
     "digest":{"type":"string"}
   },"required":["path","digest"],"additionalProperties":false},
   "reference":{"type":"object","properties":{"source":{"type":"string","enum":["prd","spec","roadmap"]},"section":{"type":"string"},"excerpt":{"type":"string"}},"required":["source","section","excerpt"],"additionalProperties":false},
-  "references":{"type":"array","minItems":1,"items":{"$ref":"#/$defs/reference"}},
+	  "references":{"type":"array","minItems":1,"maxItems":32,"items":{"$ref":"#/$defs/reference"}},
   "story_traceability":{"type":"object","properties":{"summary":{"$ref":"#/$defs/references"},"description":{"$ref":"#/$defs/references"},"acceptance_criteria":{"$ref":"#/$defs/references"}},"required":["summary","description","acceptance_criteria"],"additionalProperties":false},
   "subtask_traceability":{"type":"object","properties":{"summary":{"$ref":"#/$defs/references"},"phase":{"$ref":"#/$defs/references"},"change_class":{"$ref":"#/$defs/references"},"review_budget":{"$ref":"#/$defs/references"},"scope":{"$ref":"#/$defs/references"},"non_goals":{"$ref":"#/$defs/references"},"acceptance_criteria":{"$ref":"#/$defs/references"},"validation_plan":{"$ref":"#/$defs/references"},"allowed_paths":{"$ref":"#/$defs/references"},"adr":{"$ref":"#/$defs/references"},"dependencies":{"$ref":"#/$defs/references"}},"required":["summary","phase","change_class","review_budget","scope","non_goals","acceptance_criteria","validation_plan","allowed_paths","adr","dependencies"],"additionalProperties":false}}
 }`, minSubtasks, maxSubtasks)

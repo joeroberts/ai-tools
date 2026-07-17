@@ -1,0 +1,29 @@
+{
+  "accepted_paths": [
+    "AGENTS.md",
+    "testdata",
+    "internal/agentplan",
+    ".github/workflows"
+  ],
+  "rejected_pre_assignment_paths": [
+    "AGENTS.md, testdata",
+    "../outside",
+    "internal/../outside",
+    "https://example.invalid/path",
+    "internal/*",
+    "line\nbreak"
+  ],
+  "rejected_post_assignment_paths": [
+    "AGENTS.md, testdata",
+    "docs",
+    "https://example.invalid/path"
+  ],
+  "accepted_story_acceptance_criteria": ["schema works", "lifecycle works"],
+  "rejected_story_acceptance_criteria": ["unapproved story acceptance"],
+  "accepted_non_goals": ["no lifecycle", "no retry"],
+  "rejected_non_goals": ["unapproved non-goal"],
+  "accepted_acceptance_criteria": ["root paths work", "invalid paths fail", "timeouts close"],
+  "rejected_acceptance_criteria": ["unapproved acceptance criterion"],
+  "accepted_validation_plan": ["go test"],
+  "rejected_validation_plan": ["unapproved validation step"]
+}
