@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"codex-governance/internal/signature"
@@ -40,6 +41,7 @@ type SignedOfflineExport struct {
 type Issue struct {
 	Key                string `json:"key"`
 	URL                string `json:"url"`
+	Status             string `json:"status"`
 	UpdatedAt          string `json:"updated_at"`
 	Description        string `json:"description"`
 	AcceptanceCriteria string `json:"acceptance_criteria"`
@@ -56,13 +58,8 @@ func LoadOfflineExport(path string) (OfflineExport, error) {
 	if err := decoder.Decode(&export); err != nil {
 		return OfflineExport{}, fmt.Errorf("parse offline Jira export: %w", err)
 	}
-	if export.Story.Key == "" || export.Subtask.Key == "" || export.Story.URL == "" || export.Subtask.URL == "" || export.Story.Description == "" || export.Subtask.Description == "" || export.Story.AcceptanceCriteria == "" || export.Subtask.AcceptanceCriteria == "" {
-		return OfflineExport{}, fmt.Errorf("offline Jira export is incomplete")
-	}
-	for _, value := range []string{export.CapturedAt, export.Story.UpdatedAt, export.Subtask.UpdatedAt} {
-		if _, err := time.Parse(time.RFC3339, value); err != nil {
-			return OfflineExport{}, fmt.Errorf("offline Jira export timestamp is invalid")
-		}
+	if err := validateOfflineExport(export); err != nil {
+		return OfflineExport{}, err
 	}
 	return export, nil
 }
@@ -147,7 +144,7 @@ func requireEOF(decoder *json.Decoder) error {
 }
 
 func validateOfflineExport(export OfflineExport) error {
-	if export.Story.Key == "" || export.Subtask.Key == "" || export.Story.URL == "" || export.Subtask.URL == "" || export.Story.Description == "" || export.Subtask.Description == "" || export.Story.AcceptanceCriteria == "" || export.Subtask.AcceptanceCriteria == "" {
+	if export.Story.Key == "" || export.Subtask.Key == "" || export.Story.URL == "" || export.Subtask.URL == "" || strings.TrimSpace(export.Story.Status) == "" || strings.TrimSpace(export.Subtask.Status) == "" || export.Story.Description == "" || export.Subtask.Description == "" || export.Story.AcceptanceCriteria == "" || export.Subtask.AcceptanceCriteria == "" {
 		return fmt.Errorf("offline Jira export is incomplete")
 	}
 	for _, value := range []string{export.CapturedAt, export.Story.UpdatedAt, export.Subtask.UpdatedAt} {
