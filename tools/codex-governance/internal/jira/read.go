@@ -54,10 +54,11 @@ func (c ReadClient) ReadIssue(key string) (Issue, error) {
 		return Issue{}, fmt.Errorf("parse Jira issue update time: %w", err)
 	}
 	description := adfText(payload.Fields.Description)
-	if payload.Key == "" || payload.Fields.Status.Name == "" || description == "" {
+	status := strings.TrimSpace(payload.Fields.Status.Name)
+	if payload.Key == "" || status == "" || description == "" {
 		return Issue{}, fmt.Errorf("Jira issue %s is missing required export fields", key)
 	}
-	return Issue{Key: payload.Key, URL: strings.TrimRight(c.BaseURL, "/") + "/browse/" + payload.Key, Status: payload.Fields.Status.Name, UpdatedAt: updated.UTC().Format(time.RFC3339), Description: description, AcceptanceCriteria: description}, nil
+	return Issue{Key: payload.Key, URL: strings.TrimRight(c.BaseURL, "/") + "/browse/" + payload.Key, Status: status, UpdatedAt: updated.UTC().Format(time.RFC3339), Description: description, AcceptanceCriteria: description}, nil
 }
 
 func parseJiraTimestamp(value string) (time.Time, error) {

@@ -104,13 +104,30 @@ func TestLoadOfflineExportRejectsMissingOrMalformedStatusEvidence(t *testing.T) 
 	}
 }
 
-func TestLoadSignedOfflineExportRejectsMissingStatusEvidence(t *testing.T) {
+func TestLoadSignedOfflineExportRejectsInvalidStatusEvidence(t *testing.T) {
 	export := fixtureExport(t)
-	export.Subtask.Status = ""
 	now := time.Date(2026, 7, 11, 11, 0, 0, 0, time.UTC)
-	path, registry := signedExport(t, export, "export-issuer", now.Add(-time.Hour), now.Add(time.Hour))
-	if _, err := LoadSignedOfflineExport(path, registry, 24*time.Hour, now); err == nil {
-		t.Fatal("LoadSignedOfflineExport() accepted signed export without status evidence")
+	payload, err := json.Marshal(export)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func([]byte) []byte{
+		"missing": func(data []byte) []byte {
+			return bytes.Replace(data, []byte(`"status":"In Progress",`), nil, 1)
+		},
+		"blank": func(data []byte) []byte {
+			return bytes.Replace(data, []byte(`"status":"In Progress"`), []byte(`"status":" \t "`), 1)
+		},
+		"malformed": func(data []byte) []byte {
+			return bytes.Replace(data, []byte(`"status":"In Progress"`), []byte(`"status":{"name":"In Progress"}`), 1)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			path, registry := signedExportPayload(t, mutate(payload), "export-issuer", now.Add(-time.Hour), now.Add(time.Hour))
+			if _, err := LoadSignedOfflineExport(path, registry, 24*time.Hour, now); err == nil {
+				t.Fatal("LoadSignedOfflineExport() accepted invalid status evidence")
+			}
+		})
 	}
 }
 
@@ -125,11 +142,16 @@ func fixtureExport(t *testing.T) OfflineExport {
 
 func signedExport(t *testing.T, export OfflineExport, role string, issuedAt, expiresAt time.Time) (string, signature.Registry) {
 	t.Helper()
-	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	payload, err := json.Marshal(export)
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := json.Marshal(export)
+	return signedExportPayload(t, payload, role, issuedAt, expiresAt)
+}
+
+func signedExportPayload(t *testing.T, payload []byte, role string, issuedAt, expiresAt time.Time) (string, signature.Registry) {
+	t.Helper()
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -41,6 +42,36 @@ func TestReadIssueCapturesSourceStatus(t *testing.T) {
 	}
 	if issue.Status != "In Progress" {
 		t.Fatalf("ReadIssue() status = %q", issue.Status)
+	}
+}
+
+func TestReadIssueNormalizesAndRequiresSourceStatus(t *testing.T) {
+	for name, status := range map[string]string{
+		"normalized": "  In Progress\t",
+		"blank":      " \n\t ",
+	} {
+		t.Run(name, func(t *testing.T) {
+			client := ReadClient{
+				BaseURL: "https://jira.example.test",
+				HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+					body := `{"key":"CG-2","fields":{"updated":"2026-07-11T10:00:00Z","status":{"name":` + strconv.Quote(status) + `},"description":{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Implement validation."}]}]}}}`
+					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+				})},
+			}
+			issue, err := client.ReadIssue("CG-2")
+			if name == "blank" {
+				if err == nil {
+					t.Fatal("ReadIssue() accepted whitespace-only status")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ReadIssue() error = %v", err)
+			}
+			if issue.Status != "In Progress" {
+				t.Fatalf("ReadIssue() status = %q", issue.Status)
+			}
+		})
 	}
 }
 
