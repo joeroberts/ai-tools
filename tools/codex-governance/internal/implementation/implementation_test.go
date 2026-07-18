@@ -83,6 +83,36 @@ func TestPreflightRejectsSourceMismatchBeforeArtifacts(t *testing.T) {
 	}
 }
 
+func TestPreflightRequiresPrimarySubtaskInProgressBeforeArtifacts(t *testing.T) {
+	for _, status := range []string{"To Do", "Blocked", "Done", "in progress", "In progress"} {
+		t.Run(status, func(t *testing.T) {
+			root, base, head := testRepository(t)
+			writeFile(t, filepath.Join(root, "AGENTS.md"), "# Guidance\n")
+			exportPath, publicKey := signedFixtureExportWithSubtaskStatus(t, status)
+			writePreflightConfig(t, root, publicKey, "export-issuer", "8760h")
+			item, err := workitem.Load(filepath.Join("..", "..", "testdata", "work-items", "valid.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			item.GitRange.BaseSHA, item.GitRange.HeadSHA = base, head
+			itemPath := filepath.Join(root, "work-item.json")
+			writeJSON(t, itemPath, item)
+			runtimeRoot := filepath.Join(root, "runtime")
+			bundlePath := filepath.Join(runtimeRoot, "bundle.json")
+			runPath := filepath.Join(runtimeRoot, "run.json")
+
+			if _, err := Preflight(PreflightRequest{WorkItemPath: itemPath, OfflineExportPath: exportPath, RepoRoot: root, RuntimeRoot: runtimeRoot, Adapter: "fake", BundlePath: bundlePath, RunPath: runPath}); err == nil {
+				t.Fatalf("Preflight() accepted primary subtask status %q", status)
+			}
+			for _, path := range []string{bundlePath, runPath, filepath.Join(runtimeRoot, "worktrees")} {
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Fatalf("Preflight() created implementation artifact %s for status %q: %v", path, status, err)
+				}
+			}
+		})
+	}
+}
+
 func TestPreflightRejectsUnsignedOrUntrustedSourceBeforeArtifacts(t *testing.T) {
 	root, base, head := testRepository(t)
 	writeFile(t, filepath.Join(root, "AGENTS.md"), "# Guidance\n")
@@ -329,11 +359,20 @@ func writeJSON(t *testing.T, path string, value any) {
 }
 
 func signedFixtureExport(t *testing.T, role string) (string, string) {
+	return signedFixtureExportWithSubtaskStatusAndRole(t, "In Progress", role)
+}
+
+func signedFixtureExportWithSubtaskStatus(t *testing.T, status string) (string, string) {
+	return signedFixtureExportWithSubtaskStatusAndRole(t, status, "export-issuer")
+}
+
+func signedFixtureExportWithSubtaskStatusAndRole(t *testing.T, status, role string) (string, string) {
 	t.Helper()
 	export, err := jira.LoadOfflineExport(filepath.Join("..", "..", "testdata", "jira-exports", "valid.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	export.Subtask.Status = status
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)

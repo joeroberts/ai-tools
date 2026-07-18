@@ -81,6 +81,15 @@ update. Jira remains the authoritative execution record, but every Jira write
 must be previewed, explicitly approved, and read back. Never make a Jira write
 from a hook, background process, or unstated inference.
 
+Before the first implementation edit, the primary Subtask must be transitioned
+to exactly `In Progress`, and the Jira read-back must confirm that status. Do
+not infer, silently change, or perform that transition from implementation
+preflight.
+
+Keep newly discovered defects, improvements, and follow-up work outside the
+approved active-ticket scope unless the owner explicitly approves a scope
+change. Track that work separately instead of expanding the active Subtask.
+
 After confirming that a pull request is merged, return the local worktree to
 `main`, fast-forward it from `origin/main`, and verify the worktree is clean.
 If local changes or branch state prevent that sequence, report the blocker; do
