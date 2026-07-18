@@ -407,6 +407,9 @@ func VerifyDispatchReadiness(run Run, bundle TaskBundle, bundlePath string, cfg 
 	if signedExport.Evidence != bundle.SourceEvidence || !reflect.DeepEqual(signedExport.Export, bundle.TicketBaseline) {
 		return fmt.Errorf("task bundle source evidence does not match its signed export")
 	}
+	if err := requireInProgress(signedExport.Export); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -481,6 +484,9 @@ func Preflight(request PreflightRequest) (PreflightResult, error) {
 	if err != nil {
 		return PreflightResult{}, fmt.Errorf("load signed offline export: %w", err)
 	}
+	if err := requireInProgress(signedExport.Export); err != nil {
+		return PreflightResult{}, err
+	}
 	violations, err := validate.Evaluate(item, signedExport.Export, request.RepoRoot, "", "")
 	if err != nil {
 		return PreflightResult{}, err
@@ -515,6 +521,13 @@ func Preflight(request PreflightRequest) (PreflightResult, error) {
 		return PreflightResult{}, err
 	}
 	return PreflightResult{Run: run, BundlePath: request.BundlePath}, nil
+}
+
+func requireInProgress(export jira.OfflineExport) error {
+	if export.Subtask.Status != "In Progress" {
+		return fmt.Errorf("implementation requires primary subtask status exactly %q, got %q", "In Progress", export.Subtask.Status)
+	}
+	return nil
 }
 
 func readGuidance(repoRoot string) (string, error) {
