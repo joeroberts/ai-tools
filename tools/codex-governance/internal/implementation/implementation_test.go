@@ -214,6 +214,52 @@ func TestVerifyDispatchReadinessRechecksPolicyAndBundle(t *testing.T) {
 	}
 }
 
+func TestVerifyDispatchReadinessRequiresPrimarySubtaskInProgress(t *testing.T) {
+	root, base, head := testRepository(t)
+	writeFile(t, filepath.Join(root, "AGENTS.md"), "# Guidance\n")
+	exportPath, publicKey := signedFixtureExportWithSubtaskStatus(t, "To Do")
+	writePreflightConfig(t, root, publicKey, "export-issuer", "8760h")
+
+	item, err := workitem.Load(filepath.Join("..", "..", "testdata", "work-items", "valid.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	item.GitRange.BaseSHA, item.GitRange.HeadSHA = base, head
+	cfg, err := config.Load(filepath.Join(root, "governance.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := cfg.TrustedKeyRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	maxAge, err := cfg.OfflineExportMaxAge()
+	if err != nil {
+		t.Fatal(err)
+	}
+	signedExport, err := jira.LoadSignedOfflineExport(exportPath, registry, maxAge, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := BuildTaskBundle(item, signedExport.Export, signedExport.Envelope, signedExport.Evidence, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundlePath := filepath.Join(root, "runtime", "bundle.json")
+	bundleDigest, err := WriteTaskBundle(bundlePath, bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := NewRun(item, "fake", bundleDigest, signedExport.Evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := VerifyDispatchReadiness(run, bundle, bundlePath, cfg, time.Now().UTC()); err == nil {
+		t.Fatal("VerifyDispatchReadiness() accepted signed primary subtask status \"To Do\"")
+	}
+}
+
 func TestTransitionRejectsSkippedState(t *testing.T) {
 	run := Run{State: StatePreflight}
 	if err := run.Transition(StateRunning); err == nil {
