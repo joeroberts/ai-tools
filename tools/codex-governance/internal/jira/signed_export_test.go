@@ -1,6 +1,7 @@
 package jira
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
@@ -74,6 +75,42 @@ func TestLoadSignedOfflineExportRejectsUnsignedFixture(t *testing.T) {
 	}
 	if _, err := LoadSignedOfflineExport(filepath.Join("..", "..", "testdata", "jira-exports", "valid.json"), registry, 24*time.Hour, time.Now().UTC()); err == nil {
 		t.Fatal("LoadSignedOfflineExport() accepted an unsigned export")
+	}
+}
+
+func TestLoadOfflineExportRejectsMissingOrMalformedStatusEvidence(t *testing.T) {
+	valid, err := os.ReadFile(filepath.Join("..", "..", "testdata", "jira-exports", "valid.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func([]byte) []byte{
+		"missing": func(data []byte) []byte {
+			return bytes.Replace(data, []byte("    \"status\": \"In Progress\",\n"), nil, 1)
+		},
+		"malformed": func(data []byte) []byte {
+			return bytes.Replace(data, []byte(`"status": "In Progress"`), []byte(`"status": {"name":"In Progress"}`), 1)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			data := mutate(valid)
+			path := filepath.Join(t.TempDir(), "export.json")
+			if err := os.WriteFile(path, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := LoadOfflineExport(path); err == nil {
+				t.Fatal("LoadOfflineExport() accepted invalid status evidence")
+			}
+		})
+	}
+}
+
+func TestLoadSignedOfflineExportRejectsMissingStatusEvidence(t *testing.T) {
+	export := fixtureExport(t)
+	export.Subtask.Status = ""
+	now := time.Date(2026, 7, 11, 11, 0, 0, 0, time.UTC)
+	path, registry := signedExport(t, export, "export-issuer", now.Add(-time.Hour), now.Add(time.Hour))
+	if _, err := LoadSignedOfflineExport(path, registry, 24*time.Hour, now); err == nil {
+		t.Fatal("LoadSignedOfflineExport() accepted signed export without status evidence")
 	}
 }
 

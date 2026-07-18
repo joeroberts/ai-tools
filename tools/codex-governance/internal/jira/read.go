@@ -23,7 +23,7 @@ func (c ReadClient) ReadIssue(key string) (Issue, error) {
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
 	}
-	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(c.BaseURL, "/")+"/rest/api/3/issue/"+key+"?fields=description,updated", nil)
+	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(c.BaseURL, "/")+"/rest/api/3/issue/"+key+"?fields=description,status,updated", nil)
 	if err != nil {
 		return Issue{}, err
 	}
@@ -38,6 +38,9 @@ func (c ReadClient) ReadIssue(key string) (Issue, error) {
 		Fields struct {
 			Updated     string         `json:"updated"`
 			Description map[string]any `json:"description"`
+			Status      struct {
+				Name string `json:"name"`
+			} `json:"status"`
 		} `json:"fields"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
@@ -51,10 +54,10 @@ func (c ReadClient) ReadIssue(key string) (Issue, error) {
 		return Issue{}, fmt.Errorf("parse Jira issue update time: %w", err)
 	}
 	description := adfText(payload.Fields.Description)
-	if payload.Key == "" || description == "" {
+	if payload.Key == "" || payload.Fields.Status.Name == "" || description == "" {
 		return Issue{}, fmt.Errorf("Jira issue %s is missing required export fields", key)
 	}
-	return Issue{Key: payload.Key, URL: strings.TrimRight(c.BaseURL, "/") + "/browse/" + payload.Key, UpdatedAt: updated.UTC().Format(time.RFC3339), Description: description, AcceptanceCriteria: description}, nil
+	return Issue{Key: payload.Key, URL: strings.TrimRight(c.BaseURL, "/") + "/browse/" + payload.Key, Status: payload.Fields.Status.Name, UpdatedAt: updated.UTC().Format(time.RFC3339), Description: description, AcceptanceCriteria: description}, nil
 }
 
 func parseJiraTimestamp(value string) (time.Time, error) {
