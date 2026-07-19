@@ -2,12 +2,12 @@
 
 ## Status
 
-`Jira-planning` — GitHub issue
+`implementation-ready` — GitHub issue
 [#72](https://github.com/joeroberts/ai-tools/issues/72) is the approved backlog
 source. Jira Story [REK-43](https://rekonlabs.atlassian.net/browse/REK-43) and
 primary Subtask [REK-44](https://rekonlabs.atlassian.net/browse/REK-44) were
-created from the approved plan and read back as `To Do`. Implementation remains
-unauthorized.
+created from the approved plan. REK-43 remains `To Do`; REK-44 is `In Progress`
+with implementation authorized for this bounded remediation.
 
 ## Problem
 

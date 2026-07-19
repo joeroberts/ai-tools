@@ -2,15 +2,14 @@
 
 ## Status
 
-`Jira-planning` — REK-43 / REK-44 are `To Do`; implementation is unauthorized.
+`implementation-ready` — REK-43 is `To Do`; REK-44 is `In Progress`.
 
 GitHub issue [#72](https://github.com/joeroberts/ai-tools/issues/72) is the
 approved backlog source. Jira Story
 [REK-43](https://rekonlabs.atlassian.net/browse/REK-43) and primary Subtask
 [REK-44](https://rekonlabs.atlassian.net/browse/REK-44) were created from the
-approved plan and read back as `To Do`. The next transition is a reviewed
-planning-baseline commit, followed by an explicitly approved `In Progress`
-transition and fresh read-back before implementation.
+approved plan. The next transition is independent exact-diff review and
+verification evidence before an authorized commit.
 
 ## Scope
 
@@ -47,7 +46,7 @@ private material outside the repository.
 
 ## Review Budget
 
-Maximum 8 changed files, 600 changed lines, approved paths, and exactly two
+Maximum 11 changed files, 850 changed lines, approved paths, and exactly two
 components. Scope expansion requires a separately approved amendment or work
 item before implementation edits.
 

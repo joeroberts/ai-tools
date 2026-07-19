@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 )
 
 // LocalSigner is an owner-only machine-local key for read-only Jira exports.
@@ -153,10 +154,10 @@ func validateExistingOwnerOnlyAncestor(path string) error {
 	for ancestor := filepath.Clean(path); ; ancestor = filepath.Dir(ancestor) {
 		info, err := os.Lstat(ancestor)
 		if err == nil {
-			if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
+			if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() || info.Mode().Perm()&0o077 != 0 || ownerID(info) != uint32(os.Getuid()) {
 				return fmt.Errorf("local signer directory must be owner-only and not a symlink")
 			}
-			return nil
+			return validateSignerAncestorChain(ancestor)
 		}
 		if !os.IsNotExist(err) {
 			return err
@@ -166,6 +167,47 @@ func validateExistingOwnerOnlyAncestor(path string) error {
 			return fmt.Errorf("local signer directory has no existing ancestor")
 		}
 	}
+}
+
+// validateSignerAncestorChain rejects directories that another user could
+// replace. Root-owned sticky directories such as /tmp are the sole writable
+// exception because their sticky bit prevents cross-user replacement.
+func validateSignerAncestorChain(path string) error {
+	canonical, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return err
+	}
+	for ancestor := canonical; ; ancestor = filepath.Dir(ancestor) {
+		info, err := os.Lstat(ancestor)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return fmt.Errorf("local signer ancestor must be a directory and not a symlink")
+		}
+		owner := ownerID(info)
+		perms := info.Mode().Perm()
+		writableByOthers := perms&0o022 != 0
+		if writableByOthers {
+			if owner != 0 || info.Mode()&os.ModeSticky == 0 {
+				return fmt.Errorf("local signer ancestor is replaceable")
+			}
+		} else if owner != 0 && owner != uint32(os.Getuid()) {
+			return fmt.Errorf("local signer ancestor is not owned by the current user or root")
+		}
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			return nil
+		}
+	}
+}
+
+func ownerID(info os.FileInfo) uint32 {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return ^uint32(0)
+	}
+	return stat.Uid
 }
 
 func validateOwnerOnlyDirectory(path string) error {

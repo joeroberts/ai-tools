@@ -15,10 +15,12 @@ prints a no-write preview. The preview states that the generated key ID cannot
 exist until approved creation.
 
 Approved execution requires the signer path to resolve outside the repository,
-its existing ancestor to be owner-only, the destination not to exist, and the
-current trusted-key registry not to contain a technical-owner entry. Symlink
-resolution must not permit an apparent outside path to resolve into the
-repository.
+its nearest existing current-user ancestor to be owner-only, the destination
+not to exist, and the current trusted-key registry not to contain a
+technical-owner entry. Its complete canonical ancestor chain must reject
+replaceable or attacker-owned directories, permitting only root-owned sticky
+temporary ancestry. Symlink resolution must not permit an apparent outside
+path to resolve into the repository.
 
 Extend the local-signer package with technical-owner-specific create and load
 functions backed by the shared fixed-role primitive. The local record contains
@@ -48,7 +50,7 @@ current trusted registry.
 
 ## Review Budget
 
-8 changed files, 600 changed lines, and fixed-role technical-owner signer bootstrap and path safety, repository trust onboarding plus read-back and failure recovery.
+11 changed files, 850 changed lines, and fixed-role technical-owner signer bootstrap and path safety, repository trust onboarding plus read-back and failure recovery.
 
 Exactly two components are permitted:
 
@@ -74,8 +76,8 @@ Exactly two components are permitted:
         "internal/signature"
       ],
       "review_budget": {
-        "max_changed_files": 8,
-        "max_changed_lines": 600,
+        "max_changed_files": 11,
+        "max_changed_lines": 850,
         "components": [
           "fixed-role technical-owner signer bootstrap and path safety",
           "repository trust onboarding plus read-back and failure recovery"
@@ -94,13 +96,15 @@ Exactly two components are permitted:
   refuses overwrite, unsafe permissions, in-repository resolution, symlink
   escape, or pre-existing technical-owner trust.
 - The saved local signer and public trust record match exactly after read-back.
-- Policy-save failure removes newly generated untrusted signer material;
-  cleanup failure remains visible and blocking.
+- Policy-save, signer reload, configuration reload, and exact trust read-back
+  failures restore the pre-bootstrap configuration and remove only newly
+  generated signer material; every cleanup failure remains visible and blocking.
 - Private key material is never serialized into repository configuration,
   output, diagnostics, tests, prompts, or ledgers.
 - Tests cover preview, approval, permissions, overwrite, unsafe ancestry,
   symlink resolution, duplicate trust, role mismatch, policy failure, cleanup
-  failure, read-back mismatch, and unchanged existing bootstrap behavior.
+  failure, read-back mismatch, configuration restoration, and unchanged
+  existing bootstrap behavior.
 - `make test`, `make vet`, `make build`, `git diff --check`, and independent
   exact-diff reviewer/verifier evidence pass.
 

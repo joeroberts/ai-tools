@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -31,10 +32,11 @@ import (
 const maxPublicationAuthorizationLifetime = 24 * time.Hour
 
 var (
-	loadBootstrapConfig   = config.Load
-	saveBootstrapConfig   = config.Save
-	createBootstrapSigner = signature.CreateLocalTechnicalOwnerSigner
-	removeBootstrapSigner = os.Remove
+	loadBootstrapConfig    = config.Load
+	saveBootstrapConfig    = config.Save
+	createBootstrapSigner  = signature.CreateLocalTechnicalOwnerSigner
+	removeBootstrapSigner  = os.Remove
+	restoreBootstrapConfig = config.Save
 )
 
 const usage = `codex-governance
@@ -1589,7 +1591,9 @@ func runImplementationBootstrapTechnicalOwner(args []string, stdout, stderr io.W
 		fmt.Fprintf(stderr, "load governance config: %v\n", err)
 		return 2
 	}
-	for _, key := range cfg.Signing.TrustedKeys {
+	originalCfg := cfg
+	originalCfg.Signing.TrustedKeys = append([]config.TrustedKey(nil), cfg.Signing.TrustedKeys...)
+	for _, key := range originalCfg.Signing.TrustedKeys {
 		if key.Role == "technical-owner" {
 			fmt.Fprintln(stderr, "technical-owner trust is already configured; refusing to overwrite")
 			return 1
@@ -1605,36 +1609,41 @@ func runImplementationBootstrapTechnicalOwner(args []string, stdout, stderr io.W
 		return 1
 	}
 	if key.Role != "technical-owner" {
-		return removeUntrustedTechnicalOwnerSigner(*signerPath, fmt.Errorf("created signer has unexpected role %q", key.Role), stderr)
+		return rollbackTechnicalOwnerBootstrap(configPath, originalCfg, *signerPath, fmt.Errorf("created signer has unexpected role %q", key.Role), stderr)
 	}
+	cfg = originalCfg
 	cfg.Signing.TrustedKeys = append(cfg.Signing.TrustedKeys, config.TrustedKey{KeyID: key.KeyID, Role: key.Role, Algorithm: key.Algorithm, PublicKey: key.PublicKey})
 	if err := saveBootstrapConfig(configPath, cfg); err != nil {
-		return removeUntrustedTechnicalOwnerSigner(*signerPath, fmt.Errorf("save governance config: %w", err), stderr)
+		return rollbackTechnicalOwnerBootstrap(configPath, originalCfg, *signerPath, fmt.Errorf("save governance config: %w", err), stderr)
 	}
 	loadedKey, _, err := signature.LoadLocalTechnicalOwnerSigner(*signerPath)
 	if err != nil {
-		fmt.Fprintf(stderr, "reload technical-owner signer: %v\n", err)
-		return 1
+		return rollbackTechnicalOwnerBootstrap(configPath, originalCfg, *signerPath, fmt.Errorf("reload technical-owner signer: %w", err), stderr)
 	}
 	reloadedCfg, err := loadBootstrapConfig(configPath)
 	if err != nil {
-		fmt.Fprintf(stderr, "reload governance config: %v\n", err)
-		return 1
+		return rollbackTechnicalOwnerBootstrap(configPath, originalCfg, *signerPath, fmt.Errorf("reload governance config: %w", err), stderr)
 	}
 	if !trustedSignerMatches(reloadedCfg, loadedKey) {
-		fmt.Fprintln(stderr, "technical-owner signer does not exactly match trusted policy after read-back")
-		return 1
+		return rollbackTechnicalOwnerBootstrap(configPath, originalCfg, *signerPath, errors.New("technical-owner signer does not exactly match trusted policy after read-back"), stderr)
 	}
 	fmt.Fprintf(stdout, "PASS bootstrapped technical-owner signer %s\n", key.KeyID)
 	return 0
 }
 
-func removeUntrustedTechnicalOwnerSigner(path string, cause error, stderr io.Writer) int {
-	if err := removeBootstrapSigner(filepath.Clean(path)); err != nil {
-		fmt.Fprintf(stderr, "%v; remove untrusted technical-owner signer: %v\n", cause, err)
+func rollbackTechnicalOwnerBootstrap(configPath string, originalCfg config.Config, signerPath string, cause error, stderr io.Writer) int {
+	var cleanupErrors []error
+	if err := restoreBootstrapConfig(configPath, originalCfg); err != nil {
+		cleanupErrors = append(cleanupErrors, fmt.Errorf("restore governance config: %w", err))
+	}
+	if err := removeBootstrapSigner(filepath.Clean(signerPath)); err != nil {
+		cleanupErrors = append(cleanupErrors, fmt.Errorf("remove untrusted technical-owner signer: %w", err))
+	}
+	if len(cleanupErrors) == 0 {
+		fmt.Fprintln(stderr, cause)
 		return 1
 	}
-	fmt.Fprintln(stderr, cause)
+	fmt.Fprintf(stderr, "%v; cleanup failures: %v\n", cause, errors.Join(cleanupErrors...))
 	return 1
 }
 
