@@ -29,7 +29,7 @@ cleanup or read-back failures as blockers.
 ```text
 fixed-role signer bootstrap
   -> trust onboarding and verification
-  -> #69 Phase 2 planning resumes
+  -> #69 Phase 2 remains pending until separately authorized
 ```
 
 Both phases form one Jira implementation Subtask with exactly two review
