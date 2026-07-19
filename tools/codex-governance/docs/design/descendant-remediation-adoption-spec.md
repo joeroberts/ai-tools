@@ -2,21 +2,20 @@
 
 ## Status
 
-Proposed technical contract for GitHub issue #69. The ADR decision described
-below is required before implementation and remains deliberately unresolved.
+Accepted Phase 1 contract boundary for GitHub issue #69. REK-42 implements
+only the selected payload schema and deterministic validation fixtures.
 
-## Architecture Decision Required
+## Architecture Decision
 
-The ADR must select one canonical representation:
-
-1. a versioned immutable successor implementation run that references and
-   digest-binds its predecessor; or
-2. a separately signed descendant-adoption record that resolves to an immutable
-   successor publication view without altering the predecessor run.
-
-The ADR must also decide authorized signer role, expiry, replay and revocation
-semantics, crash recovery, migration for format-version-1 runs, audit-ledger
-linkage, rollback, and how publication consumes the selected representation.
+The ADR selects a separately signed, versioned descendant-adoption record that
+resolves to an immutable successor publication view without altering the
+predecessor run. Its payload is `implementation.AdoptionRecord`; Phase 1 uses
+the common signed envelope and trusted-key verifier for deterministic contract
+fixtures. Live registry integration, replay enforcement, atomic persistence,
+and publication consumption remain Phase 2 and Phase 3 work. The technical
+owner is the only authorized adoption role. Expiry is mandatory, chained
+adoptions are prohibited, and format-version-1 runs remain unchanged
+predecessors.
 
 Both options must use the common signed-envelope and trusted-role model. A
 plain mutable JSON copy, inferred transition, or in-place `commit_sha` update is
@@ -53,7 +52,7 @@ Before persistence, validation must prove:
 
 ## Persisted Successor Contract
 
-The selected record must bind at minimum:
+The selected record payload must bind at minimum:
 
 - format and repository identity;
 - work-item key and approved-source identity;
@@ -122,7 +121,7 @@ the stricter per-slice file limits below remain binding.
         "internal/implementation"
       ],
       "review_budget": {
-        "max_changed_files": 8,
+        "max_changed_files": 9,
         "max_changed_lines": 800,
         "components": [
           "ADR and successor authority contract",

@@ -14,9 +14,10 @@ source/work-item/task-bundle/configuration/guidance identities, full-range
 review evidence identities, normalized validation outcomes, reason, authorized
 role, signer, issuance/expiry, and audit-chain linkage.
 
-The contract layer validates structure and binding syntax only in this phase.
-Phase 2 will connect the contract to Git history, current worktrees, source
-freshness, complete-diff scope/budget evaluation, review artifacts, and atomic
+The contract layer validates structure, binding syntax, and the shared signed
+envelope in this phase. Phase 2 will connect the contract to Git history,
+current worktrees, live trusted-key policy, source freshness, complete-diff
+scope/budget evaluation, review artifacts, replay checks, and atomic
 persistence. Phase 3 will connect verified successors to publication.
 
 Preserve format-version-1 run behavior. Do not silently reinterpret, mutate, or
@@ -29,7 +30,7 @@ and `internal/implementation`.
 
 ## Review Budget
 
-This phase is limited to 8 changed files, 800 changed lines, and ADR and successor authority contract, versioned schema and validation fixtures.
+This phase is limited to 9 changed files, 800 changed lines, and ADR and successor authority contract, versioned schema and validation fixtures.
 
 ## Declared Implementation Slice
 
@@ -49,7 +50,7 @@ This phase is limited to 8 changed files, 800 changed lines, and ADR and success
         "internal/implementation"
       ],
       "review_budget": {
-        "max_changed_files": 8,
+        "max_changed_files": 9,
         "max_changed_lines": 800,
         "components": [
           "ADR and successor authority contract",
@@ -79,3 +80,9 @@ This phase is limited to 8 changed files, 800 changed lines, and ADR and success
 ## Architecture Decision
 
 `docs/decisions/descendant-remediation-adoption.md`
+
+Option B is selected: a separately signed, versioned adoption-record payload.
+Phase 1 implements strict payload validation, deterministic encoding, and
+shared-envelope verification fixtures. Live trusted-key policy integration,
+persistence, replay enforcement, and publication resolution remain later-phase
+work.

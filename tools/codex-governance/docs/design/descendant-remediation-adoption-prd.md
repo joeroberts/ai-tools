@@ -5,9 +5,9 @@
 GitHub issue [#69](https://github.com/joeroberts/ai-tools/issues/69) is the
 approved backlog source. Phase 1 is planned in Jira Story
 [REK-41](https://rekonlabs.atlassian.net/browse/REK-41) and primary Subtask
-[REK-42](https://rekonlabs.atlassian.net/browse/REK-42). Phases 2 and 3 require
-separate future Jira plans. No architecture option is approved, and
-implementation is not authorized.
+[REK-42](https://rekonlabs.atlassian.net/browse/REK-42). The technical owner
+accepted the separately signed adoption-record architecture for Phase 1;
+Phases 2 and 3 still require separate Jira plans.
 
 ## Problem
 

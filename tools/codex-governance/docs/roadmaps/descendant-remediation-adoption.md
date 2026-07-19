@@ -2,13 +2,14 @@
 
 ## Status
 
-`planned`
+`active` — REK-42 is the current Phase 1 implementation milestone.
 
 GitHub issue [#69](https://github.com/joeroberts/ai-tools/issues/69) is the
 backlog source. Phase 1 is planned in Jira Story
 [REK-41](https://rekonlabs.atlassian.net/browse/REK-41) and primary Subtask
-[REK-42](https://rekonlabs.atlassian.net/browse/REK-42). ADR approval,
-implementation, and publication are not yet authorized.
+[REK-42](https://rekonlabs.atlassian.net/browse/REK-42). The ADR is accepted
+for Option B; implementation is limited to its contract and fixtures.
+Publication remains unauthorized.
 
 ## Milestone Relationship
 
@@ -20,12 +21,11 @@ is implemented.
 
 ## Phase 1: Select And Define Successor Authority
 
-Status: `planned`.
+Status: `active` — REK-42 is `In Progress`.
 
-Approve an ADR selecting the immutable successor representation, decision
-rights, signing, expiry, replay, revocation, recovery, migration, audit, and
-rollback model. Implement the versioned contract and deterministic schema
-fixtures only after that decision.
+The accepted ADR selects the separately signed adoption record. Implement its
+versioned contract and deterministic schema fixtures only; Phase 2 owns
+live trusted-key integration, replay enforcement, and persistence.
 
 ## Phase 2: Validate And Persist Adoption
 

@@ -2,20 +2,20 @@
 
 ## Status
 
-`planned`
+`active` — REK-42 is `In Progress`.
 
 This is the executable planning roadmap for the first sequential Jira plan
 under GitHub issue #69. The program roadmap remains
 `docs/roadmaps/descendant-remediation-adoption.md`.
 
 Jira Story [REK-41](https://rekonlabs.atlassian.net/browse/REK-41) and primary
-Subtask [REK-42](https://rekonlabs.atlassian.net/browse/REK-42) were created and
-read back in `To Do`.
+Subtask [REK-42](https://rekonlabs.atlassian.net/browse/REK-42) were read back;
+the Subtask is `In Progress`.
 
 ## Phase 1: Select And Define Successor Authority
 
-Approve the proposed ADR, then implement the selected versioned successor
-authority contract and deterministic schema/validation fixtures.
+The accepted ADR selects the separately signed adoption record. Implement only
+its versioned contract and deterministic schema/validation fixtures.
 
 Exit only when:
 

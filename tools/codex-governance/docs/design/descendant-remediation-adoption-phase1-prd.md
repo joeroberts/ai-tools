@@ -4,9 +4,12 @@
 
 Approved planning source for the first sequential Jira plan under GitHub issue
 [#69](https://github.com/joeroberts/ai-tools/issues/69). Jira Story
-[REK-41](https://rekonlabs.atlassian.net/browse/REK-41) and primary Subtask
-[REK-42](https://rekonlabs.atlassian.net/browse/REK-42) were created and read
-back in `To Do`. Implementation is not yet authorized.
+[REK-41](https://rekonlabs.atlassian.net/browse/REK-41) contains primary
+Subtask [REK-42](https://rekonlabs.atlassian.net/browse/REK-42), which is
+`In Progress`.
+The technical owner accepted Option B: a separately signed, versioned
+descendant-adoption record. Implementation is limited to its strict payload
+contract and deterministic fixtures.
 
 ## Problem
 
@@ -24,8 +27,7 @@ implement adoption persistence or publication-gate integration.
 
 ## Product Outcomes
 
-- One ADR selects either a versioned successor run or a separately signed
-  adoption record.
+- The accepted ADR selects a separately signed adoption record.
 - The ADR defines decision rights, signer role, expiry, replay, revocation,
   migration, recovery, audit linkage, rollback, and publication consumption.
 - A strict versioned contract binds predecessor, candidate, source, task bundle,
