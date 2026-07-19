@@ -34,5 +34,9 @@ signing:
           role: repository-owner
           algorithm: ed25519
           public_key: d+m21Pp2KWzUUdvXNKRtdkIBQCuNkNyX+hwmPBw/kbs=
+        - key_id: sha256:1bedcdd81ed85
+          role: technical-owner
+          algorithm: ed25519
+          public_key: +OtVApejZjGkeynkx8xFCECni0okdUIwe/5+CDkczVQ=
     offline_export_max_age: 24h
     repository_id: github.com/joeroberts/ai-tools

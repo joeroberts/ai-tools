@@ -28,6 +28,15 @@ func CreateLocalRepositoryOwnerSigner(path string) (TrustedKey, error) {
 	return createLocalSigner(path, "repository-owner")
 }
 
+// CreateLocalTechnicalOwnerSigner creates the fixed-role signer used only for
+// technical-owner adoption decisions.
+func CreateLocalTechnicalOwnerSigner(path string) (TrustedKey, error) {
+	if err := ValidateLocalSignerPath(path); err != nil {
+		return TrustedKey{}, err
+	}
+	return createLocalSigner(path, "technical-owner")
+}
+
 func createLocalSigner(path, role string) (TrustedKey, error) {
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -67,6 +76,15 @@ func LoadLocalExportSigner(path string) (string, ed25519.PrivateKey, error) {
 // LoadLocalRepositoryOwnerSigner loads owner-only private material used solely
 // for explicit publication authorization issuance.
 func LoadLocalRepositoryOwnerSigner(path string) (TrustedKey, ed25519.PrivateKey, error) {
+	return loadLocalTrustedSigner(path, "repository-owner")
+}
+
+// LoadLocalTechnicalOwnerSigner reloads a fixed-role technical-owner signer.
+func LoadLocalTechnicalOwnerSigner(path string) (TrustedKey, ed25519.PrivateKey, error) {
+	return loadLocalTrustedSigner(path, "technical-owner")
+}
+
+func loadLocalTrustedSigner(path, role string) (TrustedKey, ed25519.PrivateKey, error) {
 	keyID, privateKey, err := loadLocalSigner(path)
 	if err != nil {
 		return TrustedKey{}, nil, err
@@ -74,10 +92,21 @@ func LoadLocalRepositoryOwnerSigner(path string) (TrustedKey, ed25519.PrivateKey
 	publicKey := privateKey.Public().(ed25519.PublicKey)
 	return TrustedKey{
 		KeyID:     keyID,
-		Role:      "repository-owner",
+		Role:      role,
 		Algorithm: Algorithm,
 		PublicKey: base64.StdEncoding.EncodeToString(publicKey),
 	}, privateKey, nil
+}
+
+// ValidateLocalSignerPath checks a proposed destination without creating
+// directories or files. It is intended for no-write command previews.
+func ValidateLocalSignerPath(path string) error {
+	if _, err := os.Lstat(filepath.Clean(path)); err == nil {
+		return fmt.Errorf("refusing to overwrite local signer: %s", path)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return validateExistingOwnerOnlyAncestor(filepath.Dir(path))
 }
 
 func loadLocalSigner(path string) (string, ed25519.PrivateKey, error) {
@@ -118,6 +147,25 @@ func ensureOwnerOnlyDirectory(path string) error {
 		return err
 	}
 	return validateOwnerOnlyDirectory(path)
+}
+
+func validateExistingOwnerOnlyAncestor(path string) error {
+	for ancestor := filepath.Clean(path); ; ancestor = filepath.Dir(ancestor) {
+		info, err := os.Lstat(ancestor)
+		if err == nil {
+			if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
+				return fmt.Errorf("local signer directory must be owner-only and not a symlink")
+			}
+			return nil
+		}
+		if !os.IsNotExist(err) {
+			return err
+		}
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			return fmt.Errorf("local signer directory has no existing ancestor")
+		}
+	}
 }
 
 func validateOwnerOnlyDirectory(path string) error {
