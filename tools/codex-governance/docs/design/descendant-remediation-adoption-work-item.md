@@ -2,15 +2,18 @@
 
 ## Status
 
-`implementation-ready` — REK-42 is `In Progress`.
+`closed` — Phase 1 merged and REK-41 / REK-42 are finalized.
 
 GitHub issue [#69](https://github.com/joeroberts/ai-tools/issues/69) is the
 approved backlog source. Jira Story
 [REK-41](https://rekonlabs.atlassian.net/browse/REK-41) and primary Subtask
 [REK-42](https://rekonlabs.atlassian.net/browse/REK-42) were created from the
-approved Phase 1 plan and read back. REK-42 is `In Progress`; the next
-transition is completion only after the remediation diff is independently
-reviewed, merged, and finalized in Jira.
+approved Phase 1 plan and read back. The reviewed implementation merged in
+[PR #71](https://github.com/joeroberts/ai-tools/pull/71) at commit
+`a60e2b11ef4c1db5d3bb7221d019785f3b222e72`; REK-41 and REK-42 were then
+finalized and read back. Phase 2 requires completion of GitHub issue
+[#72](https://github.com/joeroberts/ai-tools/issues/72), fresh approved planning
+sources, and a separate Jira implementation Subtask.
 
 ## Scope
 
@@ -47,7 +50,7 @@ the verified successor with existing separately authorized publication gates.
 - Update the persisted roadmap at planned, active, blocked, and complete
   milestone transitions through reviewed Git diffs.
 
-## Current Phase 1 Planning Sources
+## Completed Phase 1 Planning Sources
 
 - PRD: `docs/design/descendant-remediation-adoption-phase1-prd.md`
 - Specification: `docs/design/descendant-remediation-adoption-phase1-spec.md`

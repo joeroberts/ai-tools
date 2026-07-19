@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 )
 
 // LocalSigner is an owner-only machine-local key for read-only Jira exports.
@@ -26,6 +27,15 @@ func CreateLocalExportSigner(path string) (TrustedKey, error) {
 // the returned public key to repository policy.
 func CreateLocalRepositoryOwnerSigner(path string) (TrustedKey, error) {
 	return createLocalSigner(path, "repository-owner")
+}
+
+// CreateLocalTechnicalOwnerSigner creates the fixed-role signer used only for
+// technical-owner adoption decisions.
+func CreateLocalTechnicalOwnerSigner(path string) (TrustedKey, error) {
+	if err := ValidateLocalSignerPath(path); err != nil {
+		return TrustedKey{}, err
+	}
+	return createLocalSigner(path, "technical-owner")
 }
 
 func createLocalSigner(path, role string) (TrustedKey, error) {
@@ -67,6 +77,15 @@ func LoadLocalExportSigner(path string) (string, ed25519.PrivateKey, error) {
 // LoadLocalRepositoryOwnerSigner loads owner-only private material used solely
 // for explicit publication authorization issuance.
 func LoadLocalRepositoryOwnerSigner(path string) (TrustedKey, ed25519.PrivateKey, error) {
+	return loadLocalTrustedSigner(path, "repository-owner")
+}
+
+// LoadLocalTechnicalOwnerSigner reloads a fixed-role technical-owner signer.
+func LoadLocalTechnicalOwnerSigner(path string) (TrustedKey, ed25519.PrivateKey, error) {
+	return loadLocalTrustedSigner(path, "technical-owner")
+}
+
+func loadLocalTrustedSigner(path, role string) (TrustedKey, ed25519.PrivateKey, error) {
 	keyID, privateKey, err := loadLocalSigner(path)
 	if err != nil {
 		return TrustedKey{}, nil, err
@@ -74,10 +93,21 @@ func LoadLocalRepositoryOwnerSigner(path string) (TrustedKey, ed25519.PrivateKey
 	publicKey := privateKey.Public().(ed25519.PublicKey)
 	return TrustedKey{
 		KeyID:     keyID,
-		Role:      "repository-owner",
+		Role:      role,
 		Algorithm: Algorithm,
 		PublicKey: base64.StdEncoding.EncodeToString(publicKey),
 	}, privateKey, nil
+}
+
+// ValidateLocalSignerPath checks a proposed destination without creating
+// directories or files. It is intended for no-write command previews.
+func ValidateLocalSignerPath(path string) error {
+	if _, err := os.Lstat(filepath.Clean(path)); err == nil {
+		return fmt.Errorf("refusing to overwrite local signer: %s", path)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return validateExistingOwnerOnlyAncestor(filepath.Dir(path))
 }
 
 func loadLocalSigner(path string) (string, ed25519.PrivateKey, error) {
@@ -118,6 +148,66 @@ func ensureOwnerOnlyDirectory(path string) error {
 		return err
 	}
 	return validateOwnerOnlyDirectory(path)
+}
+
+func validateExistingOwnerOnlyAncestor(path string) error {
+	for ancestor := filepath.Clean(path); ; ancestor = filepath.Dir(ancestor) {
+		info, err := os.Lstat(ancestor)
+		if err == nil {
+			if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() || info.Mode().Perm()&0o077 != 0 || ownerID(info) != uint32(os.Getuid()) {
+				return fmt.Errorf("local signer directory must be owner-only and not a symlink")
+			}
+			return validateSignerAncestorChain(ancestor)
+		}
+		if !os.IsNotExist(err) {
+			return err
+		}
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			return fmt.Errorf("local signer directory has no existing ancestor")
+		}
+	}
+}
+
+// validateSignerAncestorChain rejects directories that another user could
+// replace. Root-owned sticky directories such as /tmp are the sole writable
+// exception because their sticky bit prevents cross-user replacement.
+func validateSignerAncestorChain(path string) error {
+	canonical, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return err
+	}
+	for ancestor := canonical; ; ancestor = filepath.Dir(ancestor) {
+		info, err := os.Lstat(ancestor)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return fmt.Errorf("local signer ancestor must be a directory and not a symlink")
+		}
+		owner := ownerID(info)
+		perms := info.Mode().Perm()
+		writableByOthers := perms&0o022 != 0
+		if writableByOthers {
+			if owner != 0 || info.Mode()&os.ModeSticky == 0 {
+				return fmt.Errorf("local signer ancestor is replaceable")
+			}
+		} else if owner != 0 && owner != uint32(os.Getuid()) {
+			return fmt.Errorf("local signer ancestor is not owned by the current user or root")
+		}
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			return nil
+		}
+	}
+}
+
+func ownerID(info os.FileInfo) uint32 {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return ^uint32(0)
+	}
+	return stat.Uid
 }
 
 func validateOwnerOnlyDirectory(path string) error {

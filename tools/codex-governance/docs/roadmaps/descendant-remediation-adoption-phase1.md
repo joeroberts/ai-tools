@@ -2,15 +2,17 @@
 
 ## Status
 
-`active` — REK-42 is `In Progress`.
+`complete` — PR #71 merged and REK-41 / REK-42 are finalized.
 
 This is the executable planning roadmap for the first sequential Jira plan
 under GitHub issue #69. The program roadmap remains
 `docs/roadmaps/descendant-remediation-adoption.md`.
 
 Jira Story [REK-41](https://rekonlabs.atlassian.net/browse/REK-41) and primary
-Subtask [REK-42](https://rekonlabs.atlassian.net/browse/REK-42) were read back;
-the Subtask is `In Progress`.
+Subtask [REK-42](https://rekonlabs.atlassian.net/browse/REK-42) were finalized
+after the reviewed implementation merged in
+[PR #71](https://github.com/joeroberts/ai-tools/pull/71) at commit
+`a60e2b11ef4c1db5d3bb7221d019785f3b222e72`.
 
 ## Phase 1: Select And Define Successor Authority
 

@@ -3,9 +3,11 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -97,6 +99,276 @@ func TestRunBootstrapPublishOwnerRequiresApprovalAndCreatesOwnerOnlySigner(t *te
 	info, err := os.Stat(signer)
 	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("signer permissions = %v, %v", info.Mode().Perm(), err)
+	}
+}
+
+func TestRunBootstrapTechnicalOwnerPreviewAndApproval(t *testing.T) {
+	root := t.TempDir()
+	if code := Run([]string{"init", "--repo-root", root}, &bytes.Buffer{}, &bytes.Buffer{}); code != 0 {
+		t.Fatal("init failed")
+	}
+	policy := filepath.Join(root, "governance.yml")
+	before, err := os.ReadFile(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := ownerOnlyTestDir(t)
+	signer := filepath.Join(directory, "new", "technical-owner.json")
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"implementation", "bootstrap-technical-owner", "--repo-root", root, "--signer", signer}, &stdout, &stderr); code != 0 {
+		t.Fatalf("preview = %d: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "fixed role=technical-owner") {
+		t.Fatalf("preview = %q", stdout.String())
+	}
+	if _, err := os.Stat(filepath.Dir(signer)); !os.IsNotExist(err) {
+		t.Fatalf("preview created directory: %v", err)
+	}
+	after, err := os.ReadFile(policy)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("preview changed policy: %v", err)
+	}
+	if code := Run([]string{"implementation", "bootstrap-technical-owner", "--repo-root", root, "--signer", signer, "--approve"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("approval = %d: %s", code, stderr.String())
+	}
+	key, _, err := signature.LoadLocalTechnicalOwnerSigner(signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(policy)
+	if err != nil || !trustedSignerMatches(cfg, key) {
+		t.Fatalf("read-back agreement = %v", err)
+	}
+}
+
+func TestRunBootstrapTechnicalOwnerRejectsUnsafePathsAndDuplicateTrust(t *testing.T) {
+	root := t.TempDir()
+	if code := Run([]string{"init", "--repo-root", root}, &bytes.Buffer{}, &bytes.Buffer{}); code != 0 {
+		t.Fatal("init failed")
+	}
+	inside := filepath.Join(root, "technical-owner.json")
+	if code := Run([]string{"implementation", "bootstrap-technical-owner", "--repo-root", root, "--signer", inside}, &bytes.Buffer{}, &bytes.Buffer{}); code != 1 {
+		t.Fatalf("inside signer = %d", code)
+	}
+	link := filepath.Join(ownerOnlyTestDir(t), "link")
+	if err := os.Symlink(root, link); err != nil {
+		t.Fatal(err)
+	}
+	if code := Run([]string{"implementation", "bootstrap-technical-owner", "--repo-root", root, "--signer", filepath.Join(link, "technical-owner.json")}, &bytes.Buffer{}, &bytes.Buffer{}); code != 1 {
+		t.Fatalf("symlink escape = %d", code)
+	}
+	unsafe := t.TempDir()
+	if err := os.Chmod(unsafe, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if code := Run([]string{"implementation", "bootstrap-technical-owner", "--repo-root", root, "--signer", filepath.Join(unsafe, "technical-owner.json")}, &bytes.Buffer{}, &bytes.Buffer{}); code != 1 {
+		t.Fatalf("unsafe path = %d", code)
+	}
+	signer := filepath.Join(ownerOnlyTestDir(t), "technical-owner.json")
+	if err := os.WriteFile(signer, []byte("exists"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := Run([]string{"implementation", "bootstrap-technical-owner", "--repo-root", root, "--signer", signer}, &bytes.Buffer{}, &bytes.Buffer{}); code != 1 {
+		t.Fatalf("overwrite = %d", code)
+	}
+	cfg, err := config.Load(filepath.Join(root, "governance.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Signing.TrustedKeys = append(cfg.Signing.TrustedKeys, config.TrustedKey{KeyID: "technical-owner", Role: "technical-owner", Algorithm: signature.Algorithm, PublicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="})
+	if err := config.Save(filepath.Join(root, "governance.yml"), cfg); err != nil {
+		t.Fatal(err)
+	}
+	newSigner := filepath.Join(ownerOnlyTestDir(t), "technical-owner.json")
+	if code := Run([]string{"implementation", "bootstrap-technical-owner", "--repo-root", root, "--signer", newSigner}, &bytes.Buffer{}, &bytes.Buffer{}); code != 1 {
+		t.Fatalf("duplicate trust = %d", code)
+	}
+}
+
+func TestRunBootstrapTechnicalOwnerValidatesCompleteAncestorChain(t *testing.T) {
+	root := t.TempDir()
+	if code := Run([]string{"init", "--repo-root", root}, &bytes.Buffer{}, &bytes.Buffer{}); code != 0 {
+		t.Fatal("init failed")
+	}
+	nearest := t.TempDir()
+	if err := os.Chmod(nearest, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if code := Run([]string{"implementation", "bootstrap-technical-owner", "--repo-root", root, "--signer", filepath.Join(nearest, "technical-owner.json")}, &bytes.Buffer{}, &bytes.Buffer{}); code != 1 {
+		t.Fatalf("current-user 0755 ancestor = %d", code)
+	}
+	replaceable := t.TempDir()
+	if err := os.Chmod(replaceable, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	descendant := filepath.Join(replaceable, "owner-only")
+	if err := os.Mkdir(descendant, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if code := Run([]string{"implementation", "bootstrap-technical-owner", "--repo-root", root, "--signer", filepath.Join(descendant, "technical-owner.json")}, &bytes.Buffer{}, &bytes.Buffer{}); code != 1 {
+		t.Fatalf("replaceable ancestor = %d", code)
+	}
+	temporary, err := os.MkdirTemp("/tmp", "technical-owner-signer-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(temporary) })
+	if err := os.Chmod(temporary, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if code := Run([]string{"implementation", "bootstrap-technical-owner", "--repo-root", root, "--signer", filepath.Join(temporary, "technical-owner.json")}, &bytes.Buffer{}, &bytes.Buffer{}); code != 0 {
+		t.Fatalf("root-owned sticky /tmp ancestry = %d", code)
+	}
+}
+
+func TestRunBootstrapTechnicalOwnerFailsClosedOnSaveCleanupAndReadback(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		save       func(string, config.Config) error
+		remove     func(string) error
+		load       func(string) (config.Config, error)
+		create     func(string) (signature.TrustedKey, error)
+		restore    func(string, config.Config) error
+		wantSigner bool
+		wantOutput string
+	}{
+		{name: "policy failure removes signer", save: failFirstBootstrapSave()},
+		{name: "cleanup failure blocks", save: failFirstBootstrapSave(), remove: func(string) error { return errors.New("cleanup failure") }, wantSigner: true, wantOutput: "cleanup failure"},
+		{name: "restore failure blocks", load: mismatchedBootstrapConfigLoad(), restore: func(string, config.Config) error { return errors.New("restore failure") }, wantSigner: false, wantOutput: "restore failure"},
+		{name: "read-back mismatch", load: mismatchedBootstrapConfigLoad()},
+		{name: "duplicate role read-back", load: duplicateBootstrapConfigLoad()},
+		{name: "configuration reload failure", load: failingBootstrapConfigReload()},
+		{name: "signer reload failure", create: unreadableTechnicalOwnerCreate},
+		{name: "role mismatch", create: mismatchedTechnicalOwnerCreate},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			resetBootstrapHooks(t)
+			root := t.TempDir()
+			if code := Run([]string{"init", "--repo-root", root}, &bytes.Buffer{}, &bytes.Buffer{}); code != 0 {
+				t.Fatal("init failed")
+			}
+			if test.save != nil {
+				saveBootstrapConfig = test.save
+			}
+			if test.remove != nil {
+				removeBootstrapSigner = test.remove
+			}
+			if test.load != nil {
+				loadBootstrapConfig = test.load
+			}
+			if test.create != nil {
+				createBootstrapSigner = test.create
+			}
+			if test.restore != nil {
+				restoreBootstrapConfig = test.restore
+			}
+			before, err := config.Load(filepath.Join(root, "governance.yml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			signer := filepath.Join(ownerOnlyTestDir(t), "technical-owner.json")
+			var stderr bytes.Buffer
+			if code := Run([]string{"implementation", "bootstrap-technical-owner", "--repo-root", root, "--signer", signer, "--approve"}, &bytes.Buffer{}, &stderr); code != 1 {
+				t.Fatalf("bootstrap = %d", code)
+			}
+			if test.wantOutput != "" && !strings.Contains(stderr.String(), test.wantOutput) {
+				t.Fatalf("blocking cleanup output = %q", stderr.String())
+			}
+			_, err = os.Stat(signer)
+			if test.wantSigner != !os.IsNotExist(err) {
+				t.Fatalf("signer exists = %t, err=%v", !os.IsNotExist(err), err)
+			}
+			after, err := config.Load(filepath.Join(root, "governance.yml"))
+			if test.restore == nil && (err != nil || !reflect.DeepEqual(before, after)) {
+				t.Fatalf("config restored = %t, err=%v", reflect.DeepEqual(before, after), err)
+			}
+		})
+	}
+}
+
+func resetBootstrapHooks(t *testing.T) {
+	t.Helper()
+	loadBootstrapConfig = config.Load
+	saveBootstrapConfig = config.Save
+	restoreBootstrapConfig = config.Save
+	createBootstrapSigner = signature.CreateLocalTechnicalOwnerSigner
+	removeBootstrapSigner = os.Remove
+	t.Cleanup(func() {
+		loadBootstrapConfig = config.Load
+		saveBootstrapConfig = config.Save
+		restoreBootstrapConfig = config.Save
+		createBootstrapSigner = signature.CreateLocalTechnicalOwnerSigner
+		removeBootstrapSigner = os.Remove
+	})
+}
+
+func failFirstBootstrapSave() func(string, config.Config) error {
+	calls := 0
+	return func(path string, cfg config.Config) error {
+		calls++
+		if calls == 1 {
+			return errors.New("policy failure")
+		}
+		return config.Save(path, cfg)
+	}
+}
+
+func mismatchedTechnicalOwnerCreate(path string) (signature.TrustedKey, error) {
+	key, err := signature.CreateLocalTechnicalOwnerSigner(path)
+	key.Role = "repository-owner"
+	return key, err
+}
+
+func unreadableTechnicalOwnerCreate(path string) (signature.TrustedKey, error) {
+	key, err := signature.CreateLocalTechnicalOwnerSigner(path)
+	if err != nil {
+		return signature.TrustedKey{}, err
+	}
+	return key, os.Chmod(path, 0o644)
+}
+
+func mismatchedBootstrapConfigLoad() func(string) (config.Config, error) {
+	loads := 0
+	return func(requestedPath string) (config.Config, error) {
+		cfg, err := config.Load(requestedPath)
+		loads++
+		if err == nil && loads > 1 {
+			for index := range cfg.Signing.TrustedKeys {
+				if cfg.Signing.TrustedKeys[index].Role == "technical-owner" {
+					cfg.Signing.TrustedKeys[index].KeyID = "sha256:readback-mismatch"
+				}
+			}
+		}
+		return cfg, err
+	}
+}
+
+func failingBootstrapConfigReload() func(string) (config.Config, error) {
+	loads := 0
+	return func(requestedPath string) (config.Config, error) {
+		loads++
+		if loads > 1 {
+			return config.Config{}, errors.New("configuration reload failure")
+		}
+		return config.Load(requestedPath)
+	}
+}
+
+func duplicateBootstrapConfigLoad() func(string) (config.Config, error) {
+	loads := 0
+	return func(requestedPath string) (config.Config, error) {
+		cfg, err := config.Load(requestedPath)
+		loads++
+		if err == nil && loads > 1 {
+			for _, key := range cfg.Signing.TrustedKeys {
+				if key.Role == "technical-owner" {
+					key.KeyID = "sha256:duplicate-technical-owner"
+					cfg.Signing.TrustedKeys = append(cfg.Signing.TrustedKeys, key)
+					break
+				}
+			}
+		}
+		return cfg, err
 	}
 }
 

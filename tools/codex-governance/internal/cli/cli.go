@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -29,6 +30,14 @@ import (
 )
 
 const maxPublicationAuthorizationLifetime = 24 * time.Hour
+
+var (
+	loadBootstrapConfig    = config.Load
+	saveBootstrapConfig    = config.Save
+	createBootstrapSigner  = signature.CreateLocalTechnicalOwnerSigner
+	removeBootstrapSigner  = os.Remove
+	restoreBootstrapConfig = config.Save
+)
 
 const usage = `codex-governance
 
@@ -65,6 +74,7 @@ Usage:
   codex-governance implementation metrics --run PATH
   codex-governance implementation audit --run PATH --output PATH
   codex-governance implementation commit --run PATH --worktree PATH --branch NAME --message TEXT --approve
+  codex-governance implementation bootstrap-technical-owner --signer PATH [--repo-root PATH] [--approve]
   codex-governance implementation bootstrap-publish-owner --signer PATH --approve [--repo-root PATH]
   codex-governance implementation issue-publish --run PATH --signer PATH --output PATH --worktree PATH --remote NAME --target-branch NAME --approve [--expires-in DURATION] [--repo-root PATH]
   codex-governance implementation authorize-publish --authorization PATH --run PATH --repo-root PATH
@@ -1068,8 +1078,8 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 }
 
 func runImplementation(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 || !oneOf(args[0], "preflight", "start", "reconcile", "verify", "review", "verification", "remediate", "assess", "evidence", "status", "metrics", "audit", "commit", "bootstrap-publish-owner", "issue-publish", "authorize-publish", "push", "create-pr") {
-		fmt.Fprintln(stderr, "usage: codex-governance implementation preflight|start|reconcile|verify|review|verification|remediate|assess|evidence|status|metrics|audit|commit|bootstrap-publish-owner|issue-publish|authorize-publish|push|create-pr")
+	if len(args) == 0 || !oneOf(args[0], "preflight", "start", "reconcile", "verify", "review", "verification", "remediate", "assess", "evidence", "status", "metrics", "audit", "commit", "bootstrap-technical-owner", "bootstrap-publish-owner", "issue-publish", "authorize-publish", "push", "create-pr") {
+		fmt.Fprintln(stderr, "usage: codex-governance implementation preflight|start|reconcile|verify|review|verification|remediate|assess|evidence|status|metrics|audit|commit|bootstrap-technical-owner|bootstrap-publish-owner|issue-publish|authorize-publish|push|create-pr")
 		return 2
 	}
 	if args[0] == "start" {
@@ -1104,6 +1114,9 @@ func runImplementation(args []string, stdout, stderr io.Writer) int {
 	}
 	if args[0] == "commit" {
 		return runImplementationCommit(args[1:], stdout, stderr)
+	}
+	if args[0] == "bootstrap-technical-owner" {
+		return runImplementationBootstrapTechnicalOwner(args[1:], stdout, stderr)
 	}
 	if args[0] == "bootstrap-publish-owner" {
 		return runImplementationBootstrapPublishOwner(args[1:], stdout, stderr)
@@ -1521,7 +1534,7 @@ func runImplementationBootstrapPublishOwner(args []string, stdout, stderr io.Wri
 	if err := flags.Parse(args); err != nil || *signerPath == "" || !*approve || flags.NArg() != 0 {
 		return 2
 	}
-	if err := requirePathOutsideRepository(*repoRoot, *signerPath); err != nil {
+	if err := requirePathOutsideRepository(*repoRoot, *signerPath, "repository-owner"); err != nil {
 		fmt.Fprintf(stderr, "validate repository-owner signer path: %v\n", err)
 		return 1
 	}
@@ -1555,6 +1568,99 @@ func runImplementationBootstrapPublishOwner(args []string, stdout, stderr io.Wri
 	return 0
 }
 
+func runImplementationBootstrapTechnicalOwner(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("implementation bootstrap-technical-owner", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	signerPath := flags.String("signer", "", "owner-only technical-owner signer path")
+	repoRoot := flags.String("repo-root", ".", "repository root")
+	approve := flags.Bool("approve", false, "explicitly authorize technical-owner signer bootstrap")
+	if err := flags.Parse(args); err != nil || *signerPath == "" || flags.NArg() != 0 {
+		return 2
+	}
+	if err := requirePathOutsideRepository(*repoRoot, *signerPath, "technical-owner"); err != nil {
+		fmt.Fprintf(stderr, "validate technical-owner signer path: %v\n", err)
+		return 1
+	}
+	if err := signature.ValidateLocalSignerPath(*signerPath); err != nil {
+		fmt.Fprintf(stderr, "validate technical-owner signer path: %v\n", err)
+		return 1
+	}
+	configPath := filepath.Join(*repoRoot, "governance.yml")
+	cfg, err := loadBootstrapConfig(configPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load governance config: %v\n", err)
+		return 2
+	}
+	originalCfg := cfg
+	originalCfg.Signing.TrustedKeys = append([]config.TrustedKey(nil), cfg.Signing.TrustedKeys...)
+	for _, key := range originalCfg.Signing.TrustedKeys {
+		if key.Role == "technical-owner" {
+			fmt.Fprintln(stderr, "technical-owner trust is already configured; refusing to overwrite")
+			return 1
+		}
+	}
+	if !*approve {
+		fmt.Fprintf(stdout, "PREVIEW fixed role=technical-owner signer=%s policy=%s; key ID is generated only with --approve\n", *signerPath, configPath)
+		return 0
+	}
+	key, err := createBootstrapSigner(*signerPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "create technical-owner signer: %v\n", err)
+		return 1
+	}
+	if key.Role != "technical-owner" {
+		return rollbackTechnicalOwnerBootstrap(configPath, originalCfg, *signerPath, fmt.Errorf("created signer has unexpected role %q", key.Role), stderr)
+	}
+	cfg = originalCfg
+	cfg.Signing.TrustedKeys = append(cfg.Signing.TrustedKeys, config.TrustedKey{KeyID: key.KeyID, Role: key.Role, Algorithm: key.Algorithm, PublicKey: key.PublicKey})
+	if err := saveBootstrapConfig(configPath, cfg); err != nil {
+		return rollbackTechnicalOwnerBootstrap(configPath, originalCfg, *signerPath, fmt.Errorf("save governance config: %w", err), stderr)
+	}
+	loadedKey, _, err := signature.LoadLocalTechnicalOwnerSigner(*signerPath)
+	if err != nil {
+		return rollbackTechnicalOwnerBootstrap(configPath, originalCfg, *signerPath, fmt.Errorf("reload technical-owner signer: %w", err), stderr)
+	}
+	reloadedCfg, err := loadBootstrapConfig(configPath)
+	if err != nil {
+		return rollbackTechnicalOwnerBootstrap(configPath, originalCfg, *signerPath, fmt.Errorf("reload governance config: %w", err), stderr)
+	}
+	if !trustedSignerMatches(reloadedCfg, loadedKey) {
+		return rollbackTechnicalOwnerBootstrap(configPath, originalCfg, *signerPath, errors.New("technical-owner signer does not exactly match trusted policy after read-back"), stderr)
+	}
+	fmt.Fprintf(stdout, "PASS bootstrapped technical-owner signer %s\n", key.KeyID)
+	return 0
+}
+
+func rollbackTechnicalOwnerBootstrap(configPath string, originalCfg config.Config, signerPath string, cause error, stderr io.Writer) int {
+	var cleanupErrors []error
+	if err := restoreBootstrapConfig(configPath, originalCfg); err != nil {
+		cleanupErrors = append(cleanupErrors, fmt.Errorf("restore governance config: %w", err))
+	}
+	if err := removeBootstrapSigner(filepath.Clean(signerPath)); err != nil {
+		cleanupErrors = append(cleanupErrors, fmt.Errorf("remove untrusted technical-owner signer: %w", err))
+	}
+	if len(cleanupErrors) == 0 {
+		fmt.Fprintln(stderr, cause)
+		return 1
+	}
+	fmt.Fprintf(stderr, "%v; cleanup failures: %v\n", cause, errors.Join(cleanupErrors...))
+	return 1
+}
+
+func trustedSignerMatches(cfg config.Config, localKey signature.TrustedKey) bool {
+	matches := 0
+	for _, key := range cfg.Signing.TrustedKeys {
+		if key.Role != localKey.Role {
+			continue
+		}
+		if key.KeyID != localKey.KeyID || key.Algorithm != localKey.Algorithm || key.PublicKey != localKey.PublicKey {
+			return false
+		}
+		matches++
+	}
+	return matches == 1
+}
+
 func runImplementationIssuePublish(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("implementation issue-publish", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -1574,7 +1680,7 @@ func runImplementationIssuePublish(args []string, stdout, stderr io.Writer) int 
 		fmt.Fprintf(stderr, "expires-in must be positive and no greater than %s\n", maxPublicationAuthorizationLifetime)
 		return 2
 	}
-	if err := requirePathOutsideRepository(*repoRoot, *signerPath); err != nil {
+	if err := requirePathOutsideRepository(*repoRoot, *signerPath, "repository-owner"); err != nil {
 		fmt.Fprintf(stderr, "validate repository-owner signer path: %v\n", err)
 		return 1
 	}
@@ -1682,7 +1788,7 @@ func repositoryOwnerSignerTrusted(cfg config.Config, localKey signature.TrustedK
 	return false
 }
 
-func requirePathOutsideRepository(repoRoot, path string) error {
+func requirePathOutsideRepository(repoRoot, path, role string) error {
 	rootPath, err := filepath.Abs(repoRoot)
 	if err != nil {
 		return fmt.Errorf("resolve repository root: %w", err)
@@ -1703,7 +1809,7 @@ func requirePathOutsideRepository(repoRoot, path string) error {
 				return fmt.Errorf("compare signer path to repository: %w", relErr)
 			}
 			if relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))) {
-				return fmt.Errorf("repository-owner signer must be outside repository root")
+				return fmt.Errorf("%s signer must be outside repository root", role)
 			}
 			return nil
 		}

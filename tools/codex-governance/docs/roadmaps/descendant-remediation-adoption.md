@@ -2,14 +2,16 @@
 
 ## Status
 
-`active` — REK-42 is the current Phase 1 implementation milestone.
+`active` — Phase 1 is complete; GitHub issue #72 is the prerequisite before
+Phase 2 planning.
 
 GitHub issue [#69](https://github.com/joeroberts/ai-tools/issues/69) is the
 backlog source. Phase 1 is planned in Jira Story
 [REK-41](https://rekonlabs.atlassian.net/browse/REK-41) and primary Subtask
 [REK-42](https://rekonlabs.atlassian.net/browse/REK-42). The ADR is accepted
-for Option B; implementation is limited to its contract and fixtures.
-Publication remains unauthorized.
+for Option B. The reviewed Phase 1 implementation merged in
+[PR #71](https://github.com/joeroberts/ai-tools/pull/71), and REK-41 / REK-42
+were finalized. Publication remains unauthorized.
 
 ## Milestone Relationship
 
@@ -22,15 +24,25 @@ is implemented.
 
 ## Phase 1: Select And Define Successor Authority
 
-Status: `active` — REK-42 is `In Progress`.
+Status: `complete` — PR #71 merged and REK-41 / REK-42 were finalized.
 
-The accepted ADR selects the separately signed adoption record. Implement its
-versioned contract and deterministic schema fixtures only; Phase 2 owns
-live trusted-key integration, replay enforcement, and persistence.
+The accepted ADR selects the separately signed adoption record. Its versioned
+contract and deterministic schema fixtures are merged.
+
+## Prerequisite: Bootstrap Technical-Owner Trust
+
+Status: `Jira-planning` — GitHub issue
+[#72](https://github.com/joeroberts/ai-tools/issues/72), Jira Story
+[REK-43](https://rekonlabs.atlassian.net/browse/REK-43), and primary Subtask
+[REK-44](https://rekonlabs.atlassian.net/browse/REK-44). REK-44 is `To Do`.
+
+Provide a distinct governed technical-owner signer and reviewed public trust
+entry before Phase 2 attempts live registry integration. This prerequisite does
+not implement adoption validation or persistence.
 
 ## Phase 2: Validate And Persist Adoption
 
-Status: `pending`.
+Status: `pending` — blocked by GitHub issue #72.
 
 Implement full-range lineage, source, scope, budget, guidance, validation, and
 review-evidence checks. Provide exact preview and explicitly approved atomic,
@@ -48,15 +60,17 @@ to the approved behavior.
 ## Delivery Order
 
 ```text
-GitHub issue #69 Phase 1 -> GitHub issue #69 Phase 2
--> GitHub issue #69 Phase 3 -> resume REK-40 publication
-                                      |
-                                      +-> #22 consumes the settled transition
+GitHub issue #69 Phase 1 -> GitHub issue #72
+-> GitHub issue #69 Phase 2 -> GitHub issue #69 Phase 3
+-> resume REK-40 publication
+        |
+        +-> #22 consumes the settled transition
 ```
 
-Each phase is a separate Jira implementation Subtask and contains no more than
-two review components. A phase cannot start until its dependency is merged and
-the next Subtask is exactly `In Progress` in a fresh trusted read-back.
+Each #69 phase is a separate Jira implementation Subtask and contains no more
+than two review components. GitHub issue #72 is a separate prerequisite work
+item. A phase cannot start until its dependency is merged and the next Subtask
+is exactly `In Progress` in a fresh trusted read-back.
 
 ## Validation Gates
 
