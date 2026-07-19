@@ -2,15 +2,15 @@
 
 ## Status
 
-`Jira-planning`
+`implementation-ready` — REK-42 is `In Progress`.
 
 GitHub issue [#69](https://github.com/joeroberts/ai-tools/issues/69) is the
 approved backlog source. Jira Story
 [REK-41](https://rekonlabs.atlassian.net/browse/REK-41) and primary Subtask
 [REK-42](https://rekonlabs.atlassian.net/browse/REK-42) were created from the
-approved Phase 1 plan and read back in `To Do`. The next transition is a
-reviewed planning commit, followed by an explicitly approved `In Progress`
-transition for REK-42.
+approved Phase 1 plan and read back. REK-42 is `In Progress`; the next
+transition is completion only after the remediation diff is independently
+reviewed, merged, and finalized in Jira.
 
 ## Scope
 
@@ -52,20 +52,21 @@ the verified successor with existing separately authorized publication gates.
 - PRD: `docs/design/descendant-remediation-adoption-phase1-prd.md`
 - Specification: `docs/design/descendant-remediation-adoption-phase1-spec.md`
 - Roadmap: `docs/roadmaps/descendant-remediation-adoption-phase1.md`
-- Proposed ADR: `docs/decisions/descendant-remediation-adoption.md`
+- Accepted ADR: `docs/decisions/descendant-remediation-adoption.md`
 
 The umbrella PRD, specification, and roadmap remain the program contract for
 all three phases; they are not aggregated into the current ticket plan.
 
 ## Review Budget
 
-The current Phase 1 Subtask is limited to 8 files, 800 lines, approved paths,
-and exactly two components. Later phases require new planning-source digests,
-constraints, approval, Jira creation, and committed work items. No ticket may
-aggregate the three phases into one implementation diff.
+The current Phase 1 Subtask is limited to 10 files, 800 lines, approved paths,
+and exactly two components. The complete planning-base-to-candidate
+implementation diff and the remediation delta must remain within those limits.
+Later phases require new planning-source digests, constraints, approval, Jira
+creation, and committed work items. No ticket may aggregate the three phases
+into one implementation diff.
 
 ## Architecture Decision
 
-ADR required before implementation. The ADR must select one successor authority
-representation and its decision-rights, signing, lifecycle, migration, recovery,
-and rollback contract.
+The accepted ADR selects the separately signed adoption record and defines its
+decision-rights, signing, lifecycle, migration, recovery, and rollback contract.

@@ -35,14 +35,17 @@ and a separate ticket plan are required for Phase 2.
 ## Dependency Record
 
 ```text
-#69 Phase 1 -> future Phase 2 plan -> future Phase 3 plan -> resume REK-40 publication
+GitHub issue #69 Phase 1 -> future Phase 2 plan -> future Phase 3 plan
+-> resume REK-40 publication
 ```
 
 ## Validation Gates
 
 Run focused deterministic tests, `make test`, `make vet`, `make build`, and
 `git diff --check`. Require independent reviewer and verifier evidence for the
-exact diff before commit or publication.
+exact remediation diff before commit or publication. Both that remediation
+delta and the complete planning-base-to-candidate implementation diff remain
+within the approved 10-file, 800-line, two-component budget.
 
 ## Completion Rule
 

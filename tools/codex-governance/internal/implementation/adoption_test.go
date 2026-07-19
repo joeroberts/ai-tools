@@ -73,9 +73,17 @@ func TestValidateAdoptionRecordForRejectsRepositoryAndWorkItemMismatch(t *testin
 		{"github.com/other/governance", record.WorkItemKey},
 		{record.RepositoryID, "REK-99"},
 	} {
-		if err := ValidateAdoptionRecordFor(record, test.repository, test.workItem); err == nil {
+		if err := ValidateAdoptionRecordFor(record, test.repository, test.workItem, "main"); err == nil {
 			t.Fatal("accepted mismatched repository or work item")
 		}
+	}
+}
+
+func TestValidateAdoptionRecordForRejectsConfiguredDefaultBranch(t *testing.T) {
+	record := validAdoptionRecord()
+	record.CandidateBranch = "release"
+	if err := ValidateAdoptionRecordFor(record, record.RepositoryID, record.WorkItemKey, "release"); err == nil {
+		t.Fatal("accepted the configured default branch")
 	}
 }
 
@@ -98,17 +106,17 @@ func TestValidateSignedAdoptionRecordBindsAuthorityAndEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ValidateSignedAdoptionRecord(envelope, registry, record.IssuedAt, record.RepositoryID, record.WorkItemKey); err != nil {
+	if _, err := ValidateSignedAdoptionRecord(envelope, registry, record.IssuedAt, record.RepositoryID, record.WorkItemKey, "main"); err != nil {
 		t.Fatal(err)
 	}
 
 	t.Run("expired", func(t *testing.T) {
-		if _, err := ValidateSignedAdoptionRecord(envelope, registry, record.ExpiresAt, record.RepositoryID, record.WorkItemKey); err == nil {
+		if _, err := ValidateSignedAdoptionRecord(envelope, registry, record.ExpiresAt, record.RepositoryID, record.WorkItemKey, "main"); err == nil {
 			t.Fatal("accepted expired envelope")
 		}
 	})
 	t.Run("not yet valid", func(t *testing.T) {
-		if _, err := ValidateSignedAdoptionRecord(envelope, registry, record.IssuedAt.Add(-time.Second), record.RepositoryID, record.WorkItemKey); err == nil {
+		if _, err := ValidateSignedAdoptionRecord(envelope, registry, record.IssuedAt.Add(-time.Second), record.RepositoryID, record.WorkItemKey, "main"); err == nil {
 			t.Fatal("accepted an envelope before issuance")
 		}
 	})
@@ -117,7 +125,7 @@ func TestValidateSignedAdoptionRecordBindsAuthorityAndEnvelope(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := ValidateSignedAdoptionRecord(envelope, revoked, record.IssuedAt, record.RepositoryID, record.WorkItemKey); err == nil {
+		if _, err := ValidateSignedAdoptionRecord(envelope, revoked, record.IssuedAt, record.RepositoryID, record.WorkItemKey, "main"); err == nil {
 			t.Fatal("accepted revoked signer")
 		}
 	})
@@ -132,14 +140,59 @@ func TestValidateSignedAdoptionRecordBindsAuthorityAndEnvelope(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := ValidateSignedAdoptionRecord(ownerEnvelope, ownerRegistry, record.IssuedAt, record.RepositoryID, record.WorkItemKey); err == nil {
+		if _, err := ValidateSignedAdoptionRecord(ownerEnvelope, ownerRegistry, record.IssuedAt, record.RepositoryID, record.WorkItemKey, "main"); err == nil {
 			t.Fatal("accepted unpermitted role")
 		}
 	})
-	t.Run("timestamp mismatch", func(t *testing.T) {
+	t.Run("key binding mismatch", func(t *testing.T) {
+		alternatePublicKey, alternatePrivateKey, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		alternate := signature.TrustedKey{KeyID: "sha256:abcdef123456", Role: record.AuthorizedRole, Algorithm: signature.Algorithm, PublicKey: base64.StdEncoding.EncodeToString(alternatePublicKey)}
+		alternateRegistry, err := signature.NewRegistry(signature.FormatVersion, []signature.TrustedKey{trusted, alternate})
+		if err != nil {
+			t.Fatal(err)
+		}
+		alternateEnvelope, err := signature.Sign(payload, alternate.KeyID, record.AuthorizedRole, alternatePrivateKey, record.IssuedAt, &record.ExpiresAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ValidateSignedAdoptionRecord(alternateEnvelope, alternateRegistry, record.IssuedAt, record.RepositoryID, record.WorkItemKey, "main"); err == nil {
+			t.Fatal("accepted mismatched envelope key binding")
+		}
+	})
+	t.Run("role binding mismatch", func(t *testing.T) {
 		mismatched := envelope
-		mismatched.IssuedAt = mismatched.IssuedAt.Add(time.Second)
-		if _, err := ValidateSignedAdoptionRecord(mismatched, registry, record.IssuedAt, record.RepositoryID, record.WorkItemKey); err == nil {
+		mismatched.SignerRole = "repository-owner"
+		if _, err := ValidateSignedAdoptionRecord(mismatched, registry, record.IssuedAt, record.RepositoryID, record.WorkItemKey, "main"); err == nil {
+			t.Fatal("accepted mismatched envelope role binding")
+		}
+	})
+	t.Run("expiry binding mismatch", func(t *testing.T) {
+		expiresAt := record.ExpiresAt.Add(time.Second)
+		mismatched, err := signature.Sign(payload, record.SignerIdentity, record.AuthorizedRole, privateKey, record.IssuedAt, &expiresAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ValidateSignedAdoptionRecord(mismatched, registry, record.IssuedAt, record.RepositoryID, record.WorkItemKey, "main"); err == nil {
+			t.Fatal("accepted mismatched envelope expiry binding")
+		}
+	})
+	t.Run("missing expiry binding", func(t *testing.T) {
+		mismatched := envelope
+		mismatched.ExpiresAt = nil
+		if _, err := ValidateSignedAdoptionRecord(mismatched, registry, record.IssuedAt, record.RepositoryID, record.WorkItemKey, "main"); err == nil {
+			t.Fatal("accepted envelope without expiry binding")
+		}
+	})
+	t.Run("timestamp binding mismatch", func(t *testing.T) {
+		issuedAt := record.IssuedAt.Add(time.Second)
+		mismatched, err := signature.Sign(payload, record.SignerIdentity, record.AuthorizedRole, privateKey, issuedAt, &record.ExpiresAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ValidateSignedAdoptionRecord(mismatched, registry, record.IssuedAt, record.RepositoryID, record.WorkItemKey, "main"); err == nil {
 			t.Fatal("accepted mismatched envelope timestamp")
 		}
 	})
@@ -154,6 +207,29 @@ func TestParseAdoptionRecordRejectsUnknownAndTrailingFields(t *testing.T) {
 		if _, err := ParseAdoptionRecord([]byte(input)); err == nil {
 			t.Fatalf("accepted %s", input)
 		}
+	}
+}
+
+func TestParseAdoptionRecordRejectsDuplicateMembersAtEveryObjectDepth(t *testing.T) {
+	data, err := MarshalAdoptionRecord(validAdoptionRecord())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name    string
+		needle  string
+		replace string
+	}{
+		{"root", `"id":"adoption-`, `"id":"ignored","id":"adoption-`},
+		{"nested object", `"reviewer":{"assessment_digest":`, `"reviewer":{"assessment_digest":"ignored","assessment_digest":`},
+		{"array object", `"name":"make build"`, `"name":"ignored","name":"make build"`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input := strings.Replace(string(data), test.needle, test.replace, 1)
+			if _, err := ParseAdoptionRecord([]byte(input)); err == nil || !strings.Contains(err.Error(), "duplicate JSON member") {
+				t.Fatalf("error = %v, want duplicate-member rejection", err)
+			}
+		})
 	}
 }
 

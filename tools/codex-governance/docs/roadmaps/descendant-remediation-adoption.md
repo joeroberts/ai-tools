@@ -13,7 +13,8 @@ Publication remains unauthorized.
 
 ## Milestone Relationship
 
-#69 is the immediate blocker for publishing the final reviewed REK-40 branch.
+GitHub issue #69 is the immediate blocker for publishing the final reviewed
+REK-40 branch.
 It provides the focused successor transition that #22 must later consume for
 bounded remediation cycles. It coordinates with #68 for future roadmap-impact
 enforcement, but roadmap changes remain explicit reviewed Git diffs until #68
@@ -47,7 +48,8 @@ to the approved behavior.
 ## Delivery Order
 
 ```text
-#69 Phase 1 -> #69 Phase 2 -> #69 Phase 3 -> resume REK-40 publication
+GitHub issue #69 Phase 1 -> GitHub issue #69 Phase 2
+-> GitHub issue #69 Phase 3 -> resume REK-40 publication
                                       |
                                       +-> #22 consumes the settled transition
 ```

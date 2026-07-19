@@ -121,7 +121,7 @@ the stricter per-slice file limits below remain binding.
         "internal/implementation"
       ],
       "review_budget": {
-        "max_changed_files": 9,
+        "max_changed_files": 10,
         "max_changed_lines": 800,
         "components": [
           "ADR and successor authority contract",

@@ -30,7 +30,10 @@ and `internal/implementation`.
 
 ## Review Budget
 
-This phase is limited to 9 changed files, 800 changed lines, and ADR and successor authority contract, versioned schema and validation fixtures.
+This phase is limited to 10 changed files, 800 changed lines, and exactly two
+components: ADR and successor authority contract, versioned schema and
+validation fixtures. Both the remediation delta and the complete
+planning-base-to-candidate implementation diff must remain within this budget.
 
 ## Declared Implementation Slice
 
@@ -50,7 +53,7 @@ This phase is limited to 9 changed files, 800 changed lines, and ADR and success
         "internal/implementation"
       ],
       "review_budget": {
-        "max_changed_files": 9,
+        "max_changed_files": 10,
         "max_changed_lines": 800,
         "components": [
           "ADR and successor authority contract",

@@ -63,17 +63,20 @@ type AdoptionRecord struct {
 	PrecedingAuditEventID string                 `json:"preceding_audit_event_id"`
 }
 
+// AdoptionReviewEvidence binds distinct assessments to the adopted diff.
 type AdoptionReviewEvidence struct {
 	Reviewer       AssessmentBinding `json:"reviewer"`
 	Verifier       AssessmentBinding `json:"verifier"`
 	CombinedDigest string            `json:"combined_digest"`
 }
 
+// AssessmentBinding identifies one independent assessment artifact.
 type AssessmentBinding struct {
 	ExecutorID       string `json:"executor_id"`
 	AssessmentDigest string `json:"assessment_digest"`
 }
 
+// CheckOutcome records one deterministic passing validation result.
 type CheckOutcome struct {
 	Name         string `json:"name"`
 	Outcome      string `json:"outcome"`
@@ -83,6 +86,9 @@ type CheckOutcome struct {
 // ParseAdoptionRecord rejects unknown fields, trailing JSON, and every
 // structurally incomplete or syntactically ambiguous authority binding.
 func ParseAdoptionRecord(data []byte) (AdoptionRecord, error) {
+	if err := rejectDuplicateJSONMembers(data); err != nil {
+		return AdoptionRecord{}, fmt.Errorf("parse adoption record: %w", err)
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	var record AdoptionRecord
@@ -114,6 +120,7 @@ func MarshalAdoptionRecord(record AdoptionRecord) ([]byte, error) {
 	return signature.Canonicalize(encoded)
 }
 
+// ValidateAdoptionRecord validates the context-independent payload contract.
 func ValidateAdoptionRecord(record AdoptionRecord) error {
 	if record.FormatVersion != AdoptionFormatVersion {
 		return fmt.Errorf("unsupported adoption-record version %d", record.FormatVersion)
@@ -164,13 +171,20 @@ func ValidateAdoptionRecord(record AdoptionRecord) error {
 }
 
 // ValidateAdoptionRecordFor binds a structurally valid payload to the exact
-// repository and Jira work item expected by its consumer.
-func ValidateAdoptionRecordFor(record AdoptionRecord, repositoryID, workItemKey string) error {
+// repository, Jira work item, and normalized configured default branch expected
+// by its consumer.
+func ValidateAdoptionRecordFor(record AdoptionRecord, repositoryID, workItemKey, defaultBranch string) error {
 	if err := ValidateAdoptionRecord(record); err != nil {
 		return err
 	}
 	if record.RepositoryID != repositoryID || record.WorkItemKey != workItemKey {
 		return fmt.Errorf("adoption record repository or work item does not match")
+	}
+	if !branchPattern.MatchString(defaultBranch) || strings.HasPrefix(defaultBranch, "refs/") {
+		return fmt.Errorf("adoption record consumer has an invalid configured default branch")
+	}
+	if record.CandidateBranch == defaultBranch {
+		return fmt.Errorf("adoption record candidate branch matches the configured default branch")
 	}
 	return nil
 }
@@ -178,7 +192,7 @@ func ValidateAdoptionRecordFor(record AdoptionRecord, repositoryID, workItemKey 
 // ValidateSignedAdoptionRecord verifies the common signed envelope and binds
 // its signer and timestamps exactly to the validated payload. A key omitted
 // from the registry is treated as revoked by the shared signature contract.
-func ValidateSignedAdoptionRecord(envelope signature.Envelope, registry signature.Registry, now time.Time, repositoryID, workItemKey string) (AdoptionRecord, error) {
+func ValidateSignedAdoptionRecord(envelope signature.Envelope, registry signature.Registry, now time.Time, repositoryID, workItemKey, defaultBranch string) (AdoptionRecord, error) {
 	if err := registry.Verify(envelope, []string{"technical-owner"}, now); err != nil {
 		return AdoptionRecord{}, fmt.Errorf("verify signed adoption record: %w", err)
 	}
@@ -186,7 +200,7 @@ func ValidateSignedAdoptionRecord(envelope signature.Envelope, registry signatur
 	if err != nil {
 		return AdoptionRecord{}, err
 	}
-	if err := ValidateAdoptionRecordFor(record, repositoryID, workItemKey); err != nil {
+	if err := ValidateAdoptionRecordFor(record, repositoryID, workItemKey, defaultBranch); err != nil {
 		return AdoptionRecord{}, err
 	}
 	if now.Before(record.IssuedAt) {
@@ -196,6 +210,92 @@ func ValidateSignedAdoptionRecord(envelope signature.Envelope, registry signatur
 		return AdoptionRecord{}, fmt.Errorf("adoption record does not bind its signed envelope")
 	}
 	return record, nil
+}
+
+// rejectDuplicateJSONMembers walks the raw token stream before decoding into
+// structs because encoding/json otherwise silently keeps the final value of a
+// duplicate member. Every object, including nested evidence and check objects,
+// must have unique names before it can carry authority.
+func rejectDuplicateJSONMembers(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok || delimiter != '{' {
+		return fmt.Errorf("adoption record must be a JSON object")
+	}
+	if err := walkJSONObject(decoder); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("input contains multiple JSON values")
+		}
+		return err
+	}
+	return nil
+}
+
+func walkJSONObject(decoder *json.Decoder) error {
+	members := make(map[string]struct{})
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		name, ok := token.(string)
+		if !ok {
+			return fmt.Errorf("object member name is invalid")
+		}
+		if _, exists := members[name]; exists {
+			return fmt.Errorf("duplicate JSON member %q", name)
+		}
+		members[name] = struct{}{}
+		if err := walkJSONValue(decoder); err != nil {
+			return err
+		}
+	}
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	if delimiter, ok := token.(json.Delim); !ok || delimiter != '}' {
+		return fmt.Errorf("object is not terminated")
+	}
+	return nil
+}
+
+func walkJSONValue(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delimiter {
+	case '{':
+		return walkJSONObject(decoder)
+	case '[':
+		for decoder.More() {
+			if err := walkJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		if closing, ok := token.(json.Delim); !ok || closing != ']' {
+			return fmt.Errorf("array is not terminated")
+		}
+		return nil
+	default:
+		return fmt.Errorf("invalid JSON delimiter %q", delimiter)
+	}
 }
 
 func hasDuplicate(values []string) bool {
