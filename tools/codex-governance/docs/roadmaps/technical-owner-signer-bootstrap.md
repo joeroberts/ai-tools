@@ -2,12 +2,13 @@
 
 ## Status
 
-`Jira-planning` — GitHub issue
-[#72](https://github.com/joeroberts/ai-tools/issues/72) is the backlog source.
-Jira Story [REK-43](https://rekonlabs.atlassian.net/browse/REK-43) and primary
-Subtask [REK-44](https://rekonlabs.atlassian.net/browse/REK-44) were read back
-as `To Do`. Implementation remains unauthorized until the planning baseline is
-committed and REK-44 is explicitly transitioned to `In Progress` and read back.
+`complete` — repository delivery for GitHub issue
+[#72](https://github.com/joeroberts/ai-tools/issues/72) merged in
+[PR #73](https://github.com/joeroberts/ai-tools/pull/73) as
+`6f70e448c0834fb0b416076f19ff21832d2a12a5`.
+
+Jira remains the authoritative execution record. This roadmap deliberately
+does not duplicate its mutable lifecycle status.
 
 ## Phase 1: Fixed-Role Signer Bootstrap
 
@@ -28,7 +29,7 @@ cleanup or read-back failures as blockers.
 ```text
 fixed-role signer bootstrap
   -> trust onboarding and verification
-  -> #69 Phase 2 planning resumes
+  -> #69 Phase 2 remains pending until separately authorized
 ```
 
 Both phases form one Jira implementation Subtask with exactly two review
@@ -43,7 +44,7 @@ exact diff before commit or publication.
 
 ## Completion Rule
 
-This roadmap becomes `complete` only after the implementation PR merges, the
-technical-owner signer and public trust entry are verified by read-back, and
-the Jira Story/Subtask finalize. External state never silently changes this
-file.
+Repository delivery is complete: the implementation PR merged and the
+technical-owner signer and public trust entry were verified by read-back. Jira
+finalization and closing GitHub issue #72 remain separately authorized external
+actions. External state never silently changes this file.
