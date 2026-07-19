@@ -2,14 +2,14 @@
 
 ## Status
 
-`implementation-ready` — REK-43 is `To Do`; REK-44 is `In Progress`.
+`closed` — repository delivery is complete in
+[PR #73](https://github.com/joeroberts/ai-tools/pull/73), merged as
+`6f70e448c0834fb0b416076f19ff21832d2a12a5`.
 
-GitHub issue [#72](https://github.com/joeroberts/ai-tools/issues/72) is the
-approved backlog source. Jira Story
-[REK-43](https://rekonlabs.atlassian.net/browse/REK-43) and primary Subtask
-[REK-44](https://rekonlabs.atlassian.net/browse/REK-44) were created from the
-approved plan. The next transition is independent exact-diff review and
-verification evidence before an authorized commit.
+Jira remains the authoritative execution record; this document records only
+the durable repository closeout and does not restate mutable Jira lifecycle
+status. The next transition is the separately authorized Jira and GitHub
+closeout, then stop without starting GitHub issue #69 Phase 2.
 
 ## Scope
 
@@ -46,11 +46,34 @@ private material outside the repository.
 
 ## Review Budget
 
-Maximum 11 changed files, 850 changed lines, approved paths, and exactly two
-components. Scope expansion requires a separately approved amendment or work
+The implementation delivery stayed within its approved scope. This closeout is
+limited to three existing Markdown files, 180 changed lines, and one docs
+component. Scope expansion requires a separately approved amendment or work
 item before implementation edits.
 
 ## Dependency
 
-This work must merge and the technical-owner trust entry must be reviewed
-before #69 Phase 2 planning resumes. It does not authorize Phase 2 itself.
+The merged technical-owner bootstrap delivery and reviewed public trust entry
+are the prerequisite for #69 sequencing. They do not authorize implementation,
+planning, or resumption of GitHub issue #69 Phase 2.
+
+## Closeout Handoff
+
+PR #73 delivered the fixed technical-owner authority model: an approval-gated,
+fixed-role local signer bootstrap with public-trust onboarding and exact
+read-back verification. The existing safety boundaries remain in force:
+private signer material stays outside the repository; no adoption record was
+created, signed, persisted, revoked, or consumed; and review, publication, and
+one-use authorization gates were not weakened.
+
+The manager treated CodeRabbit comments as advisory evidence. Each comment was
+validated against user direction, the canonical specification, the Jira
+contract, and repository rules. Three in-scope findings were remediated; a
+later platform-contract suggestion was out of scope, and an optional
+portability question was separated into uncommitted
+[GitHub issue #74](https://github.com/joeroberts/ai-tools/issues/74).
+Invalid or out-of-scope automated comments cannot widen the active work item.
+
+GitHub issue #74 is a future platform-contract decision, not a promise of
+Windows, Plan 9, or general cross-platform support. It does not block #72
+closeout or #69 sequencing.

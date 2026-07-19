@@ -31,18 +31,26 @@ contract and deterministic schema fixtures are merged.
 
 ## Prerequisite: Bootstrap Technical-Owner Trust
 
-Status: `Jira-planning` — GitHub issue
-[#72](https://github.com/joeroberts/ai-tools/issues/72), Jira Story
-[REK-43](https://rekonlabs.atlassian.net/browse/REK-43), and primary Subtask
-[REK-44](https://rekonlabs.atlassian.net/browse/REK-44). REK-44 is `To Do`.
+Status: `complete` — GitHub issue
+[#72](https://github.com/joeroberts/ai-tools/issues/72) repository delivery
+merged in [PR #73](https://github.com/joeroberts/ai-tools/pull/73) as
+`6f70e448c0834fb0b416076f19ff21832d2a12a5`. Jira remains the authoritative
+execution record; this roadmap does not duplicate its mutable lifecycle
+status.
 
 Provide a distinct governed technical-owner signer and reviewed public trust
-entry before Phase 2 attempts live registry integration. This prerequisite does
+entry before Phase 2 attempts live registry integration. This prerequisite did
 not implement adoption validation or persistence.
+
+[GitHub issue #74](https://github.com/joeroberts/ai-tools/issues/74) records an
+uncommitted future platform-contract decision. It does not block #72 closeout
+or #69 sequencing and makes no promise of Windows, Plan 9, or general
+cross-platform support.
 
 ## Phase 2: Validate And Persist Adoption
 
-Status: `pending` — blocked by GitHub issue #72.
+Status: `pending` — GitHub issue #72's technical-owner prerequisite is
+complete, but Phase 2 remains explicitly unauthorized.
 
 Implement full-range lineage, source, scope, budget, guidance, validation, and
 review-evidence checks. Provide exact preview and explicitly approved atomic,
