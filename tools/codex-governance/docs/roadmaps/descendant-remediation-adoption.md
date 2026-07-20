@@ -62,10 +62,12 @@ Status: `complete` — [PR #80](https://github.com/joeroberts/ai-tools/pull/80)
 merged at `6dba9ebc6cfae13a286bc779245358cd605526de`; REK-48 / REK-49 were
 finalized with verified Jira read-back.
 
-Authorization issuance, push, and pull-request creation now verify the complete
-successor chain, including cross-repository, recovery, replay, revocation,
-moved-state, and REK-40-shaped lifecycle coverage. REK-40 publication remains
-separately unauthorized.
+When a successor record is supplied, authorization issuance, push, and
+pull-request creation verify the complete successor chain, including
+cross-repository, recovery, replay, revocation, moved-state, and REK-40-shaped
+lifecycle coverage. Runs without a successor record retain their existing
+predecessor publication path. REK-40 publication remains separately
+unauthorized.
 
 ## Delivery Order
 
