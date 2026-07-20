@@ -2,7 +2,7 @@
 
 ## Planning Record
 
-GitHub issue [#69](https://github.com/joeroberts/ai-tools/issues/69) is the backlog source. Jira Story [REK-48](https://rekonlabs.atlassian.net/browse/REK-48) and primary Subtask [REK-49](https://rekonlabs.atlassian.net/browse/REK-49) are the approved Phase 3 execution contract and were read back `In Progress`. Commit this planning baseline and run a fresh implementation preflight before any code edit.
+GitHub issue [#69](https://github.com/joeroberts/ai-tools/issues/69) is the backlog source. Jira Story [REK-48](https://rekonlabs.atlassian.net/browse/REK-48) and primary Subtask [REK-49](https://rekonlabs.atlassian.net/browse/REK-49) are the approved Phase 3 execution contract and were read back `In Progress`. Planning baseline commit `c3469dd79632c1d688b699b48540bf3c40f6a4f7` and preflight `run-647a35f1589e3d50` authorize the bounded implementation slice.
 
 ## Technical Design
 

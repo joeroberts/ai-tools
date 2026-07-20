@@ -29,6 +29,7 @@ type PublicationAuthorizationPayload struct {
 	ImplementationBaseSHA string   `json:"implementation_base_sha,omitempty"`
 	ExpectedTargetSHA     string   `json:"expected_target_sha,omitempty"`
 	CommitSHA             string   `json:"commit_sha"`
+	SuccessorRecordID     string   `json:"successor_record_id,omitempty"`
 	PRTargetBranch        string   `json:"pr_target_branch"`
 	AllowedOperations     []string `json:"allowed_operations"`
 }
@@ -140,7 +141,7 @@ func ConsumeSignedAuthorization(runtimeRoot string, authorization SignedPublicat
 }
 
 func validatePublicationPayload(payload PublicationAuthorizationPayload) error {
-	if (payload.FormatVersion != 1 && payload.FormatVersion != 2) || payload.WorkItemKey == "" || payload.RunID == "" || payload.RepositoryID == "" || payload.Remote == "" || payload.RemoteFingerprint == "" || !strings.HasPrefix(payload.Branch, "codex/") || len(payload.CommitSHA) < 7 || len(payload.AllowedOperations) == 0 {
+	if (payload.FormatVersion != 1 && payload.FormatVersion != 2) || payload.WorkItemKey == "" || payload.RunID == "" || payload.RepositoryID == "" || payload.Remote == "" || payload.RemoteFingerprint == "" || !strings.HasPrefix(payload.Branch, "codex/") || len(payload.CommitSHA) < 7 || (payload.SuccessorRecordID != "" && !recordPattern.MatchString(payload.SuccessorRecordID)) || len(payload.AllowedOperations) == 0 {
 		return fmt.Errorf("signed publication authorization payload is invalid")
 	}
 	if payload.FormatVersion == 1 && len(payload.ExpectedBaseSHA) < 7 {

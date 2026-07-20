@@ -2,9 +2,9 @@
 
 ## Status
 
-`Jira-planning`
+`implementation-ready`
 
-GitHub issue [#69](https://github.com/joeroberts/ai-tools/issues/69) is the approved backlog source. Phase 1, the technical-owner signer prerequisite, and Phase 2 are merged. Jira Story [REK-48](https://rekonlabs.atlassian.net/browse/REK-48) and primary Subtask [REK-49](https://rekonlabs.atlassian.net/browse/REK-49) were created from the approved plan and read back `In Progress`. No Phase 3 implementation or REK-40 publication may begin until this planning baseline is committed and a fresh implementation preflight passes.
+GitHub issue [#69](https://github.com/joeroberts/ai-tools/issues/69) is the approved backlog source. Phase 1, the technical-owner signer prerequisite, and Phase 2 are merged. Jira Story [REK-48](https://rekonlabs.atlassian.net/browse/REK-48) and primary Subtask [REK-49](https://rekonlabs.atlassian.net/browse/REK-49) were created from the approved plan and read back `In Progress`. Planning baseline commit `c3469dd79632c1d688b699b48540bf3c40f6a4f7` and preflight `run-647a35f1589e3d50` authorize this bounded implementation slice; REK-40 publication remains excluded.
 
 ## Problem
 

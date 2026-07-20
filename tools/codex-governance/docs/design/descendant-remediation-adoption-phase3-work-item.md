@@ -2,9 +2,9 @@
 
 ## Status
 
-`Jira-planning`
+`implementation-ready`
 
-GitHub issue [#69](https://github.com/joeroberts/ai-tools/issues/69) is the approved backlog source. Phase 1, the technical-owner prerequisite, and Phase 2 are complete. Jira Story [REK-48](https://rekonlabs.atlassian.net/browse/REK-48) and primary Subtask [REK-49](https://rekonlabs.atlassian.net/browse/REK-49) were created from the approved plan and read back `In Progress`. No Phase 3 implementation may start until this planning baseline is committed and a fresh preflight succeeds.
+GitHub issue [#69](https://github.com/joeroberts/ai-tools/issues/69) is the approved backlog source. Phase 1, the technical-owner prerequisite, and Phase 2 are complete. Jira Story [REK-48](https://rekonlabs.atlassian.net/browse/REK-48) and primary Subtask [REK-49](https://rekonlabs.atlassian.net/browse/REK-49) were created from the approved plan and read back `In Progress`. Planning baseline commit `c3469dd79632c1d688b699b48540bf3c40f6a4f7` and preflight `run-647a35f1589e3d50` authorize this bounded implementation work.
 
 ## Scope
 
@@ -40,4 +40,4 @@ The future implementation Subtask is limited to 10 files, 850 changed lines, the
 
 ## Next Transition
 
-Commit this approved planning baseline, record that commit in REK-49, and run a fresh implementation preflight against the signed REK-48 / REK-49 export. Only then may Phase 3 code work begin.
+Implement the two approved successor-consumption components. The next Jira update trigger is the governed implementation commit.
