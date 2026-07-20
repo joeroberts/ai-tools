@@ -819,3 +819,10 @@ func TestRunJiraPlanValidateRejectsContractDriftAndLegacyInvocation(t *testing.T
 		t.Fatalf("contract drift validate = %d, output=%q", code, stdout.String())
 	}
 }
+
+func TestRunImplementationAdoptRequiresAuditEvidence(t *testing.T) {
+	args := []string{"implementation", "adopt", "--run", "run.json", "--bundle", "bundle.json", "--candidate-worktree", ".", "--review-evidence", "review.json", "--check-evidence", "checks.json", "--registry", filepath.Join(t.TempDir(), "registry"), "--reason", "reason", "--issued-at", "2026-07-20T00:00:00Z", "--expires-at", "2026-07-20T01:00:00Z"}
+	if code := Run(args, &bytes.Buffer{}, &bytes.Buffer{}); code != 2 {
+		t.Fatalf("implementation adopt without audit evidence = %d", code)
+	}
+}
