@@ -2,9 +2,9 @@
 
 ## Status
 
-`active` — Phases 1 and 2 and the GitHub issue #72 prerequisite are complete;
-Phase 3 is in `Jira-planning`; REK-48 / REK-49 are created and the primary
-Subtask is read back `In Progress`.
+`active` — all three #69 implementation phases and the GitHub issue #72
+prerequisite are complete. The remaining transition is separately authorized
+resumption of the blocked REK-40 / #67 publication path.
 
 GitHub issue [#69](https://github.com/joeroberts/ai-tools/issues/69) is the
 backlog source. Phase 1 is planned in Jira Story
@@ -58,13 +58,16 @@ owner-only, non-overwriting successor persistence.
 
 ## Phase 3: Consume Successor In Publication
 
-Status: `Jira-planning` — commit the planning baseline and run a fresh
-implementation preflight before implementation.
+Status: `complete` — [PR #80](https://github.com/joeroberts/ai-tools/pull/80)
+merged at `6dba9ebc6cfae13a286bc779245358cd605526de`; REK-48 / REK-49 were
+finalized with verified Jira read-back.
 
-Make authorization issuance, push, and pull-request creation verify the complete
-successor chain. Add cross-repository, recovery, replay, revocation, moved-state,
-and REK-40-shaped lifecycle fixtures. Update canonical and operator documents
-to the approved behavior.
+When a successor record is supplied, authorization issuance, push, and
+pull-request creation verify the complete successor chain, including
+cross-repository, recovery, replay, revocation, moved-state, and REK-40-shaped
+lifecycle coverage. Runs without a successor record retain their existing
+predecessor publication path. REK-40 publication remains separately
+unauthorized.
 
 ## Delivery Order
 
