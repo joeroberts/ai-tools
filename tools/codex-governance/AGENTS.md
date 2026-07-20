@@ -60,6 +60,35 @@ the current gate and immediate action in commentary, and immediately execute
 the next deterministic stage when it completes. Do not announce a future action
 as though it has already begun.
 
+## Approval Continuity
+
+An explicit user approval of a governed planning contract, work item, implementation contract, or stated end-to-end workflow authorizes every action that contract expressly requires or permits.
+
+That authorization includes:
+- local workflow state updates and any required `--approve` flags;
+- planning generation, review, verification, plan approval, and dry-run previews;
+- in-scope Jira reads, creates, updates, transitions, finalization, and mandatory read-backs;
+- implementation preflight, implementation, validation, reviewer/verifier evidence, remediation within the approved scope, commit, push, and pull-request creation;
+- separately authorized publication steps when publication is expressly included in the approved contract.
+
+Do not ask the user to repeat, restate, or separately approve an intermediate step solely because:
+- a CLI command uses an `--approve` flag;
+- a workflow has a local approval state;
+- a Jira write must be previewed and read back;
+- a tool reports that a plan is “ready for approval”; or
+- a normal governed gate occurs between the user’s approval and the approved outcome.
+
+Instead, perform the required preview, execute the in-scope operation, retain or report the required evidence, perform the required read-back, and continue the workflow.
+
+A new user approval is required only when one of these conditions is true:
+- the proposed action would exceed the approved contract’s scope, allowed paths, review budget, acceptance criteria, dependencies, authority model, or stated non-goals;
+- the action is a materially different external action not expressly covered by the approved contract;
+- a required gate fails and there is more than one materially different safe remediation path;
+- proceeding would require a new secret, credential, external owner decision, or authority not already available and authorized; or
+- the user explicitly pauses, cancels, or narrows the workflow.
+
+When continuing under prior approval, give concise factual progress updates. Do not phrase a status update as a request for confirmation.
+
 ## Commit & Pull Request Guidelines
 
 Reviewer and verifier evidence is a hard gate. Before any commit, push, or
@@ -87,10 +116,14 @@ name the next required transition. Before the first implementation edit, verify
 the Jira linkage and state the next Jira update trigger.
 
 For every governed commit, blocker, PR, and merge, prepare a factual Jira
-update. Jira remains the authoritative execution record. Under bounded-phase
-authorization, preview and read back factual Jira writes without separate
-per-action prompts. Never make a Jira write from a hook, background process, or
-unstated inference.
+update. Jira remains the authoritative execution record. For work covered by an
+explicitly approved governed contract, the contract approval is the explicit
+authorization for every in-scope Jira write. Before each Jira write, prepare or
+run the required factual preview; after it, perform and report the required
+read-back. Do not request a duplicate user confirmation between preview and
+execution. Require new user approval only for an out-of-contract Jira mutation
+or one of the Approval Continuity exceptions. Never make a Jira write from a
+hook, background process, or unstated inference.
 
 Before the first implementation edit, the primary Subtask must be transitioned
 to exactly `In Progress`, and the Jira read-back must confirm that status. Do
