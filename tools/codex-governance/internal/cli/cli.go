@@ -1999,6 +1999,11 @@ func runImplementationPush(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "resolve signed push successor: %v\n", firstError(err, fmt.Errorf("successor record does not match signed authorization")))
 		return 1
 	}
+	resolvedRuntimeRoot, err := runtimeRoot(*runtimeRootPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "resolve runtime root: %v\n", err)
+		return 2
+	}
 	remoteURL, err := implementation.RemoteURL(*worktreePath, authorization.Payload.Remote)
 	if err != nil {
 		fmt.Fprintf(stderr, "read authorized remote: %v\n", err)
@@ -2016,7 +2021,7 @@ func runImplementationPush(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "validate authorized commit lineage: %v\n", err)
 		return 1
 	}
-	if err := validatePublicationReviewEvidence(*reviewEvidencePath, *worktreePath, run); err != nil {
+	if err := validatePublicationReviewEvidence(*reviewEvidencePath, *worktreePath, publicationRun); err != nil {
 		fmt.Fprintf(stderr, "validate independent review evidence: %v\n", err)
 		return 1
 	}
@@ -2024,19 +2029,34 @@ func runImplementationPush(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "validate authorized remote target ref: %v\n", err)
 		return 1
 	}
-	if err := implementation.PrepareSignedPush(&run); err != nil {
-		fmt.Fprintf(stderr, "prepare authorized push: %v\n", err)
-		return 1
+	if authorization.Payload.SuccessorRecordID == "" {
+		resolvedRuntimeRoot, err = runtimeRoot(*runtimeRootPath)
 	}
-	publicationRun.State = run.State
-	if err := implementation.SaveRun(*runPath, run); err != nil {
-		fmt.Fprintf(stderr, "persist pre-push state: %v\n", err)
-		return 2
-	}
-	resolvedRuntimeRoot, err := runtimeRoot(*runtimeRootPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "resolve runtime root: %v\n", err)
 		return 2
+	}
+	if authorization.Payload.SuccessorRecordID != "" {
+		if err := implementation.PrepareSignedPush(&publicationRun); err != nil {
+			fmt.Fprintf(stderr, "prepare authorized push: %v\n", err)
+			return 1
+		}
+		if err := implementation.SaveSuccessorPublicationState(resolvedRuntimeRoot, authorization, publicationRun); err != nil {
+			fmt.Fprintf(stderr, "persist successor pre-push state: %v\n", err)
+			return 2
+		}
+	} else if err := implementation.PrepareSignedPush(&run); err != nil {
+		fmt.Fprintf(stderr, "prepare authorized push: %v\n", err)
+		return 1
+	}
+	if authorization.Payload.SuccessorRecordID == "" {
+		publicationRun.State = run.State
+	}
+	if authorization.Payload.SuccessorRecordID == "" {
+		if err := implementation.SaveRun(*runPath, run); err != nil {
+			fmt.Fprintf(stderr, "persist pre-push state: %v\n", err)
+			return 2
+		}
 	}
 	if err := implementation.ConsumeSignedAuthorization(resolvedRuntimeRoot, authorization, "push"); err != nil {
 		fmt.Fprintf(stderr, "consume signed push authorization: %v\n", err)
@@ -2047,7 +2067,12 @@ func runImplementationPush(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	run.State = publicationRun.State
-	if err := implementation.SaveRun(*runPath, run); err != nil {
+	if authorization.Payload.SuccessorRecordID != "" {
+		if err := implementation.SaveSuccessorPublicationState(resolvedRuntimeRoot, authorization, publicationRun); err != nil {
+			fmt.Fprintf(stderr, "persist successor pushed state: %v\n", err)
+			return 2
+		}
+	} else if err := implementation.SaveRun(*runPath, run); err != nil {
 		fmt.Fprintf(stderr, "persist pushed state: %v\n", err)
 		return 2
 	}
@@ -2097,6 +2122,19 @@ func runImplementationCreatePR(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "resolve signed pull request successor: %v\n", firstError(err, fmt.Errorf("successor record does not match signed authorization")))
 		return 1
 	}
+	resolvedRuntimeRoot, err := runtimeRoot(*runtimeRootPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "resolve runtime root: %v\n", err)
+		return 2
+	}
+	if authorization.Payload.SuccessorRecordID != "" {
+		state, err := implementation.LoadSuccessorPublicationState(resolvedRuntimeRoot, authorization)
+		if err != nil {
+			fmt.Fprintf(stderr, "load successor publication state: %v\n", err)
+			return 1
+		}
+		publicationRun.State, publicationRun.PullRequestURL = state.State, state.PullRequestURL
+	}
 	remoteURL, err := implementation.RemoteURL(*worktreePath, authorization.Payload.Remote)
 	if err != nil {
 		fmt.Fprintf(stderr, "read authorized remote: %v\n", err)
@@ -2114,7 +2152,7 @@ func runImplementationCreatePR(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "validate authorized commit lineage: %v\n", err)
 		return 1
 	}
-	if err := validatePublicationReviewEvidence(*reviewEvidencePath, *worktreePath, run); err != nil {
+	if err := validatePublicationReviewEvidence(*reviewEvidencePath, *worktreePath, publicationRun); err != nil {
 		fmt.Fprintf(stderr, "validate independent review evidence: %v\n", err)
 		return 1
 	}
@@ -2122,7 +2160,9 @@ func runImplementationCreatePR(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "validate authorized remote target ref: %v\n", err)
 		return 1
 	}
-	resolvedRuntimeRoot, err := runtimeRoot(*runtimeRootPath)
+	if authorization.Payload.SuccessorRecordID == "" {
+		resolvedRuntimeRoot, err = runtimeRoot(*runtimeRootPath)
+	}
 	if err != nil {
 		fmt.Fprintf(stderr, "resolve runtime root: %v\n", err)
 		return 2
@@ -2136,9 +2176,16 @@ func runImplementationCreatePR(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	run.State, run.PullRequestURL = publicationRun.State, publicationRun.PullRequestURL
-	if err := implementation.SaveRun(*runPath, run); err != nil {
-		fmt.Fprintf(stderr, "persist pull request state: %v\n", err)
-		return 2
+	if authorization.Payload.SuccessorRecordID != "" {
+		if err := implementation.SaveSuccessorPublicationState(resolvedRuntimeRoot, authorization, publicationRun); err != nil {
+			fmt.Fprintf(stderr, "persist successor pull request state: %v\n", err)
+			return 2
+		}
+	} else {
+		if err := implementation.SaveRun(*runPath, run); err != nil {
+			fmt.Fprintf(stderr, "persist pull request state: %v\n", err)
+			return 2
+		}
 	}
 	fmt.Fprintf(stdout, "PASS pull request created %s\n", run.PullRequestURL)
 	return 0

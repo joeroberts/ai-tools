@@ -183,6 +183,24 @@ func TestGitHubRepositoryRequiresOwnerNameIdentity(t *testing.T) {
 	}
 }
 
+func TestSuccessorPublicationStatePreservesPredecessorRun(t *testing.T) {
+	authorization := SignedPublicationAuthorization{Digest: "sha256:" + strings.Repeat("a", 64), Payload: PublicationAuthorizationPayload{SuccessorRecordID: "adoption-" + strings.Repeat("b", 64)}}
+	run := publicationRun()
+	run.State = StatePushed
+	run.PullRequestURL = "https://example.test/pr/1"
+	root := t.TempDir()
+	if err := SaveSuccessorPublicationState(root, authorization, run); err != nil {
+		t.Fatal(err)
+	}
+	state, err := LoadSuccessorPublicationState(root, authorization)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.State != StatePushed || state.PullRequestURL != run.PullRequestURL {
+		t.Fatalf("unexpected successor state: %+v", state)
+	}
+}
+
 func publicationGit(t *testing.T, worktree string, args ...string) string {
 	t.Helper()
 	output, err := git(worktree, args...)
