@@ -63,6 +63,7 @@ Usage:
   codex-governance runtime check --work-item KEY
   codex-governance runtime cache clear [--runtime-root PATH]
   codex-governance implementation preflight --work-item PATH --offline-export PATH --adapter NAME --bundle-output PATH --run-output PATH [--repo-root PATH] [--runtime-root PATH]
+  codex-governance implementation adopt --run PATH --bundle PATH --candidate-worktree PATH --review-evidence PATH --check-evidence PATH --audit-evidence PATH --registry PATH --reason TEXT --issued-at RFC3339 --expires-at RFC3339 [--signer PATH --approve]
   codex-governance implementation start --run PATH --bundle PATH --approve [--repo-root PATH] [--runtime-root PATH] [--codex-bin PATH]
   codex-governance implementation reconcile --run PATH
   codex-governance implementation verify --run PATH --bundle PATH [--repo-root PATH]
@@ -1078,12 +1079,15 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 }
 
 func runImplementation(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 || !oneOf(args[0], "preflight", "start", "reconcile", "verify", "review", "verification", "remediate", "assess", "evidence", "status", "metrics", "audit", "commit", "bootstrap-technical-owner", "bootstrap-publish-owner", "issue-publish", "authorize-publish", "push", "create-pr") {
-		fmt.Fprintln(stderr, "usage: codex-governance implementation preflight|start|reconcile|verify|review|verification|remediate|assess|evidence|status|metrics|audit|commit|bootstrap-technical-owner|bootstrap-publish-owner|issue-publish|authorize-publish|push|create-pr")
+	if len(args) == 0 || !oneOf(args[0], "preflight", "adopt", "start", "reconcile", "verify", "review", "verification", "remediate", "assess", "evidence", "status", "metrics", "audit", "commit", "bootstrap-technical-owner", "bootstrap-publish-owner", "issue-publish", "authorize-publish", "push", "create-pr") {
+		fmt.Fprintln(stderr, "usage: codex-governance implementation preflight|adopt|start|reconcile|verify|review|verification|remediate|assess|evidence|status|metrics|audit|commit|bootstrap-technical-owner|bootstrap-publish-owner|issue-publish|authorize-publish|push|create-pr")
 		return 2
 	}
 	if args[0] == "start" {
 		return runImplementationStart(args[1:], stdout, stderr)
+	}
+	if args[0] == "adopt" {
+		return runImplementationAdopt(args[1:], stdout, stderr)
 	}
 	if args[0] == "reconcile" {
 		return runImplementationReconcile(args[1:], stdout, stderr)
@@ -1162,6 +1166,52 @@ func runImplementation(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprintf(stdout, "PASS implementation preflight %s %s\n", result.Run.ID, result.BundlePath)
+	return 0
+}
+
+func runImplementationAdopt(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("implementation adopt", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	run := flags.String("run", "", "immutable predecessor implementation-run JSON")
+	bundle := flags.String("bundle", "", "immutable task-bundle JSON")
+	candidate := flags.String("candidate-worktree", "", "clean descendant worktree")
+	review := flags.String("review-evidence", "", "complete-range review evidence JSON")
+	checks := flags.String("check-evidence", "", "deterministic check evidence JSON")
+	audit := flags.String("audit-evidence", "", "actual predecessor audit-event evidence JSON")
+	registry := flags.String("registry", "", "owner-only adoption registry outside repository")
+	signer := flags.String("signer", "", "owner-local technical-owner signer")
+	reason := flags.String("reason", "", "adoption reason")
+	issued := flags.String("issued-at", "", "RFC3339 issuance timestamp")
+	expires := flags.String("expires-at", "", "RFC3339 expiry timestamp")
+	approve := flags.Bool("approve", false, "explicitly authorize local signing and persistence")
+	if err := flags.Parse(args); err != nil || *run == "" || *bundle == "" || *candidate == "" || *review == "" || *checks == "" || *audit == "" || *registry == "" || *reason == "" || *issued == "" || *expires == "" || flags.NArg() != 0 {
+		return 2
+	}
+	issuedAt, err := time.Parse(time.RFC3339, *issued)
+	if err != nil {
+		fmt.Fprintln(stderr, "implementation adopt: issued-at must be RFC3339")
+		return 2
+	}
+	expiresAt, err := time.Parse(time.RFC3339, *expires)
+	if err != nil {
+		fmt.Fprintln(stderr, "implementation adopt: expires-at must be RFC3339")
+		return 2
+	}
+	result, err := implementation.Adopt(implementation.AdoptionRequest{RunPath: *run, BundlePath: *bundle, CandidateWorktree: *candidate, ReviewEvidencePath: *review, CheckEvidencePath: *checks, AuditEvidencePath: *audit, RegistryPath: *registry, SignerPath: *signer, Reason: *reason, IssuedAt: issuedAt, ExpiresAt: expiresAt, Approve: *approve})
+	if err != nil {
+		fmt.Fprintf(stderr, "implementation adopt: %v\n", err)
+		return 1
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		fmt.Fprintf(stderr, "implementation adopt: render result: %v\n", err)
+		return 1
+	}
+	if *approve {
+		fmt.Fprintf(stdout, "PASS adoption record persisted %s\n", result.RecordDigest)
+	} else {
+		fmt.Fprintf(stdout, "PREVIEW %s\n", data)
+	}
 	return 0
 }
 
