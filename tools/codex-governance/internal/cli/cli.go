@@ -1184,7 +1184,13 @@ func runImplementationAdopt(args []string, stdout, stderr io.Writer) int {
 	issued := flags.String("issued-at", "", "RFC3339 issuance timestamp")
 	expires := flags.String("expires-at", "", "RFC3339 expiry timestamp")
 	approve := flags.Bool("approve", false, "explicitly authorize local signing and persistence")
-	if err := flags.Parse(args); err != nil || *run == "" || *bundle == "" || *candidate == "" || *review == "" || *checks == "" || *audit == "" || *registry == "" || *reason == "" || *issued == "" || *expires == "" || flags.NArg() != 0 {
+	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	if *run == "" || *bundle == "" || *candidate == "" || *review == "" || *checks == "" || *audit == "" || *registry == "" || *reason == "" || *issued == "" || *expires == "" || flags.NArg() != 0 {
 		return 2
 	}
 	issuedAt, err := time.Parse(time.RFC3339, *issued)

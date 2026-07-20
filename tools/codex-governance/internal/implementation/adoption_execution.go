@@ -162,7 +162,7 @@ func validateAdoption(r AdoptionRequest) (adoptionState, error) {
 	if err := validateLineage(r.CandidateWorktree, bundle.WorkItem.GitRange.BaseSHA, run.CommitSHA, candidate); err != nil {
 		return adoptionState{}, err
 	}
-	diff, err := DiffBytes(r.CandidateWorktree, bundle.WorkItem.GitRange.BaseSHA+".."+candidate)
+	diff, err := DiffBytes(r.CandidateWorktree, "--no-renames", bundle.WorkItem.GitRange.BaseSHA+".."+candidate)
 	if err != nil {
 		return adoptionState{}, err
 	}

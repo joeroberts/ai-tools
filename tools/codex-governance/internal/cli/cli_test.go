@@ -826,3 +826,9 @@ func TestRunImplementationAdoptRequiresAuditEvidence(t *testing.T) {
 		t.Fatalf("implementation adopt without audit evidence = %d", code)
 	}
 }
+
+func TestRunImplementationAdoptHelpSucceeds(t *testing.T) {
+	if code := Run([]string{"implementation", "adopt", "--help"}, &bytes.Buffer{}, &bytes.Buffer{}); code != 0 {
+		t.Fatalf("implementation adopt help = %d", code)
+	}
+}
