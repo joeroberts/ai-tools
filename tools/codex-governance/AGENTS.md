@@ -42,13 +42,23 @@ test`, `make vet`, `make build`, and `git diff --check` for functional changes.
 
 ## Active-Task Continuity
 
-Once the user authorizes a task (for example, “go,” “go for it,” or
-“approved”), continue the full governed workflow without waiting for further
-prompts: implement, validate, obtain required reviewer/verifier evidence,
-update Jira, commit, push, and create the PR when policy permits. Send concise
-progress updates, but do not end a turn or request confirmation unless a new
-external authorization, a material scope decision, or a genuine blocker
-requires the user’s input.
+Once the user authorizes a bounded phase, that authorization covers factual Jira
+records, fresh exports, preflight, implementation, validation, reviews, and
+local commits. Continue without per-action prompts. Stop only for a scope
+change, meaningful blocker, failed gate, or external protection that requires
+user input.
+
+For an approved bounded phase, automatically push, create the pull request, and
+merge when local tests, vet, build, scope checks, and independent review pass;
+CI passes; the manager evaluates CodeRabbit comments against the repository
+requirements; and no valid blocking issue remains. CodeRabbit is advisory, not
+authoritative.
+
+For every subagent or external review process, directly monitor its process and
+result artifact until terminal. Keep the active turn open while waiting, show
+the current gate and immediate action in commentary, and immediately execute
+the next deterministic stage when it completes. Do not announce a future action
+as though it has already begun.
 
 ## Commit & Pull Request Guidelines
 
@@ -77,9 +87,10 @@ name the next required transition. Before the first implementation edit, verify
 the Jira linkage and state the next Jira update trigger.
 
 For every governed commit, blocker, PR, and merge, prepare a factual Jira
-update. Jira remains the authoritative execution record, but every Jira write
-must be previewed, explicitly approved, and read back. Never make a Jira write
-from a hook, background process, or unstated inference.
+update. Jira remains the authoritative execution record. Under bounded-phase
+authorization, preview and read back factual Jira writes without separate
+per-action prompts. Never make a Jira write from a hook, background process, or
+unstated inference.
 
 Before the first implementation edit, the primary Subtask must be transitioned
 to exactly `In Progress`, and the Jira read-back must confirm that status. Do
@@ -106,4 +117,8 @@ or API commands and do not ask the user to unload models manually.
 
 ## Security & Configuration Tips
 
-Preserve the repository's approval boundaries. Do not add instructions that permit pushes, publishes, remote PR updates, tags, releases, Terraform apply, cloud mutations, destructive commands, or secret access without explicit approval.
+Preserve the repository's approval boundaries. Do not add instructions that
+permit unbounded pushes, publishes, remote PR updates, tags, releases,
+Terraform apply, cloud mutations, destructive commands, or secret access.
+Bounded-phase authorization may permit push, PR creation, and merge only under
+the active-task continuity gates above.
