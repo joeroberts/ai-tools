@@ -2,8 +2,9 @@
 
 ## Status
 
-`active` — Phase 1 is complete; GitHub issue #72 is the prerequisite before
-Phase 2 planning.
+`active` — Phases 1 and 2 and the GitHub issue #72 prerequisite are complete;
+Phase 3 is in `Jira-planning`; REK-48 / REK-49 are created and the primary
+Subtask is read back `In Progress`.
 
 GitHub issue [#69](https://github.com/joeroberts/ai-tools/issues/69) is the
 backlog source. Phase 1 is planned in Jira Story
@@ -49,8 +50,7 @@ cross-platform support.
 
 ## Phase 2: Validate And Persist Adoption
 
-Status: `pending` — GitHub issue #72's technical-owner prerequisite is
-complete, but Phase 2 remains explicitly unauthorized.
+Status: `complete` — the separately signed record is validated and persisted.
 
 Implement full-range lineage, source, scope, budget, guidance, validation, and
 review-evidence checks. Provide exact preview and explicitly approved atomic,
@@ -58,7 +58,8 @@ owner-only, non-overwriting successor persistence.
 
 ## Phase 3: Consume Successor In Publication
 
-Status: `pending`.
+Status: `Jira-planning` — commit the planning baseline and run a fresh
+implementation preflight before implementation.
 
 Make authorization issuance, push, and pull-request creation verify the complete
 successor chain. Add cross-repository, recovery, replay, revocation, moved-state,
