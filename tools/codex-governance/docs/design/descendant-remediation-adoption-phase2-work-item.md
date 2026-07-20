@@ -10,7 +10,8 @@ signer prerequisite in Jira REK-43 / REK-44 are complete. The user authorized
 Phase 2 planning on 2026-07-19. Jira Story
 [REK-46](https://rekonlabs.atlassian.net/browse/REK-46) and primary Subtask
 [REK-47](https://rekonlabs.atlassian.net/browse/REK-47) were created from the
-approved ticket plan and read back in `To Do`.
+approved ticket plan and read back in `In Progress`. The approved 2026-07-20
+scope amendment authorizes a narrow Phase 2 remediation planning update.
 
 ## Scope
 
@@ -34,7 +35,10 @@ technical-owner-signed adoption record.
 - The implementation matches the Phase 2 PRD and specification without
   aggregating Phase 3.
 - The complete-range validation and atomic-persistence components remain within
-  the declared allowed paths and 10-file, 800-line budget.
+  the declared allowed paths and 10-file, 850-line budget.
+- Focused regressions prove that complete-range `--numstat` parsing is
+  independent of Git rename detection and that a crash-left temporary registry
+  file cannot block a later safe retry.
 - Preview performs no trusted persistence, signing, audit append, remote write,
   or private-signer access.
 - Approved persistence repeats validation, verifies technical-owner trust, and
@@ -52,13 +56,13 @@ technical-owner-signed adoption record.
 
 ## Review Budget
 
-The future implementation Subtask is limited to 10 files, 800 changed lines,
+The future implementation Subtask is limited to 10 files, 850 changed lines,
 the four declared implementation paths, and exactly two components. Scope
 expansion requires a separately approved amendment before implementation edits.
 
 ## Next Transition
 
 Obtain independent reviewer and verifier evidence for this exact planning diff,
-commit the linked planning baseline after explicit approval, record that commit
-in REK-47 after exact preview and approval, then explicitly approve the Subtask
-transition to exactly `In Progress` before implementation preflight.
+commit the amended planning baseline after explicit approval, record that
+commit in REK-47 after exact preview and approval, then run a fresh
+implementation preflight against the current `In Progress` Subtask.

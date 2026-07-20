@@ -8,9 +8,11 @@ The user authorized planning on 2026-07-19. This is the executable planning
 roadmap for the second sequential Jira plan under GitHub issue #69. Jira Story
 [REK-46](https://rekonlabs.atlassian.net/browse/REK-46) and primary Subtask
 [REK-47](https://rekonlabs.atlassian.net/browse/REK-47) were created from the
-approved ticket plan and read back in `To Do`. Implementation is not authorized
-until the reviewed planning baseline is committed and REK-47 is exactly
-`In Progress`.
+approved ticket plan and read back in `In Progress`. A 2026-07-20 scope
+amendment raises the implementation line budget from 800 to 850 and adds two
+focused Phase 2 remediation regressions. Implementation remains paused until
+the amended planning baseline is reviewed and committed, then restarted from a
+fresh preflight.
 
 ## Phase 2: Validate And Persist Adoption
 
@@ -24,6 +26,10 @@ predecessor, candidate, range, scope, budget, guidance, deterministic-check,
 review, signer, expiry, registry, and replay binding; approved execution stores
 one owner-only signed record; the predecessor remains unchanged; and all
 deterministic and independent review gates pass.
+
+The remediation must prove that complete-range `--numstat` parsing is
+independent of Git rename detection and that a crash-left temporary registry
+file cannot block a later safe retry.
 
 ## Delivery Boundary
 

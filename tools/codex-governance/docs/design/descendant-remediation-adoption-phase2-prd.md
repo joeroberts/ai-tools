@@ -8,10 +8,11 @@ The user authorized Phase 2 planning on 2026-07-19. GitHub issue
 [#69](https://github.com/joeroberts/ai-tools/issues/69) is the backlog source.
 Jira Story [REK-46](https://rekonlabs.atlassian.net/browse/REK-46) and primary
 Subtask [REK-47](https://rekonlabs.atlassian.net/browse/REK-47) were created
-from the approved ticket plan and read back in `To Do`. Phase 1 and the
-technical-owner signer prerequisite are complete. Implementation remains
-unauthorized until the linked planning baseline is committed and REK-47 is
-explicitly transitioned to exactly `In Progress`.
+from the approved ticket plan and read back in `In Progress`. Phase 1 and the
+technical-owner signer prerequisite are complete. A 2026-07-20 scope amendment
+authorizes the two validated Phase 2 remediation regressions below. A fresh
+planning baseline and implementation preflight remain required before the
+replacement implementation run.
 
 ## Problem
 
@@ -62,6 +63,11 @@ predecessor run or performing publication.
 - Failure and retry cannot alter the predecessor or leave a trusted partial
   record. Diagnostics identify safe remediation without exposing private keys,
   credentials, prompts, raw model output, or unnecessary local paths.
+- Complete-range scope validation is independent of Git rename-detection
+  configuration, so an otherwise permitted rename cannot be misparsed as an
+  out-of-scope path.
+- A crash-left temporary registry file cannot prevent a later safe persistence
+  retry; only the immutable final record identity controls duplicate rejection.
 - Two repository/Jira/path fixtures prove repository-neutral validation and
   cross-repository replay rejection.
 - Focused tests, `make test`, `make vet`, `make build`, `git diff --check`, and

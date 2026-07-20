@@ -6,7 +6,9 @@ GitHub issue [#69](https://github.com/joeroberts/ai-tools/issues/69) is the
 backlog source. Jira Story
 [REK-46](https://rekonlabs.atlassian.net/browse/REK-46) and primary Subtask
 [REK-47](https://rekonlabs.atlassian.net/browse/REK-47) are the approved Phase
-2 execution contract and were read back in `To Do` on 2026-07-19.
+2 execution contract and were read back in `In Progress` on 2026-07-20. The
+approved scope amendment raises only the line budget and adds two focused
+remediation regressions; it does not change the declared components or paths.
 
 ## Technical Design
 
@@ -63,7 +65,7 @@ Implementation is limited to `internal/implementation`, `internal/signature`,
 
 ## Review Budget
 
-This phase is limited to 10 changed files, 800 changed lines, and complete-range adoption validation, atomic non-overwriting successor persistence.
+This phase is limited to 10 changed files, 850 changed lines, and complete-range adoption validation, atomic non-overwriting successor persistence.
 
 ## Declared Implementation Slice
 
@@ -84,7 +86,7 @@ This phase is limited to 10 changed files, 800 changed lines, and complete-range
       ],
       "review_budget": {
         "max_changed_files": 10,
-        "max_changed_lines": 800,
+        "max_changed_lines": 850,
         "components": [
           "complete-range adoption validation",
           "atomic non-overwriting successor persistence"
@@ -103,6 +105,8 @@ This phase is limited to 10 changed files, 800 changed lines, and complete-range
   `HEAD`, a default branch, `refs/*`, or another mutable alias.
 - Scope and budget evaluation covers the complete original-base-to-candidate
   diff and every intermediate commit, not only the remediation delta.
+- Complete-range `--numstat` evaluation disables Git rename detection so its
+  path format is stable and is checked against allowed paths correctly.
 - Source, bundle, configuration, guidance, deterministic checks, and review
   evidence are fresh, exact, and internally consistent.
 - The technical-owner signer is accessed only during explicitly approved
@@ -112,6 +116,8 @@ This phase is limited to 10 changed files, 800 changed lines, and complete-range
 - Invalid lineage, dirty or moved state, stale evidence, partial-range review,
   same-executor evidence, changed guidance, mismatched signer, duplicate record,
   permission failure, crash boundary, cleanup failure, and retry all fail closed.
+- A crash-left temporary registry file has a unique non-final name and cannot
+  block a later safe retry; the final immutable record remains non-overwriting.
 - Existing adoption-contract fixtures and unremediated implementation runs keep
   their current behavior.
 
