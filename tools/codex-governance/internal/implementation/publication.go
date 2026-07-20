@@ -29,6 +29,7 @@ type PublicationAuthorizationPayload struct {
 	ImplementationBaseSHA string   `json:"implementation_base_sha,omitempty"`
 	ExpectedTargetSHA     string   `json:"expected_target_sha,omitempty"`
 	CommitSHA             string   `json:"commit_sha"`
+	SuccessorRecordID     string   `json:"successor_record_id,omitempty"`
 	PRTargetBranch        string   `json:"pr_target_branch"`
 	AllowedOperations     []string `json:"allowed_operations"`
 }
@@ -42,6 +43,59 @@ type SignedPublicationAuthorization struct {
 type AuthorizationConsumption struct {
 	AuthorizationDigest string   `json:"authorization_digest"`
 	UsedOperations      []string `json:"used_operations"`
+}
+
+// SuccessorPublicationState tracks remote progress without modifying the
+// predecessor-run bytes bound by a signed adoption record.
+type SuccessorPublicationState struct {
+	AuthorizationDigest string `json:"authorization_digest"`
+	State               string `json:"state"`
+	PullRequestURL      string `json:"pull_request_url,omitempty"`
+}
+
+func SaveSuccessorPublicationState(runtimeRoot string, authorization SignedPublicationAuthorization, run Run) error {
+	if authorization.Payload.SuccessorRecordID == "" {
+		return nil
+	}
+	path := filepath.Join(runtimeRoot, "successor-publication-state", strings.TrimPrefix(authorization.Digest, "sha256:")+".json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(SuccessorPublicationState{AuthorizationDigest: authorization.Digest, State: run.State, PullRequestURL: run.PullRequestURL}, "", "  ")
+	if err != nil {
+		return err
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".successor-publication-state-")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o600); err != nil {
+		temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(append(data, '\n')); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temporaryPath, filepath.Clean(path))
+}
+
+func LoadSuccessorPublicationState(runtimeRoot string, authorization SignedPublicationAuthorization) (SuccessorPublicationState, error) {
+	path := filepath.Join(runtimeRoot, "successor-publication-state", strings.TrimPrefix(authorization.Digest, "sha256:")+".json")
+	data, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return SuccessorPublicationState{}, err
+	}
+	var state SuccessorPublicationState
+	if err := json.Unmarshal(data, &state); err != nil || state.AuthorizationDigest != authorization.Digest || (state.State != StatePushed && state.State != StatePRCreated) {
+		return SuccessorPublicationState{}, fmt.Errorf("successor publication state is invalid")
+	}
+	return state, nil
 }
 
 // LoadSignedPublicationAuthorization verifies an externally signed
@@ -140,7 +194,7 @@ func ConsumeSignedAuthorization(runtimeRoot string, authorization SignedPublicat
 }
 
 func validatePublicationPayload(payload PublicationAuthorizationPayload) error {
-	if (payload.FormatVersion != 1 && payload.FormatVersion != 2) || payload.WorkItemKey == "" || payload.RunID == "" || payload.RepositoryID == "" || payload.Remote == "" || payload.RemoteFingerprint == "" || !strings.HasPrefix(payload.Branch, "codex/") || len(payload.CommitSHA) < 7 || len(payload.AllowedOperations) == 0 {
+	if (payload.FormatVersion != 1 && payload.FormatVersion != 2) || payload.WorkItemKey == "" || payload.RunID == "" || payload.RepositoryID == "" || payload.Remote == "" || payload.RemoteFingerprint == "" || !strings.HasPrefix(payload.Branch, "codex/") || len(payload.CommitSHA) < 7 || (payload.SuccessorRecordID != "" && !recordPattern.MatchString(payload.SuccessorRecordID)) || len(payload.AllowedOperations) == 0 {
 		return fmt.Errorf("signed publication authorization payload is invalid")
 	}
 	if payload.FormatVersion == 1 && len(payload.ExpectedBaseSHA) < 7 {

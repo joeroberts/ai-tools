@@ -77,10 +77,10 @@ Usage:
   codex-governance implementation commit --run PATH --worktree PATH --branch NAME --message TEXT --approve
   codex-governance implementation bootstrap-technical-owner --signer PATH [--repo-root PATH] [--approve]
   codex-governance implementation bootstrap-publish-owner --signer PATH --approve [--repo-root PATH]
-  codex-governance implementation issue-publish --run PATH --signer PATH --output PATH --worktree PATH --remote NAME --target-branch NAME --approve [--expires-in DURATION] [--repo-root PATH]
+  codex-governance implementation issue-publish --run PATH --signer PATH --output PATH --worktree PATH --remote NAME --target-branch NAME --approve [--adoption-registry PATH --adoption-record ID] [--expires-in DURATION] [--repo-root PATH]
   codex-governance implementation authorize-publish --authorization PATH --run PATH --repo-root PATH
-  codex-governance implementation push --run PATH --authorization PATH --review-evidence PATH --worktree PATH --repo-root PATH [--runtime-root PATH] --approve
-  codex-governance implementation create-pr --run PATH --authorization PATH --review-evidence PATH --worktree PATH --title TEXT [--body TEXT] --repo-root PATH [--runtime-root PATH] --approve
+  codex-governance implementation push --run PATH --authorization PATH --review-evidence PATH --worktree PATH --repo-root PATH [--adoption-registry PATH --adoption-record ID] [--runtime-root PATH] --approve
+  codex-governance implementation create-pr --run PATH --authorization PATH --review-evidence PATH --worktree PATH --title TEXT [--body TEXT] --repo-root PATH [--adoption-registry PATH --adoption-record ID] [--runtime-root PATH] --approve
   codex-governance ollama policy init [--runtime-root PATH]
   codex-governance ollama run --model NAME --role ROLE --task-type TYPE --input PATH [--policy PATH]
   codex-governance ollama status --model NAME [--policy PATH]
@@ -1728,6 +1728,8 @@ func runImplementationIssuePublish(args []string, stdout, stderr io.Writer) int 
 	targetBranch := flags.String("target-branch", "", "pull request target branch")
 	expiresIn := flags.Duration("expires-in", time.Hour, "authorization lifetime")
 	repoRoot := flags.String("repo-root", ".", "repository root")
+	adoptionRegistry := flags.String("adoption-registry", "", "owner-local signed adoption registry")
+	adoptionRecord := flags.String("adoption-record", "", "immutable signed adoption record ID")
 	approve := flags.Bool("approve", false, "explicitly authorize signed publication authorization issuance")
 	if err := flags.Parse(args); err != nil || !*approve || *runPath == "" || *signerPath == "" || *outputPath == "" || *worktreePath == "" || *remote == "" || *targetBranch == "" || flags.NArg() != 0 {
 		return 2
@@ -1766,6 +1768,11 @@ func runImplementationIssuePublish(args []string, stdout, stderr io.Writer) int 
 		fmt.Fprintf(stderr, "read publication repository identity: %v\n", err)
 		return 2
 	}
+	publicationRun, successorID, err := resolvePublicationSuccessor(run, *runPath, *adoptionRegistry, *adoptionRecord, *worktreePath, cfg)
+	if err != nil {
+		fmt.Fprintf(stderr, "resolve publication successor: %v\n", err)
+		return 1
+	}
 	localKey, privateKey, err := signature.LoadLocalRepositoryOwnerSigner(*signerPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "load repository-owner signer: %v\n", err)
@@ -1785,9 +1792,9 @@ func runImplementationIssuePublish(args []string, stdout, stderr io.Writer) int 
 		fmt.Fprintf(stderr, "read remote target: %v\n", err)
 		return 1
 	}
-	payload := implementation.PublicationAuthorizationPayload{FormatVersion: 2, WorkItemKey: run.WorkItemKey, RunID: run.ID, RepositoryID: repositoryID, Remote: *remote, RemoteFingerprint: implementation.RemoteFingerprint(remoteURL), Branch: run.Branch, ImplementationBaseSHA: run.BaseSHA, ExpectedTargetSHA: targetSHA, CommitSHA: run.CommitSHA, PRTargetBranch: *targetBranch, AllowedOperations: []string{"push", "create-pr"}}
+	payload := implementation.PublicationAuthorizationPayload{FormatVersion: 2, WorkItemKey: run.WorkItemKey, RunID: run.ID, RepositoryID: repositoryID, Remote: *remote, RemoteFingerprint: implementation.RemoteFingerprint(remoteURL), Branch: publicationRun.Branch, ImplementationBaseSHA: run.BaseSHA, ExpectedTargetSHA: targetSHA, CommitSHA: publicationRun.CommitSHA, SuccessorRecordID: successorID, PRTargetBranch: *targetBranch, AllowedOperations: []string{"push", "create-pr"}}
 	authorization := implementation.SignedPublicationAuthorization{Payload: payload}
-	if err := implementation.ValidatePublicationWorktree(*worktreePath, run); err != nil {
+	if err := implementation.ValidatePublicationWorktree(*worktreePath, publicationRun); err != nil {
 		fmt.Fprintf(stderr, "validate authorized worktree: %v\n", err)
 		return 1
 	}
@@ -1842,6 +1849,25 @@ func repositoryOwnerSignerTrusted(cfg config.Config, localKey signature.TrustedK
 		}
 	}
 	return false
+}
+
+// resolvePublicationSuccessor preserves predecessor-run state while replacing
+// only the immutable ref subject used for publication authorization and remote
+// dispatch. Both adoption flags are required together to prevent inference.
+func resolvePublicationSuccessor(run implementation.Run, runPath, registry, recordID, worktree string, cfg config.Config) (implementation.Run, string, error) {
+	if (registry == "") != (recordID == "") {
+		return implementation.Run{}, "", fmt.Errorf("adoption-registry and adoption-record must be supplied together")
+	}
+	if registry == "" {
+		return run, "", nil
+	}
+	view, err := implementation.ResolvePublicationSuccessor(runPath, run, registry, recordID, worktree, cfg, time.Now().UTC())
+	if err != nil {
+		return implementation.Run{}, "", err
+	}
+	resolved := run
+	resolved.Branch, resolved.CommitSHA = view.CandidateBranch, view.CandidateCommit
+	return resolved, view.RecordID, nil
 }
 
 func requirePathOutsideRepository(repoRoot, path, role string) error {
@@ -1942,6 +1968,8 @@ func runImplementationPush(args []string, stdout, stderr io.Writer) int {
 	worktreePath := flags.String("worktree", "", "disposable worktree")
 	repoRoot := flags.String("repo-root", ".", "repository root")
 	runtimeRootPath := flags.String("runtime-root", "", "runtime root")
+	adoptionRegistry := flags.String("adoption-registry", "", "owner-local signed adoption registry")
+	adoptionRecord := flags.String("adoption-record", "", "immutable signed adoption record ID")
 	approve := flags.Bool("approve", false, "explicitly execute this already authorized push")
 	if err := flags.Parse(args); err != nil || !*approve || *runPath == "" || *authorizationPath == "" || *reviewEvidencePath == "" || *worktreePath == "" || flags.NArg() != 0 {
 		return 2
@@ -1966,16 +1994,26 @@ func runImplementationPush(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "verify signed publication authorization: %v\n", err)
 		return 1
 	}
+	publicationRun, successorID, err := resolvePublicationSuccessor(run, *runPath, *adoptionRegistry, *adoptionRecord, *worktreePath, cfg)
+	if err != nil || successorID != authorization.Payload.SuccessorRecordID {
+		fmt.Fprintf(stderr, "resolve signed push successor: %v\n", firstError(err, fmt.Errorf("successor record does not match signed authorization")))
+		return 1
+	}
+	resolvedRuntimeRoot, err := runtimeRoot(*runtimeRootPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "resolve runtime root: %v\n", err)
+		return 2
+	}
 	remoteURL, err := implementation.RemoteURL(*worktreePath, authorization.Payload.Remote)
 	if err != nil {
 		fmt.Fprintf(stderr, "read authorized remote: %v\n", err)
 		return 1
 	}
-	if err := implementation.ValidateSignedPublication(run, authorization, "push", remoteURL, repositoryID); err != nil {
+	if err := implementation.ValidateSignedPublication(publicationRun, authorization, "push", remoteURL, repositoryID); err != nil {
 		fmt.Fprintf(stderr, "validate signed push authorization: %v\n", err)
 		return 1
 	}
-	if err := implementation.ValidatePublicationWorktree(*worktreePath, run); err != nil {
+	if err := implementation.ValidatePublicationWorktree(*worktreePath, publicationRun); err != nil {
 		fmt.Fprintf(stderr, "validate authorized worktree refs: %v\n", err)
 		return 1
 	}
@@ -1983,7 +2021,7 @@ func runImplementationPush(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "validate authorized commit lineage: %v\n", err)
 		return 1
 	}
-	if err := validatePublicationReviewEvidence(*reviewEvidencePath, *worktreePath, run); err != nil {
+	if err := validatePublicationReviewEvidence(*reviewEvidencePath, *worktreePath, publicationRun); err != nil {
 		fmt.Fprintf(stderr, "validate independent review evidence: %v\n", err)
 		return 1
 	}
@@ -1991,28 +2029,50 @@ func runImplementationPush(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "validate authorized remote target ref: %v\n", err)
 		return 1
 	}
-	if err := implementation.PrepareSignedPush(&run); err != nil {
-		fmt.Fprintf(stderr, "prepare authorized push: %v\n", err)
-		return 1
+	if authorization.Payload.SuccessorRecordID == "" {
+		resolvedRuntimeRoot, err = runtimeRoot(*runtimeRootPath)
 	}
-	if err := implementation.SaveRun(*runPath, run); err != nil {
-		fmt.Fprintf(stderr, "persist pre-push state: %v\n", err)
-		return 2
-	}
-	resolvedRuntimeRoot, err := runtimeRoot(*runtimeRootPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "resolve runtime root: %v\n", err)
 		return 2
+	}
+	if authorization.Payload.SuccessorRecordID != "" {
+		if err := implementation.PrepareSignedPush(&publicationRun); err != nil {
+			fmt.Fprintf(stderr, "prepare authorized push: %v\n", err)
+			return 1
+		}
+		if err := implementation.SaveSuccessorPublicationState(resolvedRuntimeRoot, authorization, publicationRun); err != nil {
+			fmt.Fprintf(stderr, "persist successor pre-push state: %v\n", err)
+			return 2
+		}
+	} else if err := implementation.PrepareSignedPush(&run); err != nil {
+		fmt.Fprintf(stderr, "prepare authorized push: %v\n", err)
+		return 1
+	}
+	if authorization.Payload.SuccessorRecordID == "" {
+		publicationRun.State = run.State
+	}
+	if authorization.Payload.SuccessorRecordID == "" {
+		if err := implementation.SaveRun(*runPath, run); err != nil {
+			fmt.Fprintf(stderr, "persist pre-push state: %v\n", err)
+			return 2
+		}
 	}
 	if err := implementation.ConsumeSignedAuthorization(resolvedRuntimeRoot, authorization, "push"); err != nil {
 		fmt.Fprintf(stderr, "consume signed push authorization: %v\n", err)
 		return 1
 	}
-	if err := implementation.PushSigned(&run, authorization, *worktreePath); err != nil {
+	if err := implementation.PushSigned(&publicationRun, authorization, *worktreePath); err != nil {
 		fmt.Fprintf(stderr, "push implementation branch: %v\n", err)
 		return 1
 	}
-	if err := implementation.SaveRun(*runPath, run); err != nil {
+	run.State = publicationRun.State
+	if authorization.Payload.SuccessorRecordID != "" {
+		if err := implementation.SaveSuccessorPublicationState(resolvedRuntimeRoot, authorization, publicationRun); err != nil {
+			fmt.Fprintf(stderr, "persist successor pushed state: %v\n", err)
+			return 2
+		}
+	} else if err := implementation.SaveRun(*runPath, run); err != nil {
 		fmt.Fprintf(stderr, "persist pushed state: %v\n", err)
 		return 2
 	}
@@ -2031,6 +2091,8 @@ func runImplementationCreatePR(args []string, stdout, stderr io.Writer) int {
 	body := flags.String("body", "", "pull request body")
 	repoRoot := flags.String("repo-root", ".", "repository root")
 	runtimeRootPath := flags.String("runtime-root", "", "runtime root")
+	adoptionRegistry := flags.String("adoption-registry", "", "owner-local signed adoption registry")
+	adoptionRecord := flags.String("adoption-record", "", "immutable signed adoption record ID")
 	approve := flags.Bool("approve", false, "explicitly execute this already authorized pull request creation")
 	if err := flags.Parse(args); err != nil || !*approve || *runPath == "" || *authorizationPath == "" || *reviewEvidencePath == "" || *worktreePath == "" || *title == "" || flags.NArg() != 0 {
 		return 2
@@ -2055,16 +2117,34 @@ func runImplementationCreatePR(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "verify signed publication authorization: %v\n", err)
 		return 1
 	}
+	publicationRun, successorID, err := resolvePublicationSuccessor(run, *runPath, *adoptionRegistry, *adoptionRecord, *worktreePath, cfg)
+	if err != nil || successorID != authorization.Payload.SuccessorRecordID {
+		fmt.Fprintf(stderr, "resolve signed pull request successor: %v\n", firstError(err, fmt.Errorf("successor record does not match signed authorization")))
+		return 1
+	}
+	resolvedRuntimeRoot, err := runtimeRoot(*runtimeRootPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "resolve runtime root: %v\n", err)
+		return 2
+	}
+	if authorization.Payload.SuccessorRecordID != "" {
+		state, err := implementation.LoadSuccessorPublicationState(resolvedRuntimeRoot, authorization)
+		if err != nil {
+			fmt.Fprintf(stderr, "load successor publication state: %v\n", err)
+			return 1
+		}
+		publicationRun.State, publicationRun.PullRequestURL = state.State, state.PullRequestURL
+	}
 	remoteURL, err := implementation.RemoteURL(*worktreePath, authorization.Payload.Remote)
 	if err != nil {
 		fmt.Fprintf(stderr, "read authorized remote: %v\n", err)
 		return 1
 	}
-	if err := implementation.ValidateSignedPublication(run, authorization, "create-pr", remoteURL, repositoryID); err != nil {
+	if err := implementation.ValidateSignedPublication(publicationRun, authorization, "create-pr", remoteURL, repositoryID); err != nil {
 		fmt.Fprintf(stderr, "validate signed pull request authorization: %v\n", err)
 		return 1
 	}
-	if err := implementation.ValidatePublicationWorktree(*worktreePath, run); err != nil {
+	if err := implementation.ValidatePublicationWorktree(*worktreePath, publicationRun); err != nil {
 		fmt.Fprintf(stderr, "validate authorized worktree refs: %v\n", err)
 		return 1
 	}
@@ -2072,7 +2152,7 @@ func runImplementationCreatePR(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "validate authorized commit lineage: %v\n", err)
 		return 1
 	}
-	if err := validatePublicationReviewEvidence(*reviewEvidencePath, *worktreePath, run); err != nil {
+	if err := validatePublicationReviewEvidence(*reviewEvidencePath, *worktreePath, publicationRun); err != nil {
 		fmt.Fprintf(stderr, "validate independent review evidence: %v\n", err)
 		return 1
 	}
@@ -2080,7 +2160,9 @@ func runImplementationCreatePR(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "validate authorized remote target ref: %v\n", err)
 		return 1
 	}
-	resolvedRuntimeRoot, err := runtimeRoot(*runtimeRootPath)
+	if authorization.Payload.SuccessorRecordID == "" {
+		resolvedRuntimeRoot, err = runtimeRoot(*runtimeRootPath)
+	}
 	if err != nil {
 		fmt.Fprintf(stderr, "resolve runtime root: %v\n", err)
 		return 2
@@ -2089,13 +2171,21 @@ func runImplementationCreatePR(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "consume signed pull request authorization: %v\n", err)
 		return 1
 	}
-	if err := implementation.CreateSignedPullRequest(&run, authorization, *worktreePath, *title, *body); err != nil {
+	if err := implementation.CreateSignedPullRequest(&publicationRun, authorization, *worktreePath, *title, *body); err != nil {
 		fmt.Fprintf(stderr, "create pull request: %v\n", err)
 		return 1
 	}
-	if err := implementation.SaveRun(*runPath, run); err != nil {
-		fmt.Fprintf(stderr, "persist pull request state: %v\n", err)
-		return 2
+	run.State, run.PullRequestURL = publicationRun.State, publicationRun.PullRequestURL
+	if authorization.Payload.SuccessorRecordID != "" {
+		if err := implementation.SaveSuccessorPublicationState(resolvedRuntimeRoot, authorization, publicationRun); err != nil {
+			fmt.Fprintf(stderr, "persist successor pull request state: %v\n", err)
+			return 2
+		}
+	} else {
+		if err := implementation.SaveRun(*runPath, run); err != nil {
+			fmt.Fprintf(stderr, "persist pull request state: %v\n", err)
+			return 2
+		}
 	}
 	fmt.Fprintf(stdout, "PASS pull request created %s\n", run.PullRequestURL)
 	return 0
