@@ -10,7 +10,7 @@ issue-number, and repository-specific code assumptions.
 Each normalized work item and ticket-plan subtask includes either:
 
 ```json
-{"mode":"required","roadmap_id":"...","phase":"...","transition":"start","prior_digest":"sha256:..."}
+{"mode":"required","roadmap_id":"...","canonical_path":"...","phase":"...","transition":"start"}
 ```
 
 or:
@@ -28,6 +28,7 @@ or:
 - `internal/initializer`
 - `internal/jira`
 - `internal/implementation`
+- `internal/agentplan`
 - `internal/roadmap`
 - `internal/ticketplan`
 - `internal/validate`
@@ -52,7 +53,7 @@ The total review budget is 42 changed files, 3600 changed lines, and roadmap con
   "slices": [
     {"id":"roadmap-impact-contract","phase":"Phase 1","change_class":"high-risk","dependencies":[],"allowed_paths":["governance.yml","internal/assets","internal/config","internal/ticketplan","internal/workitem","internal/validate","testdata","docs/decisions","docs/design","docs/roadmaps"],"review_budget":{"max_changed_files":10,"max_changed_lines":800,"components":["roadmap configuration and contracts","validation fixtures"]}},
     {"id":"roadmap-adoption-assets","phase":"Phase 2","change_class":"standard","dependencies":["roadmap-impact-contract"],"allowed_paths":["internal/assets","internal/initializer","internal/config","testdata","docs/design"],"review_budget":{"max_changed_files":7,"max_changed_lines":600,"components":["non-destructive adoption assets","migration fixtures"]}},
-    {"id":"roadmap-entry-enforcement","phase":"Phase 3","change_class":"high-risk","dependencies":["roadmap-adoption-assets"],"allowed_paths":["internal/ticketplan","internal/validate","internal/implementation","internal/roadmap","testdata"],"review_budget":{"max_changed_files":8,"max_changed_lines":700,"components":["planning and preflight enforcement","entry-gate fixtures"]}},
+    {"id":"roadmap-entry-enforcement","phase":"Phase 3","change_class":"high-risk","dependencies":["roadmap-adoption-assets"],"allowed_paths":["internal/agentplan","internal/ticketplan","internal/validate","internal/implementation","internal/roadmap","testdata"],"review_budget":{"max_changed_files":8,"max_changed_lines":700,"components":["planning and preflight enforcement","entry-gate fixtures"]}},
     {"id":"roadmap-transition-evidence","phase":"Phase 4","change_class":"high-risk","dependencies":["roadmap-entry-enforcement"],"allowed_paths":["cmd/codex-governance","internal/roadmap","internal/validate","internal/workitem","testdata"],"review_budget":{"max_changed_files":7,"max_changed_lines":650,"components":["transition preview and digest binding","state-evidence fixtures"]}},
     {"id":"roadmap-publication-gates","phase":"Phase 5","change_class":"high-risk","dependencies":["roadmap-transition-evidence"],"allowed_paths":["internal/implementation","internal/validate","internal/roadmap","testdata"],"review_budget":{"max_changed_files":5,"max_changed_lines":450,"components":["commit and publication gates","lifecycle fixtures"]}},
     {"id":"roadmap-finalization-check","phase":"Phase 6","change_class":"high-risk","dependencies":["roadmap-publication-gates"],"allowed_paths":["cmd/codex-governance","internal/jira","internal/implementation","internal/validate","internal/roadmap","testdata"],"review_budget":{"max_changed_files":5,"max_changed_lines":400,"components":["finalization enforcement","non-interactive check fixtures"]}}
@@ -65,6 +66,9 @@ The total review budget is 42 changed files, 3600 changed lines, and roadmap con
 Reject missing declarations, empty reasons, invalid configuration, absolute or
 escaping paths, absent or duplicate identities, stale digests, skipped states,
 replayed or cross-repository records, and contradictory aggregate state.
+
+Phase 4 introduces the required `prior_digest` and resulting-digest evidence
+binding; Phase 1 declarations intentionally do not infer or validate a digest.
 
 A required transition must be in the approved paths, review budget, and
 planning baseline. A completion transition must appear in the reviewed diff

@@ -348,6 +348,9 @@ func validateAssignment(constraints Constraints) error {
 		if assignment.ADR != "" && len(assignment.Traceability["adr"]) == 0 {
 			return fmt.Errorf("assignment for subtask %q is missing adr traceability", assignment.ID)
 		}
+		if assignment.RoadmapImpact != nil && len(assignment.Traceability["roadmap_impact"]) == 0 {
+			return fmt.Errorf("assignment for subtask %q is missing roadmap_impact traceability", assignment.ID)
+		}
 		for _, path := range assignment.AllowedPaths {
 			if !paths[path] {
 				return fmt.Errorf("assignment for subtask %q uses path outside approved pool: %s", assignment.ID, path)
@@ -454,7 +457,11 @@ func ApplyConstraints(plan *ticketplan.Plan, constraints Constraints) error {
 		if assignment.ADR != "" {
 			subtask.ADR = assignment.ADR
 		}
-		for _, field := range []string{"phase", "change_class", "review_budget", "allowed_paths", "dependencies", "adr"} {
+		fields := []string{"phase", "change_class", "review_budget", "allowed_paths", "dependencies", "adr"}
+		if assignment.RoadmapImpact != nil {
+			fields = append(fields, "roadmap_impact")
+		}
+		for _, field := range fields {
 			if len(assignment.Traceability[field]) == 0 && field == "adr" && assignment.ADR == "" {
 				continue
 			}

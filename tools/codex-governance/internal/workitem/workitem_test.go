@@ -68,3 +68,14 @@ func TestRoadmapImpactRejectsEscapingCanonicalPath(t *testing.T) {
 		t.Fatalf("escaping path issues = %q", issues)
 	}
 }
+
+func TestRoadmapImpactRejectsWindowsAbsoluteCanonicalPath(t *testing.T) {
+	item, err := Load(filepath.Join("..", "..", "testdata", "work-items", "valid.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	item.RoadmapImpact = RoadmapImpact{Mode: "required", RoadmapID: "repo-roadmap", CanonicalPath: "C:/roadmap.yaml", Phase: "phase-1", Transition: "start"}
+	if issues := strings.Join(item.Validate(), "\n"); !strings.Contains(issues, "incomplete or invalid") {
+		t.Fatalf("windows path issues = %q", issues)
+	}
+}

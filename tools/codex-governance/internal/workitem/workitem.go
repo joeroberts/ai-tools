@@ -227,7 +227,7 @@ func (r RoadmapImpact) Validate() string {
 }
 
 func validRoadmapPath(path string) bool {
-	if filepath.IsAbs(path) || strings.ContainsAny(path, "*?[]") || strings.HasPrefix(path, "~") || strings.Contains(path, "${") {
+	if filepath.IsAbs(path) || regexp.MustCompile(`^[A-Za-z]:[\\/]`).MatchString(path) || strings.Contains(path, "\\") || strings.ContainsAny(path, "*?[]") || strings.HasPrefix(path, "~") || strings.Contains(path, "${") {
 		return false
 	}
 	clean := filepath.ToSlash(filepath.Clean(path))

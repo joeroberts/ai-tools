@@ -92,6 +92,7 @@ func TestRoadmapAdoptionRejectsUnsafeOrIncompleteConfiguration(t *testing.T) {
 		{CanonicalPath: "docs/roadmap.yaml", ID: "roadmap", FormatVersion: 2, Enforcement: "required"},
 		{CanonicalPath: "docs/roadmap.yaml", ID: "roadmap", FormatVersion: 1, Enforcement: "unknown"},
 		{CanonicalPath: "docs/*.yaml", ID: "roadmap", FormatVersion: 1, Enforcement: "required"},
+		{CanonicalPath: "C:/roadmap.yaml", ID: "roadmap", FormatVersion: 1, Enforcement: "required"},
 	} {
 		if err := adoption.Validate(); err == nil {
 			t.Fatalf("RoadmapAdoption.Validate accepted %#v", adoption)

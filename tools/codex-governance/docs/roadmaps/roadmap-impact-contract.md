@@ -27,5 +27,5 @@ review before publication.
 
 ## Boundaries
 
-#19 owns root guidance propagation; #18 authoritative CI; #45 hosted rulesets;
+Issue `#19` owns root guidance propagation; #18 authoritative CI; #45 hosted rulesets;
 and #48 broader setup UX. This roadmap owns only the local portable contract.
