@@ -40,14 +40,16 @@ jobs:
             exit 1
           fi
           case "${impacts[0]}" in major|minor|patch|none) ;; *) echo "Invalid release label: release:${impacts[0]}" >&2; exit 1 ;; esac
-          go run ./tools/codex-governance/cmd/codex-governance version impact \
-            --manifest tools/codex-governance/releases/1.0.0-draft.json \
+          cd tools/codex-governance
+          go run ./cmd/codex-governance version impact \
+            --manifest releases/1.0.0-draft.json \
             --impact "${impacts[0]}" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Validate release tag
         if: github.event_name == 'push'
         run: |
           set -o pipefail
-          go run ./tools/codex-governance/cmd/codex-governance version validate-tag \
-            --manifest tools/codex-governance/releases/1.0.0-draft.json \
+          cd tools/codex-governance
+          go run ./cmd/codex-governance version validate-tag \
+            --manifest releases/1.0.0-draft.json \
             --tag "${GITHUB_REF_NAME}" \
-            --repo-root tools/codex-governance | tee -a "$GITHUB_STEP_SUMMARY"
+            --repo-root . | tee -a "$GITHUB_STEP_SUMMARY"
