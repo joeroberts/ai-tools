@@ -2,6 +2,7 @@ name: Semantic version
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
     paths:
       - 'tools/codex-governance/releases/**'
       - 'tools/codex-governance/internal/**'
