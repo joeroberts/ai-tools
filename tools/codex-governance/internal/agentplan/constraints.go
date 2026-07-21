@@ -207,16 +207,77 @@ func AssignConstraints(decompositionPath, assignmentPath, outputPath, repoRoot s
 	if constraints.FormatVersion != 1 || constraints.Sources != plan.Sources || len(constraints.Subtasks) == 0 {
 		return fmt.Errorf("assignment does not match manager decomposition sources or contains no subtask assignments")
 	}
+	if hasCanonicalNarrative(constraints) {
+		return fmt.Errorf("assignment must not provide canonical source-derived narrative")
+	}
 	if err := validateAssignment(constraints); err != nil {
 		return err
 	}
 	if err := ApplyConstraints(&plan, constraints); err != nil {
 		return err
 	}
-	// The manager decomposition is intentionally unconstrained. Its remaining
-	// narrative fields are validated after the assignment is applied to the
-	// newly generated plan, not while assigning the approved boundaries.
+	if issues := plan.ValidateAgainst(repoRoot); len(issues) != 0 {
+		return fmt.Errorf("manager decomposition contains invalid source-derived narrative or traceability: %v", issues)
+	}
+	if err := captureSourceDerivedConstraints(&constraints, plan); err != nil {
+		return err
+	}
+	if _, err := buildAuthorityContract(constraints); err != nil {
+		return fmt.Errorf("build source-derived authority contract: %w", err)
+	}
 	return writePrivateConstraints(outputPath, constraints)
+}
+
+// captureSourceDerivedConstraints promotes the validated manager narrative to
+// the approved handoff. Assignment-owned fields have already replaced the
+// manager values, so the resulting constraints are a complete authority input
+// for generation.
+func captureSourceDerivedConstraints(constraints *Constraints, plan ticketplan.Plan) error {
+	if len(constraints.Subtasks) != len(plan.Subtasks) {
+		return fmt.Errorf("manager decomposition has %d subtasks but constraints assign %d", len(plan.Subtasks), len(constraints.Subtasks))
+	}
+	constraints.Story = &StoryConstraints{
+		Summary:            plan.Story.Summary,
+		Description:        plan.Story.Description,
+		AcceptanceCriteria: append([]string(nil), plan.Story.AcceptanceCriteria...),
+		Traceability:       traceFields(plan.Story.Traceability, "summary", "description", "acceptance_criteria"),
+	}
+	for index := range constraints.Subtasks {
+		subtask := plan.Subtasks[index]
+		if constraints.Subtasks[index].ADR == "" {
+			constraints.Subtasks[index].ADR = subtask.ADR
+			constraints.Subtasks[index].Traceability["adr"] = append([]ticketplan.Reference(nil), subtask.Traceability["adr"]...)
+		}
+		constraints.Subtasks[index].SourceDerived = &SourceDerivedConstraints{
+			Summary:            subtask.Summary,
+			Scope:              subtask.Scope,
+			NonGoals:           append([]string(nil), subtask.NonGoals...),
+			AcceptanceCriteria: append([]string(nil), subtask.AcceptanceCriteria...),
+			ValidationPlan:     append([]string(nil), subtask.ValidationPlan...),
+			Traceability:       traceFields(subtask.Traceability, "summary", "scope", "non_goals", "acceptance_criteria", "validation_plan"),
+		}
+	}
+	return nil
+}
+
+func traceFields(source ticketplan.TraceMap, fields ...string) ticketplan.TraceMap {
+	result := make(ticketplan.TraceMap, len(fields))
+	for _, field := range fields {
+		result[field] = append([]ticketplan.Reference(nil), source[field]...)
+	}
+	return result
+}
+
+func hasCanonicalNarrative(constraints Constraints) bool {
+	if constraints.Story != nil {
+		return true
+	}
+	for _, assignment := range constraints.Subtasks {
+		if assignment.SourceDerived != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // PromoteConstraints preserves the legacy CLI contract until the assignment
