@@ -213,6 +213,9 @@ func AssignConstraints(decompositionPath, assignmentPath, outputPath, repoRoot s
 	if err := validateAssignment(constraints); err != nil {
 		return err
 	}
+	if err := validateDecompositionAssignments(plan, constraints); err != nil {
+		return err
+	}
 	if err := ApplyConstraints(&plan, constraints); err != nil {
 		return err
 	}
@@ -226,6 +229,22 @@ func AssignConstraints(decompositionPath, assignmentPath, outputPath, repoRoot s
 		return fmt.Errorf("build source-derived authority contract: %w", err)
 	}
 	return writePrivateConstraints(outputPath, constraints)
+}
+
+// validateDecompositionAssignments ensures approved assignments remain bound
+// to the manager's declared slices before assignment-owned IDs replace them.
+// Without this check, a reordered decomposition could promote valid narrative
+// and traceability under the wrong approved subtask ID.
+func validateDecompositionAssignments(plan ticketplan.Plan, constraints Constraints) error {
+	if len(plan.Subtasks) != len(constraints.Subtasks) {
+		return fmt.Errorf("manager decomposition has %d subtasks but constraints assign %d", len(plan.Subtasks), len(constraints.Subtasks))
+	}
+	for index, subtask := range plan.Subtasks {
+		if subtask.ID != constraints.Subtasks[index].ID {
+			return fmt.Errorf("manager decomposition subtask %d has ID %q, but constraints assign %q", index+1, subtask.ID, constraints.Subtasks[index].ID)
+		}
+	}
+	return nil
 }
 
 // captureSourceDerivedConstraints promotes the validated manager narrative to

@@ -150,6 +150,29 @@ func TestAssignConstraintsRejectsUntraceableManagerNarrative(t *testing.T) {
 	}
 }
 
+func TestAssignConstraintsRejectsDecompositionWithMismatchedSubtaskID(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	fixtureRoot := filepath.Join(repoRoot, "testdata", "ticket-plans", "valid")
+	plan, err := ticketplan.Load(filepath.Join(fixtureRoot, "plan.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.Subtasks[0].ID = "different-slice"
+	decomposition := filepath.Join(t.TempDir(), "decomposition.json")
+	data, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(decomposition, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err = AssignConstraints(decomposition, filepath.Join(fixtureRoot, "constraints.json"), filepath.Join(t.TempDir(), "constraints.json"), repoRoot)
+	if err == nil || !strings.Contains(err.Error(), "has ID \"different-slice\"") {
+		t.Fatalf("AssignConstraints() error = %v", err)
+	}
+}
+
 func TestApplyConstraintsOverridesManagerControlledPhaseAndAllowedPathEvidence(t *testing.T) {
 	repoRoot := filepath.Join("..", "..")
 	fixtureRoot := filepath.Join(repoRoot, "testdata", "ticket-plans", "valid")
