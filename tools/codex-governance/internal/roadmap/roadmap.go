@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -16,6 +17,40 @@ type Roadmap struct {
 	Title  string  `yaml:"title" json:"title"`
 	Status string  `yaml:"status" json:"status"`
 	Phases []Phase `yaml:"phases" json:"phases"`
+}
+
+// ValidateImpact checks that an enforced work-item declaration still names the
+// configured roadmap and a phase in the state required for entry.
+func ValidateImpact(repoRoot, canonicalPath, roadmapID, phase, transition string) error {
+	if canonicalPath == "" || roadmapID == "" || phase == "" {
+		return fmt.Errorf("roadmap impact declaration is incomplete")
+	}
+	value, err := strconv.Atoi(phase)
+	if err != nil || value < 1 {
+		return fmt.Errorf("roadmap impact phase must be a positive integer")
+	}
+	loaded, err := Load(filepath.Join(repoRoot, filepath.FromSlash(canonicalPath)))
+	if err != nil {
+		return fmt.Errorf("load configured roadmap: %w", err)
+	}
+	if issues := loaded.Check(); len(issues) != 0 {
+		return fmt.Errorf("configured roadmap is invalid: %s", strings.Join(issues, "; "))
+	}
+	if loaded.ID != roadmapID {
+		return fmt.Errorf("roadmap impact identity %q does not match configured roadmap %q", roadmapID, loaded.ID)
+	}
+	for _, candidate := range loaded.Phases {
+		if candidate.ID != value {
+			continue
+		}
+		if transition == "start" || transition == "resume" {
+			if candidate.Status != "in-progress" {
+				return fmt.Errorf("roadmap phase %d must be in-progress for %s, got %s", value, transition, candidate.Status)
+			}
+		}
+		return nil
+	}
+	return fmt.Errorf("roadmap impact phase %d is not present", value)
 }
 
 type Phase struct {

@@ -2,6 +2,7 @@ package roadmap
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -22,6 +23,29 @@ func TestLoadAndRender(t *testing.T) {
 	}
 	if !strings.Contains(output, "Adoption And Synchronization") {
 		t.Fatalf("table output = %q", output)
+	}
+}
+
+func TestValidateImpactRequiresActiveMappedPhase(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "roadmaps", "program.yaml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("id: program\ntitle: Program\nstatus: in-progress\nphases:\n  - id: 1\n    name: Entry\n    status: pending-approval\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateImpact(root, "roadmaps/program.yaml", "program", "1", "start"); err == nil {
+		t.Fatal("ValidateImpact accepted a non-active start phase")
+	}
+	if err := ValidateImpact(root, "roadmaps/program.yaml", "program", "1", "resume"); err == nil {
+		t.Fatal("ValidateImpact accepted a non-active resume phase")
+	}
+	if err := os.WriteFile(path, []byte("id: program\ntitle: Program\nstatus: in-progress\nphases:\n  - id: 1\n    name: Entry\n    status: in-progress\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateImpact(root, "roadmaps/program.yaml", "program", "1", "start"); err != nil {
+		t.Fatalf("ValidateImpact() error = %v", err)
 	}
 }
 

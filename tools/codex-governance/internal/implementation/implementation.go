@@ -16,6 +16,7 @@ import (
 
 	"codex-governance/internal/config"
 	"codex-governance/internal/jira"
+	"codex-governance/internal/roadmap"
 	gruntime "codex-governance/internal/runtime"
 	"codex-governance/internal/signature"
 	"codex-governance/internal/validate"
@@ -529,6 +530,9 @@ func Preflight(request PreflightRequest) (PreflightResult, error) {
 	if item.Source.Mode != "offline-export" {
 		return PreflightResult{}, fmt.Errorf("implementation preflight currently requires an offline-export source mode")
 	}
+	if err := validateRoadmapEntry(cfg, item, request.RepoRoot); err != nil {
+		return PreflightResult{}, err
+	}
 	registry, err := cfg.TrustedKeyRegistry()
 	if err != nil {
 		return PreflightResult{}, fmt.Errorf("load signing policy: %w", err)
@@ -578,6 +582,20 @@ func Preflight(request PreflightRequest) (PreflightResult, error) {
 		return PreflightResult{}, err
 	}
 	return PreflightResult{Run: run, BundlePath: request.BundlePath}, nil
+}
+
+func validateRoadmapEntry(cfg config.Config, item workitem.Item, repoRoot string) error {
+	if cfg.Roadmap.Enforcement != "required" {
+		return nil
+	}
+	impact := item.RoadmapImpact
+	if impact.Mode != "required" || impact.CanonicalPath != cfg.Roadmap.CanonicalPath || impact.RoadmapID != cfg.Roadmap.ID {
+		return fmt.Errorf("preflight requires a roadmap impact matching enforced roadmap configuration")
+	}
+	if err := roadmap.ValidateImpact(repoRoot, impact.CanonicalPath, impact.RoadmapID, impact.Phase, impact.Transition); err != nil {
+		return fmt.Errorf("preflight roadmap impact: %w", err)
+	}
+	return nil
 }
 
 func requireInProgress(export jira.OfflineExport) error {

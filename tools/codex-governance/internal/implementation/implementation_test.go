@@ -134,6 +134,59 @@ func TestPreflightRequiresPrimarySubtaskInProgressBeforeArtifacts(t *testing.T) 
 	}
 }
 
+func TestPreflightRejectsMissingRequiredRoadmapImpact(t *testing.T) {
+	root, base, head := testRepository(t)
+	writeFile(t, filepath.Join(root, "AGENTS.md"), "# Guidance\n")
+	exportPath, publicKey := signedFixtureExport(t, "export-issuer")
+	writePreflightConfig(t, root, publicKey, "export-issuer", "8760h")
+	configPath := filepath.Join(root, "governance.yml")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, configPath, string(data)+"roadmap:\n  canonical_path: roadmaps/program.yaml\n  id: program\n  format_version: 1\n  enforcement: required\n")
+	writeFile(t, filepath.Join(root, "roadmaps", "program.yaml"), "id: program\ntitle: Program\nstatus: in-progress\nphases:\n  - id: 1\n    name: Entry\n    status: in-progress\n")
+	writeFile(t, filepath.Join(root, "docs", "decisions", "ADR-0001.md"), "# ADR\n")
+	item, err := workitem.Load(filepath.Join("..", "..", "testdata", "work-items", "valid.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	item.GitRange.BaseSHA, item.GitRange.HeadSHA = base, head
+	itemPath := filepath.Join(root, "work-item.json")
+	writeJSON(t, itemPath, item)
+	_, err = Preflight(PreflightRequest{WorkItemPath: itemPath, OfflineExportPath: exportPath, RepoRoot: root, RuntimeRoot: filepath.Join(root, "runtime"), Adapter: "fake", BundlePath: filepath.Join(root, "runtime", "bundle.json"), RunPath: filepath.Join(root, "runtime", "run.json")})
+	if err == nil || !strings.Contains(err.Error(), "roadmap impact") {
+		t.Fatalf("Preflight() error = %v, want roadmap impact rejection", err)
+	}
+}
+
+func TestPreflightRejectsInactiveMappedRoadmapPhase(t *testing.T) {
+	root, base, head := testRepository(t)
+	writeFile(t, filepath.Join(root, "AGENTS.md"), "# Guidance\n")
+	exportPath, publicKey := signedFixtureExport(t, "export-issuer")
+	writePreflightConfig(t, root, publicKey, "export-issuer", "8760h")
+	configPath := filepath.Join(root, "governance.yml")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, configPath, string(data)+"roadmap:\n  canonical_path: roadmaps/program.yaml\n  id: program\n  format_version: 1\n  enforcement: required\n")
+	writeFile(t, filepath.Join(root, "roadmaps", "program.yaml"), "id: program\ntitle: Program\nstatus: in-progress\nphases:\n  - id: 1\n    name: Entry\n    status: pending-approval\n")
+	writeFile(t, filepath.Join(root, "docs", "decisions", "ADR-0001.md"), "# ADR\n")
+	item, err := workitem.Load(filepath.Join("..", "..", "testdata", "work-items", "valid.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	item.GitRange.BaseSHA, item.GitRange.HeadSHA = base, head
+	item.RoadmapImpact = workitem.RoadmapImpact{Mode: "required", RoadmapID: "program", CanonicalPath: "roadmaps/program.yaml", Phase: "1", Transition: "start"}
+	itemPath := filepath.Join(root, "work-item.json")
+	writeJSON(t, itemPath, item)
+	_, err = Preflight(PreflightRequest{WorkItemPath: itemPath, OfflineExportPath: exportPath, RepoRoot: root, RuntimeRoot: filepath.Join(root, "runtime"), Adapter: "fake", BundlePath: filepath.Join(root, "runtime", "bundle.json"), RunPath: filepath.Join(root, "runtime", "run.json")})
+	if err == nil || !strings.Contains(err.Error(), "must be in-progress") {
+		t.Fatalf("Preflight() error = %v, want inactive roadmap phase rejection", err)
+	}
+}
+
 func TestPreflightRejectsUnsignedOrUntrustedSourceBeforeArtifacts(t *testing.T) {
 	root, base, head := testRepository(t)
 	writeFile(t, filepath.Join(root, "AGENTS.md"), "# Guidance\n")
