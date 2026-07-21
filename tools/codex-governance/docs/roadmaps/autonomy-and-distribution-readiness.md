@@ -30,7 +30,7 @@ range subtotal is 152-269 agent-hours and excludes all unestimated work.
 | 5 | [#44](https://github.com/joeroberts/ai-tools/issues/44): semantic-version evidence | Not yet estimated | Pending decomposition |
 | 6 | [#45](https://github.com/joeroberts/ai-tools/issues/45): repository and protected-branch baseline | Not yet estimated | Pending decomposition |
 | 7 | [#22](https://github.com/joeroberts/ai-tools/issues/22): bounded workflow authorization | 30-50 | Medium |
-| 8 | [#59](https://github.com/joeroberts/ai-tools/issues/59): manager ownership ADR | 3-6 | High |
+| Complete | [#59](https://github.com/joeroberts/ai-tools/issues/59): manager ownership ADR | Historical 3-6; remaining 0 | Delivered |
 | 9 | [#55](https://github.com/joeroberts/ai-tools/issues/55): persistent supervision | 24-40 | Medium |
 | 10 | [#19](https://github.com/joeroberts/ai-tools/issues/19): root entry guidance propagation | 4-8 | Medium-high |
 | 11a | [#21](https://github.com/joeroberts/ai-tools/issues/21): operational model qualification registry | 10-18 | Medium |
@@ -48,7 +48,9 @@ range subtotal is 152-269 agent-hours and excludes all unestimated work.
 
 #68 must settle the roadmap-impact contract before #22 consumes it. It owns
 repository-neutral configuration and machine enforcement; #19 only propagates
-the settled root-entry guidance. #55 follows #59's selected ownership model.
+the settled root-entry guidance. #55 follows #59's selected ownership model:
+retain the post-assignment manager as a bounded proposal producer, with local
+validation and Jira gates remaining authoritative.
 
 ## Required Design Amendments
 
@@ -66,7 +68,7 @@ be amended as follows:
 | #50 | Versioned disputes, immutable evidence, supersession, adjudication, and authorized escalation. |
 | #51 | Aggregate/phase state validation and failure semantics. |
 | #55 | Restart-safe ownership, durable identity, recovery, duplicate prevention, terminal state, and diagnostics. |
-| #59 | Manager ownership ADR, decomposition binding, migration, review, and rollback. |
+| #59 | Delivered in ADR-0002: retained bounded manager ownership, decomposition binding, migration, review, and rollback. |
 | #68 | ADR plus roadmap configuration ownership, impact declarations, transitions, enforcement, compatibility, and failure semantics. |
 
 The broader implementation documents must separately distinguish implemented
