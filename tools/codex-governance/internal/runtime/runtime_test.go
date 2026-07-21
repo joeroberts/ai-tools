@@ -49,6 +49,15 @@ func TestLifecycleEventsArePrivacySafeAndOwnerOnly(t *testing.T) {
 	}
 }
 
+func TestLifecycleEventsAcceptPlanningAndOperationPhases(t *testing.T) {
+	root := t.TempDir()
+	for _, phase := range []string{"planning", "operation"} {
+		if err := RecordLifecycle(root, LifecycleEvent{RunID: phase + "-1", WorkItem: "REK-67", Phase: phase, State: "dispatched"}); err != nil {
+			t.Fatalf("RecordLifecycle(%s) = %v", phase, err)
+		}
+	}
+}
+
 func TestCacheRedactsSecrets(t *testing.T) {
 	root := t.TempDir()
 	key := CacheKey("input")

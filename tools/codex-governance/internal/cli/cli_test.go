@@ -67,6 +67,15 @@ func TestImplementationLifecycleStateIsPublicSafe(t *testing.T) {
 	}
 }
 
+func TestOperationLifecycleDoesNotStoreOperationInputs(t *testing.T) {
+	root := t.TempDir()
+	recordOperationLifecycle(root, "ollama-run", "completed")
+	data, err := os.ReadFile(filepath.Join(root, "lifecycle-events.jsonl"))
+	if err != nil || !strings.Contains(string(data), `"phase":"operation"`) || strings.Contains(string(data), "model") {
+		t.Fatalf("operation lifecycle = %q, %v", data, err)
+	}
+}
+
 func TestRunInitAndConfigCheck(t *testing.T) {
 	root := t.TempDir()
 	var stdout bytes.Buffer

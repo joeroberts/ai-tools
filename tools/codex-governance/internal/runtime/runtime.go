@@ -35,7 +35,7 @@ type LifecycleEvent struct {
 }
 
 func RecordLifecycle(root string, event LifecycleEvent) error {
-	if event.RunID == "" || event.WorkItem == "" || event.Phase != "implementation" || !oneOf(event.State, "dispatched", "running", "completed", "failed") {
+	if event.RunID == "" || event.WorkItem == "" || !oneOf(event.Phase, "implementation", "planning", "operation") || !oneOf(event.State, "dispatched", "running", "completed", "failed") {
 		return fmt.Errorf("invalid lifecycle event")
 	}
 	if event.At.IsZero() {

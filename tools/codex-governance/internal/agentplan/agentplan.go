@@ -33,6 +33,7 @@ type Result struct{ PlanPath, WorkItem string }
 var marshalDecomposition = json.MarshalIndent
 
 var recordExecutionEvent = gruntime.Record
+var recordLifecycleEvent = gruntime.RecordLifecycle
 
 type Runner interface {
 	Run(context.Context, string, string, string) ([]byte, error)
@@ -552,9 +553,11 @@ func validateManagerLifecycle(request Request) error {
 func runRole(request Request, workItem, role string, cycle int, runner Runner, prompt, schema string) ([]byte, error) {
 	root := request.RuntimeRoot
 	id := fmt.Sprintf("%s-ticket-plan-%d", role, cycle)
+	recordPlanningLifecycle(root, workItem, id, "dispatched")
 	if err := recordExecutionEvent(root, gruntime.Event{WorkItem: workItem, AgentID: id, Role: role, State: "started"}); err != nil {
 		return nil, err
 	}
+	recordPlanningLifecycle(root, workItem, id, "running")
 	ctx := request.Context
 	if ctx == nil {
 		ctx = context.Background()
@@ -574,8 +577,15 @@ func runRole(request Request, workItem, role string, cycle int, runner Runner, p
 	return finishRole(root, workItem, id, role, cycle, artifactDir, result, err)
 }
 
+func recordPlanningLifecycle(root, workItem, id, state string) {
+	// Chat-facing delivery is observability only; the private execution ledger
+	// and result artifacts remain authoritative if it cannot be recorded.
+	_ = recordLifecycleEvent(root, gruntime.LifecycleEvent{RunID: id, WorkItem: workItem, Phase: "planning", State: state})
+}
+
 func finishRole(root, workItem, id, role string, cycle int, artifactDir string, result []byte, runErr error) ([]byte, error) {
 	if runErr != nil {
+		recordPlanningLifecycle(root, workItem, id, "failed")
 		ref, reconciliation := persistFailureDiagnostic(root, artifactDir, role, cycle, runErr)
 		reconciliation = append(reconciliation, reconcileTerminalEvents(root, workItem, id, role, "failed", ref)...)
 		return nil, joinReconciliation(runErr, reconciliation)
@@ -601,6 +611,7 @@ func finishRole(root, workItem, id, role string, cycle int, artifactDir string, 
 		}
 	}
 	reconciliation = append(reconciliation, reconcileTerminalEvents(root, workItem, id, role, "completed", ref)...)
+	recordPlanningLifecycle(root, workItem, id, "completed")
 	if err := joinReconciliation(nil, reconciliation); err != nil {
 		return nil, err
 	}
