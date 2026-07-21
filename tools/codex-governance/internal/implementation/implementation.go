@@ -58,6 +58,7 @@ type Run struct {
 	TaskID           string                     `json:"task_id"`
 	ProcessID        int                        `json:"process_id"`
 	ResultRef        string                     `json:"result_ref"`
+	SupervisorRef    string                     `json:"supervisor_ref"`
 	CommitSHA        string                     `json:"commit_sha"`
 	PullRequestURL   string                     `json:"pull_request_url"`
 	SourceEvidence   jira.OfflineExportEvidence `json:"source_evidence"`
@@ -447,15 +448,7 @@ func StartHeadless(run *Run, bundle TaskBundle, repoRoot, runtimeRoot, codexBina
 	if err := run.Transition(StateQueued); err != nil {
 		return nil, err
 	}
-	adapter := NewHeadlessCodexAdapter(codexBinary, workDir, filepath.Join(runtimeRoot, "runs", run.ID, "results"))
-	if err := Launch(run, bundle, adapter); err != nil {
-		return nil, err
-	}
-	var diagnostics []string
-	if references, ok := interface{}(adapter).(DiagnosticReference); ok {
-		diagnostics = references.DiagnosticReferences(run.TaskID)
-	}
-	return diagnostics, WaitAndReconcile(run, adapter, run.ResultRef)
+	return launchSupervisor(run, bundle, workDir, runtimeRoot, codexBinary)
 }
 
 func resolveHeadlessWorkDir(repoRoot, worktreePath string) (string, error) {
@@ -502,6 +495,9 @@ func resolveHeadlessWorkDir(repoRoot, worktreePath string) (string, error) {
 // ReconcilePersisted is deliberately conservative: an unavailable process or
 // result is escalation, never a new dispatch.
 func ReconcilePersisted(run *Run) error {
+	if run.SupervisorRef != "" {
+		return reconcileSupervisor(run)
+	}
 	if run.State != StateRunning || run.ProcessID < 1 || run.ResultRef == "" {
 		return fmt.Errorf("run lacks persisted process evidence")
 	}
