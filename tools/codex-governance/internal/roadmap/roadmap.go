@@ -2,6 +2,7 @@ package roadmap
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -17,6 +18,104 @@ type Roadmap struct {
 	Title  string  `yaml:"title" json:"title"`
 	Status string  `yaml:"status" json:"status"`
 	Phases []Phase `yaml:"phases" json:"phases"`
+}
+
+type Transition struct {
+	RoadmapID   string
+	Phase       int
+	Action      string
+	PriorDigest string
+	EvidenceID  string
+}
+
+// PreviewTransition validates a bound transition and returns the resulting
+// roadmap and digest without writing the roadmap or any external system.
+func PreviewTransition(current Roadmap, transition Transition, usedEvidence map[string]bool) (Roadmap, string, error) {
+	if issues := current.Check(); len(issues) != 0 {
+		return Roadmap{}, "", fmt.Errorf("invalid roadmap: %s", strings.Join(issues, "; "))
+	}
+	prior, err := Digest(current)
+	if err != nil {
+		return Roadmap{}, "", err
+	}
+	if transition.RoadmapID != current.ID || transition.PriorDigest != prior {
+		return Roadmap{}, "", fmt.Errorf("roadmap transition binding is stale or mismatched")
+	}
+	if transition.EvidenceID == "" || usedEvidence == nil || usedEvidence[transition.EvidenceID] {
+		return Roadmap{}, "", fmt.Errorf("roadmap transition evidence is missing or replayed")
+	}
+	result := current
+	result.Phases = make([]Phase, len(current.Phases))
+	for index, phase := range current.Phases {
+		result.Phases[index] = phase
+		result.Phases[index].Evidence = append([]string(nil), phase.Evidence...)
+	}
+	found := false
+	for index := range result.Phases {
+		phase := &result.Phases[index]
+		if phase.ID != transition.Phase {
+			continue
+		}
+		found = true
+		if !validTransition(phase.Status, transition.Action) {
+			return Roadmap{}, "", fmt.Errorf("roadmap phase %d cannot %s from %s", phase.ID, transition.Action, phase.Status)
+		}
+		switch transition.Action {
+		case "start", "resume":
+			phase.Status = "in-progress"
+		case "block":
+			phase.Status = "blocked"
+		case "complete":
+			phase.Status, phase.Evidence = "complete", append(phase.Evidence, transition.EvidenceID)
+			if phase.ApprovedBy == "" {
+				phase.ApprovedBy = "transition-evidence"
+			}
+			if phase.CompletedAt == "" {
+				phase.CompletedAt = "evidence-bound"
+			}
+		}
+	}
+	if !found {
+		return Roadmap{}, "", fmt.Errorf("roadmap phase %d is not present", transition.Phase)
+	}
+	result.Status = aggregateStatus(result)
+	if issues := result.Check(); len(issues) != 0 {
+		return Roadmap{}, "", fmt.Errorf("resulting roadmap is invalid: %s", strings.Join(issues, "; "))
+	}
+	digest, err := Digest(result)
+	if err != nil {
+		return Roadmap{}, "", err
+	}
+	usedEvidence[transition.EvidenceID] = true
+	return result, digest, nil
+}
+
+func Digest(roadmap Roadmap) (string, error) {
+	data, err := json.Marshal(roadmap)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf("sha256:%x", sum), nil
+}
+
+func validTransition(status, action string) bool {
+	return (action == "start" && status == "pending-approval") || (action == "block" && status == "in-progress") || (action == "resume" && status == "blocked") || (action == "complete" && status == "in-progress")
+}
+
+func aggregateStatus(roadmap Roadmap) string {
+	allComplete, blocked := true, false
+	for _, phase := range roadmap.Phases {
+		allComplete = allComplete && phase.Status == "complete"
+		blocked = blocked || phase.Status == "blocked"
+	}
+	if allComplete {
+		return "complete"
+	}
+	if blocked {
+		return "blocked"
+	}
+	return "in-progress"
 }
 
 // ValidateImpact checks that an enforced work-item declaration still names the
