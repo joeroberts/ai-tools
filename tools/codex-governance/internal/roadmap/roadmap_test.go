@@ -49,6 +49,37 @@ func TestValidateImpactRequiresActiveMappedPhase(t *testing.T) {
 	}
 }
 
+func TestPreviewTransitionRejectsStaleReplayAndSkippedState(t *testing.T) {
+	roadmap := Roadmap{ID: "program", Title: "Program", Status: "in-progress", Phases: []Phase{{ID: 1, Name: "Entry", Status: "pending-approval"}}}
+	prior, err := Digest(roadmap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name, want string
+		transition Transition
+		used       map[string]bool
+	}{
+		{"skipped", "cannot complete", Transition{RoadmapID: "program", Phase: 1, Action: "complete", PriorDigest: prior, EvidenceID: "e1"}, map[string]bool{}},
+		{"stale", "stale or mismatched", Transition{RoadmapID: "program", Phase: 1, Action: "start", PriorDigest: "sha256:stale", EvidenceID: "e1"}, map[string]bool{}},
+		{"replayed", "missing or replayed", Transition{RoadmapID: "program", Phase: 1, Action: "start", PriorDigest: prior, EvidenceID: "e1"}, map[string]bool{"e1": true}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, _, err := PreviewTransition(roadmap, test.transition, test.used); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("PreviewTransition() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+	used := map[string]bool{}
+	result, digest, err := PreviewTransition(roadmap, Transition{RoadmapID: "program", Phase: 1, Action: "start", PriorDigest: prior, EvidenceID: "e1"}, used)
+	if err != nil || result.Phases[0].Status != "in-progress" || digest == prior {
+		t.Fatalf("PreviewTransition() = %#v, %q, %v", result, digest, err)
+	}
+	if _, _, err := PreviewTransition(roadmap, Transition{RoadmapID: "program", Phase: 1, Action: "start", PriorDigest: prior, EvidenceID: "e1"}, used); err == nil {
+		t.Fatal("PreviewTransition accepted evidence after consuming it")
+	}
+}
+
 func TestCheckAggregatePhaseStates(t *testing.T) {
 	tests := []struct {
 		name, status string
