@@ -279,6 +279,29 @@ func TestApplyConstraintsOverridesMalformedManagerSourceDerivedFields(t *testing
 	}
 }
 
+func TestApplyConstraintsPropagatesRoadmapImpactTraceability(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	plan, err := ticketplan.Load(filepath.Join(repoRoot, "testdata", "ticket-plans", "valid", "plan.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	constraints, err := LoadConstraints(filepath.Join(repoRoot, "testdata", "ticket-plans", "valid", "constraints.json"), plan.Sources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	impact := &ticketplan.RoadmapImpact{Mode: "required", RoadmapID: "program", CanonicalPath: "roadmaps/program.yaml", Phase: "1", Transition: "start"}
+	constraints.Subtasks[0].RoadmapImpact = impact
+	expectedTrace := ticketplan.Reference{Source: "spec", Section: "Contract", Excerpt: "Required mode names exactly one repository-relative structured roadmap and stable identity."}
+	constraints.Subtasks[0].Traceability["roadmap_impact"] = []ticketplan.Reference{expectedTrace}
+	if err := ApplyConstraints(&plan, constraints); err != nil {
+		t.Fatal(err)
+	}
+	gotImpact, gotTrace := plan.Subtasks[0].RoadmapImpact, plan.Subtasks[0].Traceability["roadmap_impact"]
+	if gotImpact == nil || *gotImpact != *impact || len(gotTrace) != 1 || gotTrace[0] != expectedTrace {
+		t.Fatalf("roadmap impact or traceability was not propagated: %#v", plan.Subtasks[0])
+	}
+}
+
 func TestBuildAuthorityContractFromCanonicalConstraints(t *testing.T) {
 	repoRoot := filepath.Join("..", "..")
 	plan, err := ticketplan.Load(filepath.Join(repoRoot, "testdata", "ticket-plans", "valid", "plan.json"))

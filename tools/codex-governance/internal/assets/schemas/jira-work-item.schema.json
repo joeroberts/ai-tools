@@ -3,7 +3,7 @@
   "$id": "https://example.invalid/codex-governance/jira-work-item.schema.json",
   "title": "Normalized Jira work item",
   "type": "object",
-  "required": ["format_version", "governance_status", "profile", "source", "scope", "git_range", "decision", "links", "handoff"],
+  "required": ["format_version", "governance_status", "profile", "source", "scope", "git_range", "decision", "roadmap_impact", "links", "handoff"],
   "properties": {
     "format_version": { "const": 1 },
     "governance_status": { "enum": ["ready", "in-implementation", "pending-review", "pending-verification", "source-drift-blocked", "blocked", "closed"] },
@@ -80,6 +80,23 @@
         "adr": { "type": "string", "pattern": "^(docs/decisions/.+\\.md|No ADR needed: .+)$" },
         "adr_preflight_pending": { "type": "boolean" }
       },
+      "additionalProperties": false
+    },
+    "roadmap_impact": {
+      "type": "object",
+      "required": ["mode"],
+      "properties": {
+        "mode": { "enum": ["required", "not-applicable"] },
+        "roadmap_id": { "type": "string", "minLength": 1 },
+        "canonical_path": { "type": "string", "minLength": 1 },
+        "phase": { "type": "string", "minLength": 1 },
+        "transition": { "enum": ["start", "block", "resume", "complete"] },
+        "reason": { "type": "string", "minLength": 10, "maxLength": 240 }
+      },
+      "oneOf": [
+        { "properties": { "mode": { "const": "required" } }, "required": ["roadmap_id", "canonical_path", "phase", "transition"], "not": { "required": ["reason"] } },
+        { "properties": { "mode": { "const": "not-applicable" } }, "required": ["reason"], "not": { "anyOf": [{ "required": ["roadmap_id"] }, { "required": ["canonical_path"] }, { "required": ["phase"] }, { "required": ["transition"] }] } }
+      ],
       "additionalProperties": false
     },
     "links": {

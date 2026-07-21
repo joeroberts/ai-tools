@@ -28,6 +28,7 @@
   },
   "git_range": {"base_sha": "0000000", "head_sha": "1111111"},
   "decision": {"adr": "docs/decisions/ADR-0001.md"},
+  "roadmap_impact": {"mode": "not-applicable", "reason": "Offline-export validation does not advance a roadmap milestone."},
   "links": {
     "pull_request": "https://github.example.test/pull/1",
     "ci_run": null,

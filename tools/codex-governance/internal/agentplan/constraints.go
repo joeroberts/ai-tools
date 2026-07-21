@@ -40,6 +40,7 @@ type SubtaskConstraints struct {
 	ReviewBudget  ticketplan.ReviewBudget   `json:"review_budget"`
 	Dependencies  []string                  `json:"dependencies"`
 	ADR           string                    `json:"adr,omitempty"`
+	RoadmapImpact *ticketplan.RoadmapImpact `json:"roadmap_impact,omitempty"`
 	Traceability  ticketplan.TraceMap       `json:"traceability"`
 	SourceDerived *SourceDerivedConstraints `json:"source_derived,omitempty"`
 }
@@ -347,6 +348,9 @@ func validateAssignment(constraints Constraints) error {
 		if assignment.ADR != "" && len(assignment.Traceability["adr"]) == 0 {
 			return fmt.Errorf("assignment for subtask %q is missing adr traceability", assignment.ID)
 		}
+		if assignment.RoadmapImpact != nil && len(assignment.Traceability["roadmap_impact"]) == 0 {
+			return fmt.Errorf("assignment for subtask %q is missing roadmap_impact traceability", assignment.ID)
+		}
 		for _, path := range assignment.AllowedPaths {
 			if !paths[path] {
 				return fmt.Errorf("assignment for subtask %q uses path outside approved pool: %s", assignment.ID, path)
@@ -449,11 +453,15 @@ func ApplyConstraints(plan *ticketplan.Plan, constraints Constraints) error {
 			return fmt.Errorf("constraints subtask %d is incomplete", index+1)
 		}
 		subtask := &plan.Subtasks[index]
-		subtask.ID, subtask.Phase, subtask.ChangeClass, subtask.AllowedPaths, subtask.ReviewBudget, subtask.Dependencies = assignment.ID, assignment.Phase, assignment.ChangeClass, assignment.AllowedPaths, assignment.ReviewBudget, assignment.Dependencies
+		subtask.ID, subtask.Phase, subtask.ChangeClass, subtask.AllowedPaths, subtask.ReviewBudget, subtask.Dependencies, subtask.RoadmapImpact = assignment.ID, assignment.Phase, assignment.ChangeClass, assignment.AllowedPaths, assignment.ReviewBudget, assignment.Dependencies, assignment.RoadmapImpact
 		if assignment.ADR != "" {
 			subtask.ADR = assignment.ADR
 		}
-		for _, field := range []string{"phase", "change_class", "review_budget", "allowed_paths", "dependencies", "adr"} {
+		fields := []string{"phase", "change_class", "review_budget", "allowed_paths", "dependencies", "adr"}
+		if assignment.RoadmapImpact != nil {
+			fields = append(fields, "roadmap_impact")
+		}
+		for _, field := range fields {
 			if len(assignment.Traceability[field]) == 0 && field == "adr" && assignment.ADR == "" {
 				continue
 			}
@@ -517,7 +525,7 @@ func buildAuthorityContract(constraints Constraints) (ticketplan.AuthorityContra
 		source := assignment.SourceDerived
 		contract.Slices = append(contract.Slices, ticketplan.ContractSlice{
 			ID:            assignment.ID,
-			Assignment:    ticketplan.SliceAssignment{Phase: assignment.Phase, ChangeClass: assignment.ChangeClass, ReviewBudget: assignment.ReviewBudget, AllowedPaths: append([]string(nil), assignment.AllowedPaths...), Dependencies: append([]string{}, assignment.Dependencies...), ADR: assignment.ADR},
+			Assignment:    ticketplan.SliceAssignment{Phase: assignment.Phase, ChangeClass: assignment.ChangeClass, ReviewBudget: assignment.ReviewBudget, AllowedPaths: append([]string(nil), assignment.AllowedPaths...), Dependencies: append([]string{}, assignment.Dependencies...), ADR: assignment.ADR, RoadmapImpact: assignment.RoadmapImpact},
 			SourceDerived: ticketplan.SliceSourceDerived{Summary: source.Summary, Scope: source.Scope, NonGoals: append([]string(nil), source.NonGoals...), AcceptanceCriteria: append([]string(nil), source.AcceptanceCriteria...), ValidationPlan: append([]string(nil), source.ValidationPlan...)},
 		})
 		appendEvidence("slices[].", assignment.Traceability)

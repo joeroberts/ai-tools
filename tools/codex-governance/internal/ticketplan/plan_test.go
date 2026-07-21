@@ -111,6 +111,16 @@ func TestValidateSubtasksAgainstManifestRejectsStructuralDrift(t *testing.T) {
 	}
 }
 
+func TestValidateSubtasksAgainstManifestRejectsRoadmapImpactDrift(t *testing.T) {
+	slice := contractSlice("one", nil, []string{"internal/ticketplan"})
+	slice.Assignment.RoadmapImpact = &RoadmapImpact{Mode: "required", RoadmapID: "program", CanonicalPath: "roadmaps/program.yaml", Phase: "1", Transition: "start"}
+	matching := subtaskFromContractSlice(slice)
+	matching.RoadmapImpact = nil
+	if issues := validateSubtasksAgainstManifest([]Subtask{matching}, []ContractSlice{slice}); len(issues) == 0 {
+		t.Fatal("manifest drift was accepted")
+	}
+}
+
 func TestPlanValidateRejectsAggregatedAllowedPaths(t *testing.T) {
 	_, plan := validPlan(t)
 	plan.Subtasks[0].AllowedPaths = []string{"internal/agentplan,internal/ticketplan"}
@@ -141,7 +151,7 @@ func subtaskFromContractSlice(slice ContractSlice) Subtask {
 		ReviewBudget: slice.Assignment.ReviewBudget, Scope: slice.SourceDerived.Scope,
 		NonGoals: append([]string(nil), slice.SourceDerived.NonGoals...), AcceptanceCriteria: append([]string(nil), slice.SourceDerived.AcceptanceCriteria...),
 		ValidationPlan: append([]string(nil), slice.SourceDerived.ValidationPlan...), AllowedPaths: append([]string(nil), slice.Assignment.AllowedPaths...),
-		ADR: slice.Assignment.ADR, Dependencies: append([]string{}, slice.Assignment.Dependencies...),
+		ADR: slice.Assignment.ADR, Dependencies: append([]string{}, slice.Assignment.Dependencies...), RoadmapImpact: slice.Assignment.RoadmapImpact,
 	}
 }
 
