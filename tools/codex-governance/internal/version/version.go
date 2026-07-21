@@ -21,19 +21,34 @@ func Parse(value string) (Version, error) {
 		return Version{}, fmt.Errorf("invalid Semantic Versioning 2.0.0 value %q", value)
 	}
 	for _, part := range strings.Split(m[4], ".") {
-		if part != "" && numericLeadingZero(part) {
+		if part == "" {
+			continue
+		}
+		if _, err := strconv.ParseUint(part, 10, 64); err == nil && numericLeadingZero(part) {
 			return Version{}, fmt.Errorf("invalid prerelease identifier %q", part)
+		} else if err != nil && digitsOnly(part) {
+			return Version{}, fmt.Errorf("numeric prerelease identifier %q exceeds supported range", part)
 		}
 	}
-	major, _ := strconv.ParseUint(m[1], 10, 64)
-	minor, _ := strconv.ParseUint(m[2], 10, 64)
-	patch, _ := strconv.ParseUint(m[3], 10, 64)
+	major, err := strconv.ParseUint(m[1], 10, 64)
+	if err != nil {
+		return Version{}, fmt.Errorf("major version exceeds supported range")
+	}
+	minor, err := strconv.ParseUint(m[2], 10, 64)
+	if err != nil {
+		return Version{}, fmt.Errorf("minor version exceeds supported range")
+	}
+	patch, err := strconv.ParseUint(m[3], 10, 64)
+	if err != nil {
+		return Version{}, fmt.Errorf("patch version exceeds supported range")
+	}
 	return Version{Major: major, Minor: minor, Patch: patch, Pre: m[4], Build: m[5]}, nil
 }
 func numericLeadingZero(value string) bool {
 	_, err := strconv.ParseUint(value, 10, 64)
 	return err == nil && len(value) > 1 && value[0] == '0'
 }
+func digitsOnly(value string) bool { return value != "" && strings.Trim(value, "0123456789") == "" }
 func (v Version) String() string {
 	value := fmt.Sprintf("%d.%d.%d", v.Major, v.Minor, v.Patch)
 	if v.Pre != "" {

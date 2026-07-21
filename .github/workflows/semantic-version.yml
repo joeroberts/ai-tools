@@ -33,17 +33,20 @@ jobs:
         env:
           LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
         run: |
-          mapfile -t impacts < <(jq -r '.[] | select(. == "release:major" or . == "release:minor" or . == "release:patch" or . == "release:none") | sub("^release:"; "")' <<< "$LABELS")
+          set -o pipefail
+          mapfile -t impacts < <(jq -r '.[] | select(startswith("release:")) | sub("^release:"; "")' <<< "$LABELS")
           if [[ ${#impacts[@]} -ne 1 ]]; then
-            echo "Expected exactly one release:major, release:minor, release:patch, or release:none label; found: ${impacts[*]:-(none)}" >&2
+            echo "Expected exactly one release:* label; found: ${impacts[*]:-(none)}" >&2
             exit 1
           fi
+          case "${impacts[0]}" in major|minor|patch|none) ;; *) echo "Invalid release label: release:${impacts[0]}" >&2; exit 1 ;; esac
           go run ./tools/codex-governance/cmd/codex-governance version impact \
             --manifest tools/codex-governance/releases/1.0.0-draft.json \
             --impact "${impacts[0]}" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Validate release tag
         if: github.event_name == 'push'
         run: |
+          set -o pipefail
           go run ./tools/codex-governance/cmd/codex-governance version validate-tag \
             --manifest tools/codex-governance/releases/1.0.0-draft.json \
             --tag "${GITHUB_REF_NAME}" \

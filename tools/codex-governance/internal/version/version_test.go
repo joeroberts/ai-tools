@@ -13,7 +13,7 @@ func TestParseAndNext(t *testing.T) {
 	}
 }
 func TestParseRejectsInvalid(t *testing.T) {
-	for _, value := range []string{"1.2", "01.2.3", "1.2.3-01", "1.2.3-"} {
+	for _, value := range []string{"1.2", "01.2.3", "1.2.3-01", "1.2.3-", "18446744073709551616.0.0", "1.0.0-18446744073709551616"} {
 		if _, err := Parse(value); err == nil {
 			t.Fatalf("Parse(%q) succeeded", value)
 		}
