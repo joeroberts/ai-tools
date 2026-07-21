@@ -55,6 +55,18 @@ func TestReportImplementationStartTerminalOutcomes(t *testing.T) {
 	}
 }
 
+func TestImplementationLifecycleStateIsPublicSafe(t *testing.T) {
+	if got := startLifecycleState(implementation.Run{State: implementation.StateRunning}, nil); got != "running" {
+		t.Fatalf("running start state = %q", got)
+	}
+	if got := startLifecycleState(implementation.Run{State: implementation.StateEscalated}, nil); got != "failed" {
+		t.Fatalf("escalated start state = %q", got)
+	}
+	if got := reconciledLifecycleState(implementation.Run{State: implementation.StateImplementationComplete}); got != "completed" {
+		t.Fatalf("completed reconciliation state = %q", got)
+	}
+}
+
 func TestRunInitAndConfigCheck(t *testing.T) {
 	root := t.TempDir()
 	var stdout bytes.Buffer

@@ -23,6 +23,65 @@ type Event struct {
 	InputRef  string    `json:"input_ref,omitempty"`
 }
 
+// LifecycleEvent is the small, public-safe record used to report governed
+// execution progress. It deliberately excludes task prompts, logs, artifacts,
+// and filesystem references; those remain in the owner-only run record.
+type LifecycleEvent struct {
+	At       time.Time `json:"at"`
+	RunID    string    `json:"run_id"`
+	WorkItem string    `json:"work_item"`
+	Phase    string    `json:"phase"`
+	State    string    `json:"state"`
+}
+
+func RecordLifecycle(root string, event LifecycleEvent) error {
+	if event.RunID == "" || event.WorkItem == "" || event.Phase != "implementation" || !oneOf(event.State, "dispatched", "running", "completed", "failed") {
+		return fmt.Errorf("invalid lifecycle event")
+	}
+	if event.At.IsZero() {
+		event.At = time.Now().UTC()
+	}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return err
+	}
+	path := filepath.Join(root, "lifecycle-events.jsonl")
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	data, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	_, err = file.Write(append(data, '\n'))
+	return err
+}
+
+func LoadLifecycle(root, runID string) ([]LifecycleEvent, error) {
+	path := filepath.Join(root, "lifecycle-events.jsonl")
+	file, err := os.Open(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	var events []LifecycleEvent
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		var event LifecycleEvent
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			return nil, fmt.Errorf("parse lifecycle ledger: %w", err)
+		}
+		if event.RunID == runID {
+			events = append(events, event)
+		}
+	}
+	return events, scanner.Err()
+}
+
 func DefaultRoot() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {

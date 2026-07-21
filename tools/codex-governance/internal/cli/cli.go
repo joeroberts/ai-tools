@@ -1257,12 +1257,26 @@ func runImplementationStart(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "resolve runtime root: %v\n", err)
 		return 2
 	}
+	recordImplementationLifecycle(runtimeRoot, run, "dispatched")
 	diagnostics, startErr := implementation.StartHeadless(&run, bundle, *repoRoot, runtimeRoot, *codexBin)
 	if err := implementation.SaveRun(*runPath, run); err != nil {
 		fmt.Fprintf(stderr, "save implementation run: %v\n", err)
 		return 2
 	}
+	recordImplementationLifecycle(runtimeRoot, run, startLifecycleState(run, startErr))
 	return reportImplementationStart(run, diagnostics, startErr, stdout, stderr)
+}
+
+func startLifecycleState(run implementation.Run, startErr error) string {
+	if startErr != nil || run.State == implementation.StateEscalated {
+		return "failed"
+	}
+	return "running"
+}
+
+func recordImplementationLifecycle(root string, run implementation.Run, state string) {
+	// Progress delivery must never alter execution or governance authority.
+	_ = gruntime.RecordLifecycle(root, gruntime.LifecycleEvent{RunID: run.ID, WorkItem: run.WorkItemKey, Phase: "implementation", State: state})
 }
 
 func reportImplementationStart(run implementation.Run, diagnostics []string, startErr error, stdout, stderr io.Writer) int {
@@ -1276,7 +1290,7 @@ func reportImplementationStart(run implementation.Run, diagnostics []string, sta
 		return 1
 	}
 	if run.State == implementation.StateRunning {
-		fmt.Fprintf(stdout, "PASS implementation supervisor started %s\n", run.TaskID)
+		fmt.Fprintf(stdout, "PASS implementation dispatched %s state=running\n", run.TaskID)
 		return 0
 	}
 	fmt.Fprintf(stdout, "PASS implementation completed %s\n", run.TaskID)
@@ -1287,6 +1301,7 @@ func runImplementationReconcile(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("implementation reconcile", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	runPath := flags.String("run", "", "implementation-run JSON")
+	runtimeRootPath := flags.String("runtime-root", "", "runtime root")
 	if err := flags.Parse(args); err != nil || *runPath == "" || flags.NArg() != 0 {
 		return 2
 	}
@@ -1303,8 +1318,21 @@ func runImplementationReconcile(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "save implementation run: %v\n", err)
 		return 2
 	}
+	if root, err := runtimeRoot(*runtimeRootPath); err == nil {
+		recordImplementationLifecycle(root, run, reconciledLifecycleState(run))
+	}
 	fmt.Fprintf(stdout, "PASS implementation state %s\n", run.State)
 	return 0
+}
+
+func reconciledLifecycleState(run implementation.Run) string {
+	if run.State == implementation.StateImplementationComplete {
+		return "completed"
+	}
+	if run.State == implementation.StateEscalated {
+		return "failed"
+	}
+	return "running"
 }
 
 func runImplementationVerify(args []string, stdout, stderr io.Writer) int {
@@ -1494,6 +1522,7 @@ func runImplementationStatus(args []string, stdout, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	runPath := flags.String("run", "", "implementation-run JSON")
 	format := flags.String("format", "table", "table or json")
+	runtimeRootPath := flags.String("runtime-root", "", "runtime root")
 	if err := flags.Parse(args); err != nil || *runPath == "" || flags.NArg() != 0 {
 		return 2
 	}
@@ -1503,7 +1532,16 @@ func runImplementationStatus(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if *format == "json" {
-		data, _ := json.MarshalIndent(run, "", "  ")
+		root, rootErr := runtimeRoot(*runtimeRootPath)
+		if rootErr != nil {
+			fmt.Fprintf(stderr, "resolve runtime root: %v\n", rootErr)
+			return 2
+		}
+		events, _ := gruntime.LoadLifecycle(root, run.ID)
+		data, _ := json.MarshalIndent(struct {
+			Run    implementation.Run        `json:"run"`
+			Events []gruntime.LifecycleEvent `json:"events"`
+		}{Run: run, Events: events}, "", "  ")
 		fmt.Fprintln(stdout, string(data))
 		return 0
 	}
@@ -1511,7 +1549,17 @@ func runImplementationStatus(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "status format must be table or json")
 		return 2
 	}
-	fmt.Fprintf(stdout, "RUN        STATE        WORK ITEM  ADAPTER\n%s  %-11s  %-9s  %s\n", run.ID, run.State, run.WorkItemKey, run.Adapter)
+	root, rootErr := runtimeRoot(*runtimeRootPath)
+	if rootErr != nil {
+		fmt.Fprintf(stderr, "resolve runtime root: %v\n", rootErr)
+		return 2
+	}
+	events, _ := gruntime.LoadLifecycle(root, run.ID)
+	latest := "none"
+	if len(events) > 0 {
+		latest = events[len(events)-1].State
+	}
+	fmt.Fprintf(stdout, "RUN        STATE        PROGRESS    WORK ITEM  ADAPTER\n%s  %-11s  %-10s  %-9s  %s\n", run.ID, run.State, latest, run.WorkItemKey, run.Adapter)
 	return 0
 }
 

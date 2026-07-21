@@ -1,6 +1,11 @@
 package runtime
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 func TestLedgerTracksOpenAgents(t *testing.T) {
 	root := t.TempDir()
@@ -21,6 +26,26 @@ func TestLedgerTracksOpenAgents(t *testing.T) {
 	open, err = OpenAgents(root, "CG-1")
 	if err != nil || len(open) != 0 {
 		t.Fatalf("OpenAgents() after close = %#v, %v", open, err)
+	}
+}
+
+func TestLifecycleEventsArePrivacySafeAndOwnerOnly(t *testing.T) {
+	root := t.TempDir()
+	event := LifecycleEvent{RunID: "run-1", WorkItem: "REK-66", Phase: "implementation", State: "running"}
+	if err := RecordLifecycle(root, event); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := os.ReadFile(filepath.Join(root, "lifecycle-events.jsonl"))
+	if err != nil || strings.Contains(string(stored), "result_ref") || strings.Contains(string(stored), "/private/") {
+		t.Fatalf("stored lifecycle event is not privacy-safe: %q, %v", stored, err)
+	}
+	info, err := os.Stat(filepath.Join(root, "lifecycle-events.jsonl"))
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("ledger mode = %v, %v", info.Mode().Perm(), err)
+	}
+	events, err := LoadLifecycle(root, "run-1")
+	if err != nil || len(events) != 1 || events[0].State != "running" {
+		t.Fatalf("LoadLifecycle() = %#v, %v", events, err)
 	}
 }
 
