@@ -67,7 +67,7 @@ be amended as follows:
 | #45 | Required-check ownership, hosted-setting approval/read-back, drift, rollback, and protected-branch boundaries. |
 | #50 | Versioned disputes, immutable evidence, supersession, adjudication, and authorized escalation. |
 | #51 | Aggregate/phase state validation and failure semantics. |
-| #55 | Restart-safe ownership, durable identity, recovery, duplicate prevention, terminal state, and diagnostics. |
+| #55 | ADR-0003 defines restart-safe supervisor ownership, durable identity, recovery, duplicate prevention, terminal state, and diagnostics; implementation remains active. |
 | #59 | Delivered in ADR-0002: retained bounded manager ownership, decomposition binding, migration, review, and rollback. |
 | #68 | ADR plus roadmap configuration ownership, impact declarations, transitions, enforcement, compatibility, and failure semantics. |
 

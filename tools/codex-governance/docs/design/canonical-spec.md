@@ -182,6 +182,17 @@ read-only and cannot authorize a new Jira write. See
 `docs/decisions/0002-retain-post-assignment-manager.md` for migration,
 rollback, and the required verification matrix.
 
+### Persistent Headless Process Supervision
+
+ADR-0003 assigns an approved headless Codex process to a durable local
+supervisor, not the launching CLI. The supervisor owns immutable launch
+evidence, atomic current state, append-only lifecycle events, durable result and
+failure diagnostics, process-start identity, and duplicate prevention. A later
+reconciliation validates the stored identity before liveness; a missing or
+mismatched process fails closed and cannot trigger redispatch. Terminal records
+are immutable and require durable result or failure evidence. See
+`docs/decisions/0003-persistent-headless-supervisor.md`.
+
 Create an ADR before implementation for a durable architecture, interface,
 security, data, operational, dependency, deployment, rollback, or
 accepted-risk decision. Routine bug fixes, localized refactors, tests, and
