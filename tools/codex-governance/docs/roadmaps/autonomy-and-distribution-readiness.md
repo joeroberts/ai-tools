@@ -8,11 +8,12 @@ each item when its implementation-ready work item is approved.
 
 ## Current State
 
-The CLI retains explicit approval and fail-closed gates. It does not provide
-bounded autonomous authorization, restart-safe supervision, operational
-local-model code-edit qualification, protected-branch administration, or
-distribution. Persisted-run reconciliation is not restart-safe process
-supervision; policy eligibility is not operational model qualification.
+The CLI retains explicit approval and fail-closed gates. ADR-0003 supplies
+restart-safe supervision for approved headless runs; it does not widen
+authorization. The CLI does not provide bounded autonomous authorization,
+operational local-model code-edit qualification, protected-branch
+administration, or distribution. Policy eligibility is not operational model
+qualification.
 
 ## Rebaselined Sequence And Effort
 
@@ -25,13 +26,13 @@ range subtotal is 152-269 agent-hours and excludes all unestimated work.
 | Complete | [#29](https://github.com/joeroberts/ai-tools/issues/29): verified Jira `In Progress` preflight | Historical 4-8; remaining 0 | Delivered |
 | 1 | [#51](https://github.com/joeroberts/ai-tools/issues/51): consistent aggregate and phase roadmap states | Not yet estimated | Pending decomposition |
 | 2 | [#68](https://github.com/joeroberts/ai-tools/issues/68): repository-neutral roadmap configuration and machine-enforced lifecycle/impact contract | Not yet estimated | ADR and decomposition required |
-| 3 | Restart/recovery design correction | Not yet estimated | Separate work item required |
+| Complete | [#99](https://github.com/joeroberts/ai-tools/issues/99): restart/recovery design correction | Delivered in ADR-0003; remaining 0 | Delivered |
 | 4 | [#18](https://github.com/joeroberts/ai-tools/issues/18): authoritative CI and governance evidence | 6-12 | Medium-high |
 | 5 | [#44](https://github.com/joeroberts/ai-tools/issues/44): semantic-version evidence | Not yet estimated | Pending decomposition |
 | 6 | [#45](https://github.com/joeroberts/ai-tools/issues/45): repository and protected-branch baseline | Not yet estimated | Pending decomposition |
 | 7 | [#22](https://github.com/joeroberts/ai-tools/issues/22): bounded workflow authorization | 30-50 | Medium |
 | Complete | [#59](https://github.com/joeroberts/ai-tools/issues/59): manager ownership ADR | Historical 3-6; remaining 0 | Delivered |
-| 9 | [#55](https://github.com/joeroberts/ai-tools/issues/55): persistent supervision | 24-40 | Medium |
+| Complete | [#55](https://github.com/joeroberts/ai-tools/issues/55): persistent supervision | Delivered; remaining 0 | Delivered |
 | 10 | [#19](https://github.com/joeroberts/ai-tools/issues/19): root entry guidance propagation | 4-8 | Medium-high |
 | 11a | [#21](https://github.com/joeroberts/ai-tools/issues/21): operational model qualification registry | 10-18 | Medium |
 | 11b | [#50](https://github.com/joeroberts/ai-tools/issues/50): finding adjudication | 30-55 | Medium-low |
@@ -39,7 +40,7 @@ range subtotal is 152-269 agent-hours and excludes all unestimated work.
 
 ```text
 #67 -> #51 -> #68 -> #22
-#51 + restart/recovery design correction
+#51 + #99
 #18 -> #44 -> #45 -> #22
 #59 -> #55
 #68 -> #19
@@ -67,7 +68,8 @@ be amended as follows:
 | #45 | Required-check ownership, hosted-setting approval/read-back, drift, rollback, and protected-branch boundaries. |
 | #50 | Versioned disputes, immutable evidence, supersession, adjudication, and authorized escalation. |
 | #51 | Aggregate/phase state validation and failure semantics. |
-| #55 | ADR-0003 defines restart-safe supervisor ownership, durable identity, recovery, duplicate prevention, terminal state, and diagnostics; implementation remains active. |
+| #55 | Delivered with ADR-0003: restart-safe supervisor ownership, durable identity, recovery, duplicate prevention, terminal state, and diagnostics. |
+| #99 | Delivered in ADR-0003: restart/recovery ownership, reconciliation, duplicate prevention, terminal diagnostics, and fail-closed recovery conditions. |
 | #59 | Delivered in ADR-0002: retained bounded manager ownership, decomposition binding, migration, review, and rollback. |
 | #68 | ADR plus roadmap configuration ownership, impact declarations, transitions, enforcement, compatibility, and failure semantics. |
 
