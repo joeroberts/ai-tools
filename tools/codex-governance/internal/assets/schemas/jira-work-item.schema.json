@@ -77,7 +77,8 @@
       "type": "object",
       "required": ["adr"],
       "properties": {
-        "adr": { "type": "string", "pattern": "^(docs/decisions/.+\\.md|No ADR needed: .+)$" }
+        "adr": { "type": "string", "pattern": "^(docs/decisions/.+\\.md|No ADR needed: .+)$" },
+        "adr_preflight_pending": { "type": "boolean" }
       },
       "additionalProperties": false
     },

@@ -71,6 +71,41 @@ func TestEvaluateDetectsMissingADR(t *testing.T) {
 	}
 }
 
+func TestEvaluateAllowsDeclaredPendingADRButWorkingTreeRequiresIt(t *testing.T) {
+	root, base, head := testRepository(t)
+	item := loadFixture(t)
+	item.GitRange.BaseSHA, item.GitRange.HeadSHA = base, head
+	item.Scope.AllowedPaths = append(item.Scope.AllowedPaths, "docs/decisions")
+	item.Decision.ADRPreflightPending = true
+	export, err := jira.LoadOfflineExport(filepath.Join("..", "..", "testdata", "jira-exports", "valid.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	violations, err := Evaluate(item, export, root, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsCode(violations, "missing-adr") {
+		t.Fatalf("preflight validation rejected declared pending ADR: %#v", violations)
+	}
+	violations, err = EvaluateWorking(item, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsCode(violations, "missing-adr") {
+		t.Fatalf("working-tree validation accepted missing pending ADR: %#v", violations)
+	}
+}
+
+func TestWorkItemRejectsPendingADROutsideAllowedPaths(t *testing.T) {
+	item := loadFixture(t)
+	item.Decision.ADRPreflightPending = true
+	if len(item.Validate()) == 0 {
+		t.Fatal("work item accepted pending ADR outside allowed paths")
+	}
+}
+
 func TestEvaluateDetectsSourceIdentityMismatch(t *testing.T) {
 	root, base, head := testRepository(t)
 	item := loadFixture(t)

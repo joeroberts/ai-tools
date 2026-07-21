@@ -19,7 +19,7 @@ type Violation struct {
 func Evaluate(item workitem.Item, export jira.OfflineExport, repoRoot, baseSHA, headSHA string) ([]Violation, error) {
 	violations := structuralViolations(item)
 	violations = append(violations, driftViolations(item, export)...)
-	violations = append(violations, decisionViolations(item, repoRoot)...)
+	violations = append(violations, decisionViolations(item, repoRoot, true)...)
 
 	if baseSHA == "" {
 		baseSHA = item.GitRange.BaseSHA
@@ -44,7 +44,7 @@ func Evaluate(item workitem.Item, export jira.OfflineExport, repoRoot, baseSHA, 
 // same structural, ADR, path, and review-budget checks as Git-range validation.
 func EvaluateWorking(item workitem.Item, repoRoot string) ([]Violation, error) {
 	violations := structuralViolations(item)
-	violations = append(violations, decisionViolations(item, repoRoot)...)
+	violations = append(violations, decisionViolations(item, repoRoot, false)...)
 	changes, err := gitdiff.WorkingChanges(repoRoot)
 	if err != nil {
 		return nil, err
@@ -90,12 +90,15 @@ func driftViolations(item workitem.Item, export jira.OfflineExport) []Violation 
 	return violations
 }
 
-func decisionViolations(item workitem.Item, repoRoot string) []Violation {
+func decisionViolations(item workitem.Item, repoRoot string, allowPendingADR bool) []Violation {
 	if strings.HasPrefix(item.Decision.ADR, "No ADR needed: ") {
 		return nil
 	}
 	path := filepath.Join(repoRoot, filepath.FromSlash(item.Decision.ADR))
 	if _, err := os.Stat(path); err != nil {
+		if allowPendingADR && item.Decision.ADRPreflightPending {
+			return nil
+		}
 		return []Violation{{Code: "missing-adr", Message: fmt.Sprintf("ADR is unavailable: %s", item.Decision.ADR)}}
 	}
 	return nil

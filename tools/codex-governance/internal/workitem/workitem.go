@@ -70,7 +70,8 @@ type GitRange struct {
 }
 
 type Decision struct {
-	ADR string `json:"adr"`
+	ADR                 string `json:"adr"`
+	ADRPreflightPending bool   `json:"adr_preflight_pending,omitempty"`
 }
 
 type Links struct {
@@ -164,6 +165,9 @@ func (i Item) Validate() []string {
 	if i.Decision.ADR == "" || !(strings.HasPrefix(i.Decision.ADR, "docs/decisions/") || strings.HasPrefix(i.Decision.ADR, "No ADR needed: ")) {
 		issues = append(issues, "decision.adr is invalid")
 	}
+	if i.Decision.ADRPreflightPending && (!strings.HasPrefix(i.Decision.ADR, "docs/decisions/") || !allowedPath(i.Decision.ADR, i.Scope.AllowedPaths)) {
+		issues = append(issues, "decision.adr_preflight_pending requires an allowed docs/decisions ADR path")
+	}
 	if i.Handoff.Status == "" || i.Handoff.CompletedWork == "" || i.Handoff.NextAction == "" {
 		issues = append(issues, "handoff is incomplete")
 	}
@@ -198,6 +202,20 @@ func validHTTPURL(value string) bool {
 func oneOf(value string, values ...string) bool {
 	for _, candidate := range values {
 		if value == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func allowedPath(path string, roots []string) bool {
+	cleanPath := filepath.ToSlash(filepath.Clean(path))
+	if cleanPath != path || cleanPath == "." || strings.HasPrefix(cleanPath, "../") {
+		return false
+	}
+	for _, root := range roots {
+		cleanRoot := strings.TrimSuffix(filepath.ToSlash(filepath.Clean(root)), "/")
+		if cleanRoot != "." && (cleanPath == cleanRoot || strings.HasPrefix(cleanPath, cleanRoot+"/")) {
 			return true
 		}
 	}
