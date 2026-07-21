@@ -291,11 +291,13 @@ func TestApplyConstraintsPropagatesRoadmapImpactTraceability(t *testing.T) {
 	}
 	impact := &ticketplan.RoadmapImpact{Mode: "required", RoadmapID: "program", CanonicalPath: "roadmaps/program.yaml", Phase: "1", Transition: "start"}
 	constraints.Subtasks[0].RoadmapImpact = impact
-	constraints.Subtasks[0].Traceability["roadmap_impact"] = []ticketplan.Reference{{Source: "spec", Section: "Contract", Excerpt: "Required mode names exactly one repository-relative structured roadmap and stable identity."}}
+	expectedTrace := ticketplan.Reference{Source: "spec", Section: "Contract", Excerpt: "Required mode names exactly one repository-relative structured roadmap and stable identity."}
+	constraints.Subtasks[0].Traceability["roadmap_impact"] = []ticketplan.Reference{expectedTrace}
 	if err := ApplyConstraints(&plan, constraints); err != nil {
 		t.Fatal(err)
 	}
-	if plan.Subtasks[0].RoadmapImpact != impact || len(plan.Subtasks[0].Traceability["roadmap_impact"]) != 1 {
+	gotImpact, gotTrace := plan.Subtasks[0].RoadmapImpact, plan.Subtasks[0].Traceability["roadmap_impact"]
+	if gotImpact == nil || *gotImpact != *impact || len(gotTrace) != 1 || gotTrace[0] != expectedTrace {
 		t.Fatalf("roadmap impact or traceability was not propagated: %#v", plan.Subtasks[0])
 	}
 }
