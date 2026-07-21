@@ -35,11 +35,12 @@ before beginning lifecycle implementation.
 
 ## Separate Architecture Decision
 
-GitHub issue #59 tracks elimination of the post-assignment manager versus
-digest-bound reuse of the earlier decomposition as a separate backlog item.
-That decision must analyze canonical-manager ownership, authority-contract
-versioning, decomposition binding, review semantics, migration, and rollback
-before an ADR or implementation work item is approved.
+GitHub issue #59 is complete. ADR-0002 retains the post-assignment manager as
+a bounded proposal producer, with owner-approved constraints and local
+validation remaining authoritative. It defines binding, drift and replay
+protection, independent review semantics, migration, rollback, and the
+persistent-supervisor boundary. See
+`docs/decisions/0002-retain-post-assignment-manager.md`.
 
 ## Validation Gates
 

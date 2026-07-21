@@ -170,6 +170,18 @@ missing file or path expansion. Working-tree validation, review, commit, and
 publication continue to require the ADR file, so a missing ADR fails closed
 after implementation begins.
 
+### Post-Assignment Manager Ownership
+
+ADR-0002 retains the post-assignment hosted manager as a bounded proposal
+producer. Owner-approved constraints, local validation, independent review,
+and Jira write gates remain authoritative. The manager result must bind the
+source export, assignment, schema, model identity, invocation ID, terminal
+status, and private diagnostics; mismatch, drift, replay, malformed output, or
+an unexpected result state fails closed. Historical unbound artifacts are
+read-only and cannot authorize a new Jira write. See
+`docs/decisions/0002-retain-post-assignment-manager.md` for migration,
+rollback, and the required verification matrix.
+
 Create an ADR before implementation for a durable architecture, interface,
 security, data, operational, dependency, deployment, rollback, or
 accepted-risk decision. Routine bug fixes, localized refactors, tests, and
