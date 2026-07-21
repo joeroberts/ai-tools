@@ -20,23 +20,30 @@ jobs:
       - name: Validate local governance configuration
         run: |
           mkdir -p governance-artifacts
-          go run ./cmd/codex-governance config check | tee governance-artifacts/summary.txt
+          go run ./cmd/codex-governance config check
           if [[ -f governance/work-item.json && -f governance/offline-export.json ]]; then
             go run ./cmd/codex-governance validate-work-item \
               --work-item governance/work-item.json \
               --offline-export governance/offline-export.json \
               --base-sha "${{ github.event.pull_request.base.sha }}" \
-              --head-sha "${{ github.event.pull_request.head.sha }}" | tee -a governance-artifacts/summary.txt
+              --head-sha "${{ github.event.pull_request.head.sha }}"
+            work_item_status="passed"
           else
-            echo "Work-item validation skipped: no local offline fixture" | tee -a governance-artifacts/summary.txt
+            work_item_status="skipped (no local offline fixture)"
           fi
           {
-            echo "## Governance advisory"
+            echo "## Governance"
             echo
             echo "- Configuration: valid"
-            echo "- Work-item validation: opt-in; no Jira read or write performed"
+            echo "- Work-item validation: ${work_item_status}; no Jira read or write performed"
             echo "- Review budgets: advisory mode"
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee governance-artifacts/summary.txt >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "Configuration: valid"
+            echo "Work-item validation: ${work_item_status}"
+            echo "Review budgets: advisory mode"
+            echo "No Jira read or write performed"
+          } > governance-artifacts/summary.txt
       - name: Upload redacted governance summary
         uses: actions/upload-artifact@v4
         with:
