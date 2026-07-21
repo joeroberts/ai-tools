@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"codex-governance/internal/syncer"
 	"codex-governance/internal/ticketplan"
 	"codex-governance/internal/validate"
+	"codex-governance/internal/version"
 	"codex-governance/internal/workitem"
 )
 
@@ -48,6 +50,7 @@ Usage:
   codex-governance roadmap status --roadmap PATH [--format table|markdown|json]
   codex-governance roadmap check --roadmap PATH
   codex-governance sync --check|--dry-run --manifest PATH [--repo-root PATH]
+  codex-governance version current|impact|validate-tag --manifest PATH [options]
   codex-governance jira constraints draft|assign --output PATH [--prd PATH --spec PATH --roadmap PATH --decomposition PATH --assignment PATH --repo-root PATH]
   codex-governance jira export bootstrap --signer PATH --approve [--repo-root PATH]
   codex-governance jira export create --story KEY --subtask KEY --signer PATH --output PATH --approve [--repo-root PATH]
@@ -110,6 +113,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 	if args[0] == "sync" {
 		return runSync(args[1:], stdout, stderr)
+	}
+	if args[0] == "version" {
+		return runVersion(args[1:], stdout, stderr)
 	}
 	if args[0] == "jira" {
 		return runJira(args[1:], stdout, stderr)
@@ -1024,6 +1030,119 @@ func runSync(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stdout, "PASS adopted release matches manifest")
 	return 0
+}
+
+func runVersion(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "usage: version current|impact|validate-tag")
+		return 2
+	}
+	flags := flag.NewFlagSet("version "+args[0], flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	manifestPath := flags.String("manifest", "", "release manifest JSON")
+	impact := flags.String("impact", "", "major, minor, patch, or none")
+	tag := flags.String("tag", "", "candidate v<semver> tag")
+	repoRoot := flags.String("repo-root", ".", "repository root")
+	if err := flags.Parse(args[1:]); err != nil || *manifestPath == "" || flags.NArg() != 0 {
+		return 2
+	}
+	manifest, err := syncer.LoadManifest(*manifestPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load release manifest: %v\n", err)
+		return 2
+	}
+	current, _ := version.Parse(manifest.Release)
+	switch args[0] {
+	case "current":
+		fmt.Fprintf(stdout, "current=%s\n", current)
+		return 0
+	case "impact":
+		next, err := current.Next(*impact)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 2
+		}
+		fmt.Fprintf(stdout, "current=%s\nimpact=%s\nnext=%s\n", current, *impact, next)
+		return 0
+	case "validate-tag":
+		if !strings.HasPrefix(*tag, "v") {
+			fmt.Fprintln(stderr, "tag must start with v followed by a Semantic Versioning 2.0.0 value")
+			return 1
+		}
+		candidate, err := version.Parse(strings.TrimPrefix(*tag, "v"))
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		if candidate.String() != manifest.Release {
+			fmt.Fprintf(stderr, "tag version %s does not match manifest release %s\n", candidate, manifest.Release)
+			return 1
+		}
+		resolved, err := gitOutput(*repoRoot, "rev-parse", *tag+"^{}")
+		if err != nil {
+			fmt.Fprintf(stderr, "resolve tag: %v\n", err)
+			return 1
+		}
+		if resolved != manifest.SourceCommit {
+			fmt.Fprintf(stderr, "tag target %s does not match manifest source_commit %s\n", resolved, manifest.SourceCommit)
+			return 1
+		}
+		prior, err := priorReleaseTag(*repoRoot, *tag)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		if prior != "" {
+			previous, _ := version.Parse(strings.TrimPrefix(prior, "v"))
+			if candidate.Compare(previous) <= 0 {
+				fmt.Fprintf(stderr, "tag version %s must have greater precedence than prior release %s\n", candidate, previous)
+				return 1
+			}
+			command := exec.Command("git", "merge-base", "--is-ancestor", prior+"^{}", *tag+"^{}")
+			command.Dir = filepath.Clean(*repoRoot)
+			if err := command.Run(); err != nil {
+				fmt.Fprintf(stderr, "prior release tag %s is not an ancestor of %s\n", prior, *tag)
+				return 1
+			}
+		}
+		if issues := syncer.VerifyArtifacts(manifest, *repoRoot); len(issues) != 0 {
+			for _, issue := range issues {
+				fmt.Fprintf(stderr, "%s\n", issue)
+			}
+			return 1
+		}
+		fmt.Fprintf(stdout, "PASS tag=%s release=%s first-release-or-monotonic-history=verified\n", *tag, manifest.Release)
+		return 0
+	default:
+		fmt.Fprintln(stderr, "usage: version current|impact|validate-tag")
+		return 2
+	}
+}
+
+func priorReleaseTag(root, candidate string) (string, error) {
+	output, err := gitOutput(root, "tag", "--merged", candidate+"^{}", "--sort=-v:refname")
+	if err != nil {
+		return "", err
+	}
+	for _, tag := range strings.Fields(output) {
+		if tag == candidate || !strings.HasPrefix(tag, "v") {
+			continue
+		}
+		if _, err := version.Parse(strings.TrimPrefix(tag, "v")); err == nil {
+			return tag, nil
+		}
+	}
+	return "", nil
+}
+
+func gitOutput(root string, args ...string) (string, error) {
+	command := exec.Command("git", args...)
+	command.Dir = filepath.Clean(root)
+	output, err := command.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(output)), nil
 }
 
 func runRuntime(args []string, stdout, stderr io.Writer) int {

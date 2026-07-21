@@ -1,0 +1,55 @@
+name: Semantic version
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+    paths:
+      - 'tools/codex-governance/releases/**'
+      - 'tools/codex-governance/internal/**'
+      - '.github/workflows/semantic-version.yml'
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  semantic-version:
+    name: semantic-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+          cache: true
+          cache-dependency-path: tools/codex-governance/go.sum
+      - name: Calculate pull-request version impact
+        if: github.event_name == 'pull_request'
+        env:
+          LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -o pipefail
+          mapfile -t impacts < <(jq -r '.[] | select(startswith("release:")) | sub("^release:"; "")' <<< "$LABELS")
+          if [[ ${#impacts[@]} -ne 1 ]]; then
+            echo "Expected exactly one release:* label; found: ${impacts[*]:-(none)}" >&2
+            exit 1
+          fi
+          case "${impacts[0]}" in major|minor|patch|none) ;; *) echo "Invalid release label: release:${impacts[0]}" >&2; exit 1 ;; esac
+          cd tools/codex-governance
+          go run ./cmd/codex-governance version impact \
+            --manifest releases/1.0.0-draft.json \
+            --impact "${impacts[0]}" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Validate release tag
+        if: github.event_name == 'push'
+        run: |
+          set -o pipefail
+          cd tools/codex-governance
+          go run ./cmd/codex-governance version validate-tag \
+            --manifest releases/1.0.0-draft.json \
+            --tag "${GITHUB_REF_NAME}" \
+            --repo-root . | tee -a "$GITHUB_STEP_SUMMARY"

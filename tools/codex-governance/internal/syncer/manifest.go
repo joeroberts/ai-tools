@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"codex-governance/internal/version"
 )
 
 type Adoption struct {
@@ -36,6 +38,9 @@ func LoadManifest(path string) (Manifest, error) {
 	}
 	if manifest.Release == "" || manifest.SourceCommit == "" || manifest.FormatVersion < 1 || manifest.CompatibilityRange == "" || manifest.Changelog == "" || manifest.MigrationNotes == "" || len(manifest.Artifacts) == 0 {
 		return Manifest{}, fmt.Errorf("release manifest is incomplete")
+	}
+	if _, err := version.Parse(manifest.Release); err != nil {
+		return Manifest{}, fmt.Errorf("release manifest version: %w", err)
 	}
 	for path, digest := range manifest.Artifacts {
 		if path == "" || !strings.HasPrefix(digest, "sha256:") || len(digest) != 71 {
