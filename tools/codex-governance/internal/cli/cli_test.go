@@ -16,6 +16,7 @@ import (
 	"codex-governance/internal/implementation"
 	"codex-governance/internal/signature"
 	"codex-governance/internal/ticketplan"
+	"codex-governance/internal/workitem"
 )
 
 func TestRunHelp(t *testing.T) {
@@ -27,6 +28,51 @@ func TestRunHelp(t *testing.T) {
 	}
 	if got := stdout.String(); got == "" {
 		t.Fatal("Run() wrote no help output")
+	}
+}
+
+func TestImplementationCheckRequiresCompletionTransitionEvidence(t *testing.T) {
+	runPath := filepath.Join(t.TempDir(), "run.json")
+	run := implementation.Run{FormatVersion: implementation.FormatVersion, ID: "run-check", WorkItemKey: "REK-74", Adapter: "test", State: implementation.StatePreflight, TaskBundleDigest: "sha256:fixture", RoadmapImpact: workitem.RoadmapImpact{Mode: "required", RoadmapID: "program", CanonicalPath: "roadmaps/program.yaml", Phase: "1", Transition: "complete"}}
+	if err := implementation.SaveRun(runPath, run); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"implementation", "check", "--run", runPath}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "completion transition evidence") {
+		t.Fatalf("check without evidence = %d, stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if err := run.BindCompletionTransition("sha256:" + strings.Repeat("a", 64)); err != nil {
+		t.Fatal(err)
+	}
+	if err := implementation.SaveRun(runPath, run); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"implementation", "check", "--run", runPath}, &stdout, &stderr); code != 0 || stdout.String() != "PASS completion-transition binding\n" || stderr.Len() != 0 {
+		t.Fatalf("check with evidence = %d, stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestValidateFinalizationRunMatchesIssueAndBinding(t *testing.T) {
+	run := implementation.Run{WorkItemKey: "REK-74", RoadmapImpact: workitem.RoadmapImpact{Mode: "required", RoadmapID: "program", CanonicalPath: "roadmaps/program.yaml", Phase: "1", Transition: "complete"}}
+	if err := validateFinalizationRun("REK-74", run); err == nil {
+		t.Fatal("expected missing completion evidence to block finalization")
+	}
+	if err := run.BindCompletionTransition("sha256:" + strings.Repeat("a", 64)); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateFinalizationRun("REK-75", run); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("mismatched issue error = %v", err)
+	}
+	if err := validateFinalizationRun("REK-74", run); err != nil {
+		t.Fatalf("valid finalization run error = %v", err)
+	}
+}
+
+func TestJiraFinalizationRequiresBoundRun(t *testing.T) {
+	if code := Run([]string{"jira", "work", "finalize", "--issue", "REK-74", "--pr", "104"}, &bytes.Buffer{}, &bytes.Buffer{}); code != 2 {
+		t.Fatalf("finalize without run = %d", code)
 	}
 }
 
