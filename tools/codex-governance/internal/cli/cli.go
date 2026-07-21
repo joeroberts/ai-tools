@@ -353,6 +353,7 @@ func runJiraWork(args []string, stdout, stderr io.Writer) int {
 	decision := flags.String("decision-needed", "", "owner decision needed")
 	nextAction := flags.String("next-action", "", "next action")
 	approve := flags.Bool("approve", false, "explicitly authorize the Jira comment write")
+	runtimeRootPath := flags.String("runtime-root", "", "runtime root")
 	evidenceSummary := flags.String("evidence-summary", "", "owner-local JSON evidence summary")
 	var checks, evidence stringValues
 	flags.Var(&checks, "check", "completed check (repeatable)")
@@ -388,6 +389,9 @@ func runJiraWork(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "PREVIEW Jira comment for %s:\n%s\n", update.Issue, comment)
 		return 0
 	}
+	if root, err := runtimeRoot(*runtimeRootPath); err == nil {
+		recordOperationLifecycle(root, "jira-work-update", "dispatched")
+	}
 	baseURL, email, token := os.Getenv("JIRA_BASE_URL"), os.Getenv("JIRA_EMAIL"), os.Getenv("JIRA_API_TOKEN")
 	if baseURL == "" || email == "" || token == "" {
 		fmt.Fprintln(stderr, "jira work update requires JIRA_BASE_URL, JIRA_EMAIL, and JIRA_API_TOKEN with --approve")
@@ -396,6 +400,9 @@ func runJiraWork(args []string, stdout, stderr io.Writer) int {
 	client := jira.WorkClient{BaseURL: baseURL, Email: email, Token: token}
 	created, err := client.AddComment(update.Issue, comment)
 	if err != nil {
+		if root, rootErr := runtimeRoot(*runtimeRootPath); rootErr == nil {
+			recordOperationLifecycle(root, "jira-work-update", "failed")
+		}
 		fmt.Fprintf(stderr, "write Jira work update: %v\n", err)
 		return 1
 	}
@@ -407,6 +414,9 @@ func runJiraWork(args []string, stdout, stderr io.Writer) int {
 	if readBack.ID != created.ID || readBack.Body != comment {
 		fmt.Fprintf(stderr, "read back Jira work update %s did not match the approved preview\n", created.ID)
 		return 1
+	}
+	if root, err := runtimeRoot(*runtimeRootPath); err == nil {
+		recordOperationLifecycle(root, "jira-work-update", "completed")
 	}
 	fmt.Fprintf(stdout, "PASS recorded %s work update on %s (comment %s) and verified read-back\n", update.Kind, update.Issue, created.ID)
 	return 0
@@ -2300,6 +2310,7 @@ func runOllama(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return 2
 	}
+	recordOperationLifecycle(resolvedRoot, "ollama-run", "dispatched")
 	if *policyPath == "" {
 		*policyPath = ollama.PolicyPath(resolvedRoot)
 	}
@@ -2324,19 +2335,30 @@ func runOllama(args []string, stdout, stderr io.Writer) int {
 	}
 	key := gruntime.CacheKey(*model, allowedModel.ID, policy.Fingerprint, *role, *task, ollama.InputDigest(data))
 	if entry, ok, err := gruntime.LoadCache(resolvedRoot, key); err == nil && ok {
+		recordOperationLifecycle(resolvedRoot, "ollama-run", "completed")
 		fmt.Fprintln(stdout, entry.Summary)
 		return 0
 	}
 	output, err := ollama.Run(ollama.Client(policy), policy, request)
 	if err != nil {
+		recordOperationLifecycle(resolvedRoot, "ollama-run", "failed")
 		fmt.Fprintf(stderr, "run Ollama job: %v\n", err)
 		return 1
 	}
 	if err := gruntime.StoreCache(resolvedRoot, key, output); err != nil {
+		recordOperationLifecycle(resolvedRoot, "ollama-run", "failed")
 		return 2
 	}
+	recordOperationLifecycle(resolvedRoot, "ollama-run", "completed")
 	fmt.Fprintln(stdout, gruntime.Redact(output))
 	return 0
+}
+
+func recordOperationLifecycle(root, operation, state string) {
+	// Short operations are observable but never derive execution authority from
+	// lifecycle delivery. Their input, model, and artifact references stay out
+	// of the chat-facing ledger.
+	_ = gruntime.RecordLifecycle(root, gruntime.LifecycleEvent{RunID: operation, WorkItem: "system", Phase: "operation", State: state})
 }
 
 func runOllamaResidency(action string, args []string, stdout, stderr io.Writer) int {

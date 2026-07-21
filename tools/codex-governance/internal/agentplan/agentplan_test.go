@@ -397,6 +397,20 @@ printf '%s\n' 'manager stderr' >&2
 		t.Fatalf("terminal usage event = %q, %v", data, err)
 	}
 	assertLedgerStates(t, runtimeRoot, "started", "completed", "closed")
+	lifecycle, err := gruntime.LoadLifecycle(runtimeRoot, "manager-ticket-plan-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var states []string
+	for _, event := range lifecycle {
+		if event.Phase != "planning" || event.WorkItem != "ticket-plan:test" {
+			t.Fatalf("unsafe planning lifecycle event: %#v", event)
+		}
+		states = append(states, event.State)
+	}
+	if got := strings.Join(states, ","); got != "dispatched,running,completed" {
+		t.Fatalf("planning lifecycle states = %q", got)
+	}
 }
 
 func TestCodexRunnerWaitDelayClosesInheritedOutputPipes(t *testing.T) {
