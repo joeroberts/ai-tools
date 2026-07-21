@@ -311,6 +311,9 @@ func PrepareSignedPush(run *Run) error {
 
 // PushSigned performs only the refspec bound by the signed authorization.
 func PushSigned(run *Run, authorization SignedPublicationAuthorization, worktree string) error {
+	if err := run.RequireCompletionTransition(); err != nil {
+		return err
+	}
 	if run.State != StateReadyForRemoteApproval {
 		return fmt.Errorf("implementation run is not ready to push")
 	}
@@ -323,6 +326,9 @@ func PushSigned(run *Run, authorization SignedPublicationAuthorization, worktree
 // CreateSignedPullRequest invokes GitHub only with the authorized source and
 // target refs, after the create-pr operation has been consumed.
 func CreateSignedPullRequest(run *Run, authorization SignedPublicationAuthorization, worktree, title, body string) error {
+	if err := run.RequireCompletionTransition(); err != nil {
+		return err
+	}
 	if run.State != StatePushed || title == "" || authorization.Payload.PRTargetBranch == "" {
 		return fmt.Errorf("implementation run is not ready to create a pull request")
 	}
@@ -351,6 +357,9 @@ func GitHubRepository(repositoryID string) (string, error) {
 }
 
 func Commit(run *Run, worktree, branch, message string) error {
+	if err := run.RequireCompletionTransition(); err != nil {
+		return err
+	}
 	if run.State != StateReadyToCommit || !strings.HasPrefix(branch, "codex/") || message == "" {
 		return fmt.Errorf("local commit is not authorized for this run")
 	}
