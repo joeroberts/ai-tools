@@ -102,9 +102,13 @@ func TestAssignConstraintsRejectsPathOutsideApprovedPool(t *testing.T) {
 	}
 }
 
-func TestAssignConstraintsRejectsAssignmentCanonicalNarrative(t *testing.T) {
+func TestAssignConstraintsUsesApprovedNarrativeToReplaceMalformedManagerOutput(t *testing.T) {
 	repoRoot := filepath.Join("..", "..")
 	fixtureRoot := filepath.Join(repoRoot, "testdata", "ticket-plans", "valid")
+	plan, err := ticketplan.Load(filepath.Join(fixtureRoot, "plan.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	data, err := os.ReadFile(filepath.Join(fixtureRoot, "constraints.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -113,7 +117,26 @@ func TestAssignConstraintsRejectsAssignmentCanonicalNarrative(t *testing.T) {
 	if err := json.Unmarshal(data, &assignment); err != nil {
 		t.Fatal(err)
 	}
-	assignment.Story = &StoryConstraints{Summary: "Injected narrative"}
+	assignment.Story = &StoryConstraints{
+		Summary:            plan.Story.Summary,
+		Description:        plan.Story.Description,
+		AcceptanceCriteria: plan.Story.AcceptanceCriteria,
+		Traceability:       plan.Story.Traceability,
+	}
+	assignment.Subtasks[0].SourceDerived = &SourceDerivedConstraints{
+		Summary:            plan.Subtasks[0].Summary,
+		Scope:              plan.Subtasks[0].Scope,
+		NonGoals:           plan.Subtasks[0].NonGoals,
+		AcceptanceCriteria: plan.Subtasks[0].AcceptanceCriteria,
+		ValidationPlan:     plan.Subtasks[0].ValidationPlan,
+		Traceability: ticketplan.TraceMap{
+			"summary":             plan.Subtasks[0].Traceability["summary"],
+			"scope":               plan.Subtasks[0].Traceability["scope"],
+			"non_goals":           plan.Subtasks[0].Traceability["non_goals"],
+			"acceptance_criteria": plan.Subtasks[0].Traceability["acceptance_criteria"],
+			"validation_plan":     plan.Subtasks[0].Traceability["validation_plan"],
+		},
+	}
 	assignmentPath := filepath.Join(t.TempDir(), "assignment.json")
 	data, err = json.Marshal(assignment)
 	if err != nil {
@@ -122,9 +145,26 @@ func TestAssignConstraintsRejectsAssignmentCanonicalNarrative(t *testing.T) {
 	if err := os.WriteFile(assignmentPath, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	err = AssignConstraints(filepath.Join(fixtureRoot, "plan.json"), assignmentPath, filepath.Join(t.TempDir(), "constraints.json"), repoRoot)
-	if err == nil || !strings.Contains(err.Error(), "must not provide canonical source-derived narrative") {
-		t.Fatalf("AssignConstraints() error = %v", err)
+	plan.Story.Summary = "Malformed manager story"
+	plan.Subtasks[0].Scope = "Malformed manager scope"
+	decomposition := filepath.Join(t.TempDir(), "decomposition.json")
+	data, err = json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(decomposition, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(t.TempDir(), "constraints.json")
+	if err := AssignConstraints(decomposition, assignmentPath, output, repoRoot); err != nil {
+		t.Fatal(err)
+	}
+	assigned, err := LoadConstraints(output, plan.Sources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if assigned.Story.Summary != "Validate ticket plans" || assigned.Subtasks[0].SourceDerived.Scope != "Add deterministic validation" {
+		t.Fatalf("assigned narrative did not replace manager output: %#v", assigned)
 	}
 }
 
@@ -146,6 +186,29 @@ func TestAssignConstraintsRejectsUntraceableManagerNarrative(t *testing.T) {
 	}
 	err = AssignConstraints(decomposition, filepath.Join(fixtureRoot, "constraints.json"), filepath.Join(t.TempDir(), "constraints.json"), repoRoot)
 	if err == nil || !strings.Contains(err.Error(), "invalid source-derived narrative or traceability") {
+		t.Fatalf("AssignConstraints() error = %v", err)
+	}
+}
+
+func TestAssignConstraintsRejectsDecompositionWithMismatchedSubtaskID(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	fixtureRoot := filepath.Join(repoRoot, "testdata", "ticket-plans", "valid")
+	plan, err := ticketplan.Load(filepath.Join(fixtureRoot, "plan.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.Subtasks[0].ID = "different-slice"
+	decomposition := filepath.Join(t.TempDir(), "decomposition.json")
+	data, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(decomposition, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err = AssignConstraints(decomposition, filepath.Join(fixtureRoot, "constraints.json"), filepath.Join(t.TempDir(), "constraints.json"), repoRoot)
+	if err == nil || !strings.Contains(err.Error(), "has ID \"different-slice\"") {
 		t.Fatalf("AssignConstraints() error = %v", err)
 	}
 }
