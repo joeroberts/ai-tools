@@ -14,6 +14,10 @@ func TestAssignConstraintsValidatesAndWritesOwnerOnlyOutput(t *testing.T) {
 	repoRoot := filepath.Join("..", "..")
 	fixtureRoot := filepath.Join(repoRoot, "testdata", "ticket-plans", "valid")
 	output := filepath.Join(t.TempDir(), "private", "constraints.json")
+	plan, err := ticketplan.Load(filepath.Join(fixtureRoot, "plan.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if err := AssignConstraints(filepath.Join(fixtureRoot, "plan.json"), filepath.Join(fixtureRoot, "constraints.json"), output, repoRoot); err != nil {
 		t.Fatal(err)
@@ -24,6 +28,17 @@ func TestAssignConstraintsValidatesAndWritesOwnerOnlyOutput(t *testing.T) {
 	}
 	if info, err = os.Stat(filepath.Dir(output)); err != nil || info.Mode().Perm() != 0o700 {
 		t.Fatalf("assigned constraints directory permissions = %v, %v", info.Mode().Perm(), err)
+	}
+	constraints, err := LoadConstraints(output, plan.Sources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract, err := buildAuthorityContract(constraints)
+	if err != nil || contract.ValidateAgainst(repoRoot) != nil {
+		t.Fatalf("assigned constraints did not preserve canonical source-derived handoff: %v", err)
+	}
+	if constraints.Story == nil || constraints.Story.Summary != "Validate ticket plans" || constraints.Subtasks[0].SourceDerived == nil || constraints.Subtasks[0].SourceDerived.Summary != "Deterministic contract validation" {
+		t.Fatalf("assigned constraints omitted canonical narrative: %#v", constraints)
 	}
 }
 
@@ -83,6 +98,54 @@ func TestAssignConstraintsRejectsPathOutsideApprovedPool(t *testing.T) {
 
 	err = AssignConstraints(filepath.Join(fixtureRoot, "plan.json"), assignmentPath, filepath.Join(t.TempDir(), "constraints.json"), repoRoot)
 	if err == nil || !strings.Contains(err.Error(), "outside approved pool") {
+		t.Fatalf("AssignConstraints() error = %v", err)
+	}
+}
+
+func TestAssignConstraintsRejectsAssignmentCanonicalNarrative(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	fixtureRoot := filepath.Join(repoRoot, "testdata", "ticket-plans", "valid")
+	data, err := os.ReadFile(filepath.Join(fixtureRoot, "constraints.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var assignment Constraints
+	if err := json.Unmarshal(data, &assignment); err != nil {
+		t.Fatal(err)
+	}
+	assignment.Story = &StoryConstraints{Summary: "Injected narrative"}
+	assignmentPath := filepath.Join(t.TempDir(), "assignment.json")
+	data, err = json.Marshal(assignment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(assignmentPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err = AssignConstraints(filepath.Join(fixtureRoot, "plan.json"), assignmentPath, filepath.Join(t.TempDir(), "constraints.json"), repoRoot)
+	if err == nil || !strings.Contains(err.Error(), "must not provide canonical source-derived narrative") {
+		t.Fatalf("AssignConstraints() error = %v", err)
+	}
+}
+
+func TestAssignConstraintsRejectsUntraceableManagerNarrative(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	fixtureRoot := filepath.Join(repoRoot, "testdata", "ticket-plans", "valid")
+	plan, err := ticketplan.Load(filepath.Join(fixtureRoot, "plan.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.Subtasks[0].Scope = "Untraceable manager scope"
+	decomposition := filepath.Join(t.TempDir(), "decomposition.json")
+	data, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(decomposition, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err = AssignConstraints(decomposition, filepath.Join(fixtureRoot, "constraints.json"), filepath.Join(t.TempDir(), "constraints.json"), repoRoot)
+	if err == nil || !strings.Contains(err.Error(), "invalid source-derived narrative or traceability") {
 		t.Fatalf("AssignConstraints() error = %v", err)
 	}
 }
