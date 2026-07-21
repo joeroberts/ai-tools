@@ -1275,6 +1275,10 @@ func reportImplementationStart(run implementation.Run, diagnostics []string, sta
 		}
 		return 1
 	}
+	if run.State == implementation.StateRunning {
+		fmt.Fprintf(stdout, "PASS implementation supervisor started %s\n", run.TaskID)
+		return 0
+	}
 	fmt.Fprintf(stdout, "PASS implementation completed %s\n", run.TaskID)
 	return 0
 }
