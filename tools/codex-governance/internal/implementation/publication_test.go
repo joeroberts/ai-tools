@@ -13,6 +13,7 @@ import (
 
 	"codex-governance/internal/config"
 	"codex-governance/internal/signature"
+	"codex-governance/internal/workitem"
 )
 
 func publicationRun() Run {
@@ -22,6 +23,25 @@ func publicationRun() Run {
 		State:         StateLocallyCommitted,
 		Branch:        "codex/CG-42-implementation",
 		CommitSHA:     "0123456789abcdef0123456789abcdef01234567",
+	}
+}
+
+func TestCompletionTransitionEvidenceIsRequiredOnlyForCompletion(t *testing.T) {
+	run := publicationRun()
+	run.RoadmapImpact = workitem.RoadmapImpact{Mode: "required", RoadmapID: "program", CanonicalPath: "roadmaps/program.yaml", Phase: "1", Transition: "complete"}
+	if err := run.RequireCompletionTransition(); err == nil {
+		t.Fatal("completion run did not require transition evidence")
+	}
+	if err := run.BindCompletionTransition("sha256:" + strings.Repeat("a", 64)); err != nil {
+		t.Fatal(err)
+	}
+	if err := run.RequireCompletionTransition(); err != nil {
+		t.Fatal(err)
+	}
+	run.RoadmapImpact.Transition = "start"
+	run.TransitionDigest = ""
+	if err := run.RequireCompletionTransition(); err != nil {
+		t.Fatalf("non-completing run was blocked: %v", err)
 	}
 }
 

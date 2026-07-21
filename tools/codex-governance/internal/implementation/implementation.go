@@ -63,6 +63,8 @@ type Run struct {
 	CommitSHA        string                     `json:"commit_sha"`
 	PullRequestURL   string                     `json:"pull_request_url"`
 	SourceEvidence   jira.OfflineExportEvidence `json:"source_evidence"`
+	RoadmapImpact    workitem.RoadmapImpact     `json:"roadmap_impact"`
+	TransitionDigest string                     `json:"transition_digest,omitempty"`
 }
 
 type AdapterStatus string
@@ -282,7 +284,22 @@ func NewRun(item workitem.Item, adapter, bundleDigest string, evidence jira.Offl
 	now := time.Now().UTC()
 	idSource := strings.Join([]string{item.Source.SubtaskKey, item.GitRange.BaseSHA, adapter, bundleDigest}, "\x00")
 	sum := sha256.Sum256([]byte(idSource))
-	return Run{FormatVersion: FormatVersion, ID: "run-" + hex.EncodeToString(sum[:8]), WorkItemKey: item.Source.SubtaskKey, Adapter: adapter, State: StatePreflight, BaseSHA: item.GitRange.BaseSHA, Branch: "", TaskBundleDigest: bundleDigest, CreatedAt: now, UpdatedAt: now, SourceEvidence: evidence}, nil
+	return Run{FormatVersion: FormatVersion, ID: "run-" + hex.EncodeToString(sum[:8]), WorkItemKey: item.Source.SubtaskKey, Adapter: adapter, State: StatePreflight, BaseSHA: item.GitRange.BaseSHA, Branch: "", TaskBundleDigest: bundleDigest, CreatedAt: now, UpdatedAt: now, SourceEvidence: evidence, RoadmapImpact: item.RoadmapImpact}, nil
+}
+
+func (r *Run) BindCompletionTransition(digest string) error {
+	if r.RoadmapImpact.Mode != "required" || r.RoadmapImpact.Transition != "complete" || !strings.HasPrefix(digest, "sha256:") || len(digest) != 71 {
+		return fmt.Errorf("completion transition digest is invalid for this run")
+	}
+	r.TransitionDigest = digest
+	return nil
+}
+
+func (r Run) RequireCompletionTransition() error {
+	if r.RoadmapImpact.Mode == "required" && r.RoadmapImpact.Transition == "complete" && (!strings.HasPrefix(r.TransitionDigest, "sha256:") || len(r.TransitionDigest) != 71) {
+		return fmt.Errorf("completion transition evidence is required before publication")
+	}
+	return nil
 }
 
 func (r *Run) Transition(next string) error {
