@@ -297,7 +297,7 @@ func (r *Run) BindCompletionTransition(digest string) error {
 
 func (r Run) RequireCompletionTransition() error {
 	if r.RoadmapImpact.Mode == "required" && r.RoadmapImpact.Transition == "complete" && (!strings.HasPrefix(r.TransitionDigest, "sha256:") || len(r.TransitionDigest) != 71) {
-		return fmt.Errorf("completion transition evidence is required before publication")
+		return fmt.Errorf("completion transition evidence is required before publication or finalization")
 	}
 	return nil
 }

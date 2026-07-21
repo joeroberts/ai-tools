@@ -52,7 +52,7 @@ Usage:
   codex-governance jira export bootstrap --signer PATH --approve [--repo-root PATH]
   codex-governance jira export create --story KEY --subtask KEY --signer PATH --output PATH --approve [--repo-root PATH]
   codex-governance jira work update --issue KEY --kind commit|blocker [commit or blocker fields] [--approve]
-  codex-governance jira work finalize --issue KEY --pr URL [--approve]
+  codex-governance jira work finalize --issue KEY --pr URL --run PATH [--approve]
   codex-governance jira plan decompose --prd PATH --spec PATH --roadmap PATH --output PATH --manager-timeout DURATION --manager-wait-delay DURATION [--repo-root PATH] [--runtime-root PATH] [--codex-bin PATH]
   codex-governance jira plan generate --prd PATH --spec PATH --roadmap PATH --constraints PATH --output PATH --policy PATH --reviewer-model NAME --verifier-model NAME --manager-timeout DURATION --manager-wait-delay DURATION [--repo-root PATH] [--runtime-root PATH] [--codex-bin PATH] [--dry-run] [--verbose]
   codex-governance jira plan validate --plan PATH --contract PATH [--repo-root PATH]
@@ -71,6 +71,7 @@ Usage:
   codex-governance implementation remediate --run PATH --assessment PATH --finding ID [--finding ID ...]
   codex-governance implementation assess --role reviewer|verifier --model NAME --policy PATH --bundle PATH --worktree PATH --output PATH
   codex-governance implementation evidence check --evidence PATH --worktree PATH (--staged|--diff-range RANGE)
+  codex-governance implementation check --run PATH
   codex-governance implementation status --run PATH [--format table|json]
   codex-governance implementation metrics --run PATH
   codex-governance implementation audit --run PATH --output PATH
@@ -427,9 +428,19 @@ func runJiraWorkFinalize(args []string, stdout, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	issue := flags.String("issue", "", "Jira subtask key")
 	pr := flags.String("pr", "", "merged pull request URL or number")
+	runPath := flags.String("run", "", "implementation-run JSON bound to the finalization")
 	approve := flags.Bool("approve", false, "explicitly authorize Jira finalization writes")
-	if err := flags.Parse(args); err != nil || *issue == "" || *pr == "" || flags.NArg() != 0 {
+	if err := flags.Parse(args); err != nil || *issue == "" || *pr == "" || *runPath == "" || flags.NArg() != 0 {
 		return 2
+	}
+	run, err := implementation.LoadRun(*runPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load implementation run: %v\n", err)
+		return 2
+	}
+	if err := validateFinalizationRun(*issue, run); err != nil {
+		fmt.Fprintf(stderr, "validate Jira finalization binding: %v\n", err)
+		return 1
 	}
 	baseURL, email, token := os.Getenv("JIRA_BASE_URL"), os.Getenv("JIRA_EMAIL"), os.Getenv("JIRA_API_TOKEN")
 	if baseURL == "" || email == "" || token == "" {
@@ -489,6 +500,13 @@ func runJiraWorkFinalize(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "PASS finalized subtask %s; Story %s remains open for incomplete children\n", plan.Subtask.Key, plan.Story.Key)
 	return 0
+}
+
+func validateFinalizationRun(issue string, run implementation.Run) error {
+	if run.WorkItemKey != issue {
+		return fmt.Errorf("implementation run does not match Jira issue")
+	}
+	return run.RequireCompletionTransition()
 }
 
 func runJiraExport(args []string, stdout, stderr io.Writer) int {
@@ -1089,8 +1107,8 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 }
 
 func runImplementation(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 || !oneOf(args[0], "preflight", "adopt", "start", "reconcile", "verify", "review", "verification", "remediate", "assess", "evidence", "status", "metrics", "audit", "commit", "bootstrap-technical-owner", "bootstrap-publish-owner", "issue-publish", "authorize-publish", "push", "create-pr") {
-		fmt.Fprintln(stderr, "usage: codex-governance implementation preflight|adopt|start|reconcile|verify|review|verification|remediate|assess|evidence|status|metrics|audit|commit|bootstrap-technical-owner|bootstrap-publish-owner|issue-publish|authorize-publish|push|create-pr")
+	if len(args) == 0 || !oneOf(args[0], "preflight", "adopt", "start", "reconcile", "verify", "review", "verification", "remediate", "assess", "evidence", "check", "status", "metrics", "audit", "commit", "bootstrap-technical-owner", "bootstrap-publish-owner", "issue-publish", "authorize-publish", "push", "create-pr") {
+		fmt.Fprintln(stderr, "usage: codex-governance implementation preflight|adopt|start|reconcile|verify|review|verification|remediate|assess|evidence|check|status|metrics|audit|commit|bootstrap-technical-owner|bootstrap-publish-owner|issue-publish|authorize-publish|push|create-pr")
 		return 2
 	}
 	if args[0] == "start" {
@@ -1116,6 +1134,9 @@ func runImplementation(args []string, stdout, stderr io.Writer) int {
 	}
 	if args[0] == "evidence" {
 		return runImplementationEvidence(args[1:], stdout, stderr)
+	}
+	if args[0] == "check" {
+		return runImplementationCheck(args[1:], stdout, stderr)
 	}
 	if args[0] == "status" {
 		return runImplementationStatus(args[1:], stdout, stderr)
@@ -1516,6 +1537,26 @@ func runImplementationEvidence(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprintln(stdout, "PASS independent reviewer and verifier evidence matches diff")
+	return 0
+}
+
+func runImplementationCheck(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("implementation check", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	runPath := flags.String("run", "", "implementation-run JSON")
+	if err := flags.Parse(args); err != nil || *runPath == "" || flags.NArg() != 0 {
+		return 2
+	}
+	run, err := implementation.LoadRun(*runPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load implementation run: %v\n", err)
+		return 2
+	}
+	if err := run.RequireCompletionTransition(); err != nil {
+		fmt.Fprintf(stderr, "implementation check: %v\n", err)
+		return 1
+	}
+	fmt.Fprintln(stdout, "PASS completion-transition binding")
 	return 0
 }
 
