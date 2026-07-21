@@ -58,12 +58,13 @@ type ContractSlice struct {
 }
 
 type SliceAssignment struct {
-	Phase        string       `json:"phase"`
-	ChangeClass  string       `json:"change_class"`
-	ReviewBudget ReviewBudget `json:"review_budget"`
-	AllowedPaths []string     `json:"allowed_paths"`
-	Dependencies []string     `json:"dependencies"`
-	ADR          string       `json:"adr"`
+	Phase         string         `json:"phase"`
+	ChangeClass   string         `json:"change_class"`
+	ReviewBudget  ReviewBudget   `json:"review_budget"`
+	AllowedPaths  []string       `json:"allowed_paths"`
+	Dependencies  []string       `json:"dependencies"`
+	ADR           string         `json:"adr"`
+	RoadmapImpact *RoadmapImpact `json:"roadmap_impact,omitempty"`
 }
 
 type SliceSourceDerived struct {

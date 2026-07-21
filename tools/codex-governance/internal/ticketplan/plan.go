@@ -62,19 +62,32 @@ type ReviewBudget struct {
 }
 
 type Subtask struct {
-	ID                 string       `json:"id"`
-	Summary            string       `json:"summary"`
-	Phase              string       `json:"phase"`
-	ChangeClass        string       `json:"change_class"`
-	ReviewBudget       ReviewBudget `json:"review_budget"`
-	Scope              string       `json:"scope"`
-	NonGoals           []string     `json:"non_goals"`
-	AcceptanceCriteria []string     `json:"acceptance_criteria"`
-	ValidationPlan     []string     `json:"validation_plan"`
-	AllowedPaths       []string     `json:"allowed_paths"`
-	ADR                string       `json:"adr"`
-	Dependencies       []string     `json:"dependencies"`
-	Traceability       TraceMap     `json:"traceability"`
+	ID                 string         `json:"id"`
+	Summary            string         `json:"summary"`
+	Phase              string         `json:"phase"`
+	ChangeClass        string         `json:"change_class"`
+	ReviewBudget       ReviewBudget   `json:"review_budget"`
+	Scope              string         `json:"scope"`
+	NonGoals           []string       `json:"non_goals"`
+	AcceptanceCriteria []string       `json:"acceptance_criteria"`
+	ValidationPlan     []string       `json:"validation_plan"`
+	AllowedPaths       []string       `json:"allowed_paths"`
+	ADR                string         `json:"adr"`
+	Dependencies       []string       `json:"dependencies"`
+	RoadmapImpact      *RoadmapImpact `json:"roadmap_impact,omitempty"`
+	Traceability       TraceMap       `json:"traceability"`
+}
+
+// RoadmapImpact is the plan-level mirror of the work-item declaration. It is
+// optional during the explicit migration window; later entry gates require it
+// whenever repository roadmap enforcement is required.
+type RoadmapImpact struct {
+	Mode          string `json:"mode,omitempty"`
+	RoadmapID     string `json:"roadmap_id,omitempty"`
+	CanonicalPath string `json:"canonical_path,omitempty"`
+	Phase         string `json:"phase,omitempty"`
+	Transition    string `json:"transition,omitempty"`
+	Reason        string `json:"reason,omitempty"`
 }
 
 type Reference struct {
@@ -235,7 +248,7 @@ func validateSubtasksAgainstManifest(subtasks []Subtask, manifest []ContractSlic
 	var issues []string
 	for index, slice := range manifest {
 		subtask, a, s := subtasks[index], slice.Assignment, slice.SourceDerived
-		if subtask.ID != slice.ID || subtask.Summary != s.Summary || subtask.Phase != a.Phase || subtask.ChangeClass != a.ChangeClass || !reflect.DeepEqual(subtask.ReviewBudget, a.ReviewBudget) || subtask.Scope != s.Scope || !reflect.DeepEqual(subtask.NonGoals, s.NonGoals) || !reflect.DeepEqual(subtask.AcceptanceCriteria, s.AcceptanceCriteria) || !reflect.DeepEqual(subtask.ValidationPlan, s.ValidationPlan) || !reflect.DeepEqual(subtask.AllowedPaths, a.AllowedPaths) || subtask.ADR != a.ADR || !reflect.DeepEqual(subtask.Dependencies, a.Dependencies) {
+		if subtask.ID != slice.ID || subtask.Summary != s.Summary || subtask.Phase != a.Phase || subtask.ChangeClass != a.ChangeClass || !reflect.DeepEqual(subtask.ReviewBudget, a.ReviewBudget) || subtask.Scope != s.Scope || !reflect.DeepEqual(subtask.NonGoals, s.NonGoals) || !reflect.DeepEqual(subtask.AcceptanceCriteria, s.AcceptanceCriteria) || !reflect.DeepEqual(subtask.ValidationPlan, s.ValidationPlan) || !reflect.DeepEqual(subtask.AllowedPaths, a.AllowedPaths) || subtask.ADR != a.ADR || !reflect.DeepEqual(subtask.Dependencies, a.Dependencies) || !reflect.DeepEqual(subtask.RoadmapImpact, a.RoadmapImpact) {
 			issues = append(issues, fmt.Sprintf("ticket plan subtask %d does not match authority contract manifest", index+1))
 		}
 	}
