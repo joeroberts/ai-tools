@@ -549,6 +549,20 @@ func TestRunRoadmapStatus(t *testing.T) {
 	}
 }
 
+func TestRunRoadmapCommandsRejectInconsistentStates(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "roadmap.yaml")
+	if err := os.WriteFile(path, []byte("id: test\ntitle: Test\nstatus: complete\nphases:\n  - id: 1\n    name: Phase 1\n    status: in-progress\n    evidence: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range []string{"check", "status"} {
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+		if code := Run([]string{"roadmap", command, "--roadmap", path}, &stdout, &stderr); code == 0 {
+			t.Fatalf("roadmap %s unexpectedly passed: stdout=%q stderr=%q", command, stdout.String(), stderr.String())
+		}
+	}
+}
+
 func TestRunSyncDryRun(t *testing.T) {
 	root := t.TempDir()
 	if code := Run([]string{"init", "--repo-root", root}, &bytes.Buffer{}, &bytes.Buffer{}); code != 0 {

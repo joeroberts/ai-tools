@@ -43,14 +43,17 @@ func Load(path string) (Roadmap, error) {
 
 func (r Roadmap) Check() []string {
 	var issues []string
-	if r.ID == "" || r.Title == "" || !oneOf(r.Status, "proposed", "in-progress", "blocked", "complete") {
+	validStatus := oneOf(r.Status, "proposed", "in-progress", "blocked", "complete")
+	if r.ID == "" || r.Title == "" || !validStatus {
 		issues = append(issues, "roadmap identity or status is invalid")
 	}
 	active := 0
 	previousID := 0
+	validPhases := true
 	for _, phase := range r.Phases {
 		if phase.ID <= previousID || phase.Name == "" || !oneOf(phase.Status, "pending-approval", "in-progress", "blocked", "complete") {
 			issues = append(issues, fmt.Sprintf("phase %d is invalid", phase.ID))
+			validPhases = false
 		}
 		previousID = phase.ID
 		if phase.Status == "in-progress" {
@@ -63,10 +66,50 @@ func (r Roadmap) Check() []string {
 	if active > 1 {
 		issues = append(issues, "only one phase may be in progress")
 	}
+	if validStatus && validPhases {
+		if issue := r.aggregatePhaseIssue(); issue != "" {
+			issues = append(issues, issue)
+		}
+	}
 	return issues
 }
 
+func (r Roadmap) aggregatePhaseIssue() string {
+	statuses := make([]string, 0, len(r.Phases))
+	hasBlocked, hasIncomplete, allPendingApproval, allComplete := false, false, true, true
+	for _, phase := range r.Phases {
+		statuses = append(statuses, fmt.Sprintf("%d=%s", phase.ID, phase.Status))
+		hasBlocked = hasBlocked || phase.Status == "blocked"
+		hasIncomplete = hasIncomplete || phase.Status != "complete"
+		allPendingApproval = allPendingApproval && phase.Status == "pending-approval"
+		allComplete = allComplete && phase.Status == "complete"
+	}
+	found := strings.Join(statuses, ", ")
+	switch r.Status {
+	case "proposed":
+		if !allPendingApproval {
+			return fmt.Sprintf("roadmap status proposed requires every phase to be pending-approval; found phase statuses: %s; set every phase to pending-approval or update the roadmap status", found)
+		}
+	case "in-progress":
+		if !hasIncomplete || hasBlocked {
+			return fmt.Sprintf("roadmap status in-progress requires at least one incomplete phase and no blocked phase; found phase statuses: %s; clear blocked phases or update the roadmap status", found)
+		}
+	case "blocked":
+		if !hasBlocked {
+			return fmt.Sprintf("roadmap status blocked requires at least one blocked phase; found phase statuses: %s; mark the blocked phase or update the roadmap status", found)
+		}
+	case "complete":
+		if !allComplete {
+			return fmt.Sprintf("roadmap status complete requires every phase to be complete; found phase statuses: %s; complete every phase or update the roadmap status", found)
+		}
+	}
+	return ""
+}
+
 func (r Roadmap) Render(format string) (string, error) {
+	if issues := r.Check(); len(issues) != 0 {
+		return "", fmt.Errorf("invalid roadmap: %s", strings.Join(issues, "; "))
+	}
 	switch format {
 	case "table":
 		var builder strings.Builder
