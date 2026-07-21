@@ -58,6 +58,26 @@ func TestPreflightWritesPrivateBundleAndRun(t *testing.T) {
 	}
 }
 
+func TestPreflightAllowsDeclaredPendingADR(t *testing.T) {
+	root, base, head := testRepository(t)
+	writeFile(t, filepath.Join(root, "AGENTS.md"), "# Guidance\n")
+	exportPath, publicKey := signedFixtureExport(t, "export-issuer")
+	writePreflightConfig(t, root, publicKey, "export-issuer", "8760h")
+	item, err := workitem.Load(filepath.Join("..", "..", "testdata", "work-items", "valid.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	item.GitRange.BaseSHA, item.GitRange.HeadSHA = base, head
+	item.Scope.AllowedPaths = append(item.Scope.AllowedPaths, "docs/decisions")
+	item.Decision.ADRPreflightPending = true
+	itemPath := filepath.Join(root, "work-item.json")
+	writeJSON(t, itemPath, item)
+
+	if _, err := Preflight(PreflightRequest{WorkItemPath: itemPath, OfflineExportPath: exportPath, RepoRoot: root, RuntimeRoot: filepath.Join(root, "runtime"), Adapter: "fake", BundlePath: filepath.Join(root, "runtime", "bundle.json"), RunPath: filepath.Join(root, "runtime", "run.json")}); err != nil {
+		t.Fatalf("Preflight() rejected declared pending ADR: %v", err)
+	}
+}
+
 func TestPreflightRejectsSourceMismatchBeforeArtifacts(t *testing.T) {
 	root, base, head := testRepository(t)
 	writeFile(t, filepath.Join(root, "AGENTS.md"), "# Guidance\n")

@@ -160,6 +160,16 @@ validate an end-to-end flow; it is not a loophole for unrelated implementation.
 
 ## ADR And Handoff Policy
 
+### ADR-Creation Preflight
+
+An ADR-creation work item may set `decision.adr_preflight_pending` only for a
+new `docs/decisions/` ADR whose exact path is already inside `allowed_paths`.
+This permits normalized work-item validation and implementation preflight to
+establish the Jira baseline before the ADR exists. It does not permit any other
+missing file or path expansion. Working-tree validation, review, commit, and
+publication continue to require the ADR file, so a missing ADR fails closed
+after implementation begins.
+
 Create an ADR before implementation for a durable architecture, interface,
 security, data, operational, dependency, deployment, rollback, or
 accepted-risk decision. Routine bug fixes, localized refactors, tests, and
