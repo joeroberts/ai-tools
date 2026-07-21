@@ -2,7 +2,7 @@
 
 ## Status
 
-`in-progress`
+`complete`
 
 Structured phase state: [go-cli-migration.yaml](go-cli-migration.yaml).
 

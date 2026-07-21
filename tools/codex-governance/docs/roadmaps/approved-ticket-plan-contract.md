@@ -2,9 +2,7 @@
 
 ## Status
 
-Work-item draft for GitHub issue #38. Execute phases sequentially. Each Jira
-Subtask must be transitioned to `In Progress` and read back before its phase
-begins.
+`complete`
 
 ## Phase 1: Contract Schema
 
@@ -44,3 +42,8 @@ reviewer and verifier evidence from distinct executors plus a passing
 After Phase 3, run an end-to-end three-source planning fixture and confirm that
 the manager catalog renders each source body once while trace records retain the
 correct PRD, specification, and roadmap bindings.
+
+## Completion Record
+
+GitHub issue #38 is complete. Its backlog, execution, and delivered-diff
+evidence remain in their respective GitHub, Jira, and Git/PR/CI records.
