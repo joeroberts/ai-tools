@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -70,6 +71,10 @@ const (
 	AdapterFailed    AdapterStatus = "failed"
 	AdapterUnknown   AdapterStatus = "unknown"
 )
+
+type codexResult struct {
+	Status string `json:"status"`
+}
 
 // Adapter is deliberately read-only in Phase 3. Later phases add a disposable
 // worktree to the adapter contract before any real execution provider exists.
@@ -195,7 +200,18 @@ func Reconcile(run *Run, adapter Adapter, resultPath string) error {
 			return err
 		}
 		run.ResultRef = resultPath
-		return run.Transition(StateImplementationComplete)
+		var structured codexResult
+		if err := json.Unmarshal(result, &structured); err != nil {
+			return run.Transition(StateEscalated)
+		}
+		switch structured.Status {
+		case "complete":
+			return run.Transition(StateImplementationComplete)
+		case "blocked", "escalated":
+			return run.Transition(StateEscalated)
+		default:
+			return run.Transition(StateEscalated)
+		}
 	case AdapterFailed, AdapterUnknown:
 		return run.Transition(StateEscalated)
 	default:
@@ -424,10 +440,14 @@ func StartHeadless(run *Run, bundle TaskBundle, repoRoot, runtimeRoot, codexBina
 	if err := worktree.Create(repoRoot, run.BaseSHA, worktreePath); err != nil {
 		return nil, err
 	}
+	workDir, err := resolveHeadlessWorkDir(repoRoot, worktreePath)
+	if err != nil {
+		return nil, err
+	}
 	if err := run.Transition(StateQueued); err != nil {
 		return nil, err
 	}
-	adapter := NewHeadlessCodexAdapter(codexBinary, worktreePath, filepath.Join(runtimeRoot, "runs", run.ID, "results"))
+	adapter := NewHeadlessCodexAdapter(codexBinary, workDir, filepath.Join(runtimeRoot, "runs", run.ID, "results"))
 	if err := Launch(run, bundle, adapter); err != nil {
 		return nil, err
 	}
@@ -436,6 +456,47 @@ func StartHeadless(run *Run, bundle TaskBundle, repoRoot, runtimeRoot, codexBina
 		diagnostics = references.DiagnosticReferences(run.TaskID)
 	}
 	return diagnostics, WaitAndReconcile(run, adapter, run.ResultRef)
+}
+
+func resolveHeadlessWorkDir(repoRoot, worktreePath string) (string, error) {
+	realRoot, err := filepath.EvalSymlinks(filepath.Clean(repoRoot))
+	if err != nil {
+		return "", fmt.Errorf("resolve governed product root: %w", err)
+	}
+	realWorktree, err := filepath.EvalSymlinks(filepath.Clean(worktreePath))
+	if err != nil {
+		return "", fmt.Errorf("resolve disposable worktree: %w", err)
+	}
+	command := exec.Command("git", "-C", realRoot, "rev-parse", "--show-toplevel")
+	topLevel, err := command.Output()
+	if err != nil {
+		return "", fmt.Errorf("resolve Git top level: %w", err)
+	}
+	realTopLevel, err := filepath.EvalSymlinks(strings.TrimSpace(string(topLevel)))
+	if err != nil {
+		return "", fmt.Errorf("resolve Git top level path: %w", err)
+	}
+	relative, err := filepath.Rel(realTopLevel, realRoot)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("governed product root is outside its Git worktree")
+	}
+	productRoot := realWorktree
+	if relative != "." {
+		productRoot = filepath.Join(realWorktree, relative)
+	}
+	resolvedProduct, err := filepath.EvalSymlinks(productRoot)
+	if err != nil {
+		return "", fmt.Errorf("resolve disposable governed product root: %w", err)
+	}
+	contained, err := filepath.Rel(realWorktree, resolvedProduct)
+	if err != nil || contained == ".." || strings.HasPrefix(contained, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("disposable governed product root escapes its worktree")
+	}
+	info, err := os.Stat(filepath.Join(resolvedProduct, "governance.yml"))
+	if err != nil || info.IsDir() {
+		return "", fmt.Errorf("disposable governed product root lacks governance.yml")
+	}
+	return resolvedProduct, nil
 }
 
 // ReconcilePersisted is deliberately conservative: an unavailable process or

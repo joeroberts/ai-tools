@@ -17,6 +17,7 @@ import (
 	"codex-governance/internal/jira"
 	"codex-governance/internal/signature"
 	"codex-governance/internal/workitem"
+	"codex-governance/internal/worktree"
 )
 
 func TestPreflightWritesPrivateBundleAndRun(t *testing.T) {
@@ -288,6 +289,138 @@ func TestFakeAdapterReconcilesWithoutRedispatch(t *testing.T) {
 	resultPath := filepath.Join(t.TempDir(), "result.json")
 	if err := Reconcile(&run, adapter, resultPath); err != nil || run.State != StateImplementationComplete || run.ResultRef != resultPath {
 		t.Fatalf("completion reconciliation = %v, %#v", err, run)
+	}
+}
+
+func TestReconcileHonorsStructuredResultState(t *testing.T) {
+	for _, test := range []struct {
+		status string
+		state  string
+	}{
+		{status: "complete", state: StateImplementationComplete},
+		{status: "blocked", state: StateEscalated},
+		{status: "escalated", state: StateEscalated},
+		{status: "unexpected", state: StateEscalated},
+	} {
+		t.Run(test.status, func(t *testing.T) {
+			run := Run{State: StateQueued}
+			adapter := NewFakeAdapter()
+			if err := Launch(&run, TaskBundle{}, adapter); err != nil {
+				t.Fatal(err)
+			}
+			if err := adapter.Complete(run.TaskID, []byte(`{"status":"`+test.status+`"}`)); err != nil {
+				t.Fatal(err)
+			}
+			resultPath := filepath.Join(t.TempDir(), "result.json")
+			if err := Reconcile(&run, adapter, resultPath); err != nil || run.State != test.state || run.ResultRef != resultPath {
+				t.Fatalf("Reconcile() = %v, run = %#v", err, run)
+			}
+		})
+	}
+}
+
+func TestReconcileEscalatesMalformedStructuredResult(t *testing.T) {
+	run := Run{State: StateQueued}
+	adapter := NewFakeAdapter()
+	if err := Launch(&run, TaskBundle{}, adapter); err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Complete(run.TaskID, []byte(`not JSON`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := Reconcile(&run, adapter, filepath.Join(t.TempDir(), "result.json")); err != nil || run.State != StateEscalated {
+		t.Fatalf("Reconcile() = %v, run = %#v", err, run)
+	}
+}
+
+func TestResolveHeadlessWorkDirUsesProductRelativePath(t *testing.T) {
+	repository, _, _ := testRepository(t)
+	product := filepath.Join(repository, "tools", "codex-governance")
+	writeFile(t, filepath.Join(product, "governance.yml"), "format_version: 1\n")
+	runGit(t, repository, "add", ".")
+	runGit(t, repository, "commit", "-m", "add nested product")
+	base := strings.TrimSpace(runGit(t, repository, "rev-parse", "HEAD"))
+	worktreePath := filepath.Join(t.TempDir(), "worktree")
+	if err := worktree.Create(repository, base, worktreePath); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := resolveHeadlessWorkDir(product, worktreePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	realWorktree, err := filepath.EvalSymlinks(worktreePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(realWorktree, "tools", "codex-governance"); resolved != want {
+		t.Fatalf("work directory = %q, want %q", resolved, want)
+	}
+}
+
+func TestResolveHeadlessWorkDirRetainsRepositoryRootProducts(t *testing.T) {
+	repository, _, _ := testRepository(t)
+	writeFile(t, filepath.Join(repository, "governance.yml"), "format_version: 1\n")
+	runGit(t, repository, "add", ".")
+	runGit(t, repository, "commit", "-m", "add root governance")
+	base := strings.TrimSpace(runGit(t, repository, "rev-parse", "HEAD"))
+	worktreePath := filepath.Join(t.TempDir(), "worktree")
+	if err := worktree.Create(repository, base, worktreePath); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := resolveHeadlessWorkDir(repository, worktreePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	realWorktree, err := filepath.EvalSymlinks(worktreePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved != realWorktree {
+		t.Fatalf("work directory = %q, want %q", resolved, realWorktree)
+	}
+}
+
+func TestResolveHeadlessWorkDirRejectsMissingProductGovernance(t *testing.T) {
+	repository, base, _ := testRepository(t)
+	product := filepath.Join(repository, "tools", "codex-governance")
+	if err := os.MkdirAll(product, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(product, "placeholder.txt"), "nested product without governance\n")
+	runGit(t, repository, "add", ".")
+	runGit(t, repository, "commit", "-m", "add nested directory")
+	base = strings.TrimSpace(runGit(t, repository, "rev-parse", "HEAD"))
+	worktreePath := filepath.Join(t.TempDir(), "worktree")
+	if err := worktree.Create(repository, base, worktreePath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveHeadlessWorkDir(product, worktreePath); err == nil || !strings.Contains(err.Error(), "lacks governance.yml") {
+		t.Fatalf("resolveHeadlessWorkDir() error = %v", err)
+	}
+}
+
+func TestResolveHeadlessWorkDirRejectsSymlinkEscape(t *testing.T) {
+	repository, _, _ := testRepository(t)
+	product := filepath.Join(repository, "tools", "codex-governance")
+	writeFile(t, filepath.Join(product, "governance.yml"), "format_version: 1\n")
+	runGit(t, repository, "add", ".")
+	runGit(t, repository, "commit", "-m", "add nested product")
+	base := strings.TrimSpace(runGit(t, repository, "rev-parse", "HEAD"))
+	worktreePath := filepath.Join(t.TempDir(), "worktree")
+	if err := worktree.Create(repository, base, worktreePath); err != nil {
+		t.Fatal(err)
+	}
+	productPath := filepath.Join(worktreePath, "tools", "codex-governance")
+	if err := os.RemoveAll(productPath); err != nil {
+		t.Fatal(err)
+	}
+	escape := filepath.Join(t.TempDir(), "escape")
+	writeFile(t, filepath.Join(escape, "governance.yml"), "format_version: 1\n")
+	if err := os.Symlink(escape, productPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveHeadlessWorkDir(product, worktreePath); err == nil || !strings.Contains(err.Error(), "escapes its worktree") {
+		t.Fatalf("resolveHeadlessWorkDir() error = %v", err)
 	}
 }
 
