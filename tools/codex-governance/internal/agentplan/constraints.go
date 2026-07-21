@@ -207,9 +207,6 @@ func AssignConstraints(decompositionPath, assignmentPath, outputPath, repoRoot s
 	if constraints.FormatVersion != 1 || constraints.Sources != plan.Sources || len(constraints.Subtasks) == 0 {
 		return fmt.Errorf("assignment does not match manager decomposition sources or contains no subtask assignments")
 	}
-	if hasCanonicalNarrative(constraints) {
-		return fmt.Errorf("assignment must not provide canonical source-derived narrative")
-	}
 	if err := validateAssignment(constraints); err != nil {
 		return err
 	}
@@ -285,18 +282,6 @@ func traceFields(source ticketplan.TraceMap, fields ...string) ticketplan.TraceM
 		result[field] = append([]ticketplan.Reference(nil), source[field]...)
 	}
 	return result
-}
-
-func hasCanonicalNarrative(constraints Constraints) bool {
-	if constraints.Story != nil {
-		return true
-	}
-	for _, assignment := range constraints.Subtasks {
-		if assignment.SourceDerived != nil {
-			return true
-		}
-	}
-	return false
 }
 
 // PromoteConstraints preserves the legacy CLI contract until the assignment
