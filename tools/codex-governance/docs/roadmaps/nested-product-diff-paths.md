@@ -2,8 +2,7 @@
 
 ## Status
 
-Work-item draft. Begin implementation only after the linked Jira Subtask is
-`In Progress` and read back.
+`complete`
 
 ## Phase 1: Normalize Diff Paths
 
@@ -23,3 +22,8 @@ Run focused tests, `make test`, `make vet`, `make build`, and
 `git diff --check`. Before commit, obtain passing independent exact-diff
 reviewer and verifier evidence from distinct executors and run
 `make review-gate`.
+
+## Completion Record
+
+GitHub issue #60 is complete. Its backlog, execution, and delivered-diff
+evidence remain in their respective GitHub, Jira, and Git/PR/CI records.

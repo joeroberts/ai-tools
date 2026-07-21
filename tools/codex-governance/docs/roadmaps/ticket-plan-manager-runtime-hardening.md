@@ -2,8 +2,7 @@
 
 ## Status
 
-Work-item draft. Execute phases sequentially after the linked Jira primary
-Subtask is `In Progress` and read back.
+`complete`
 
 ## Phase 1: Constraint-Aware Manager Schema
 
@@ -48,3 +47,8 @@ Run focused package tests, `make test`, `make vet`, `make build`, and
 `git diff --check`. Before commit, obtain passing independent exact-diff
 reviewer and verifier evidence from distinct executors and run
 `make review-gate`.
+
+## Completion Record
+
+GitHub issue #58 is complete. Its backlog, execution, and delivered-diff
+evidence remain in their respective GitHub, Jira, and Git/PR/CI records.

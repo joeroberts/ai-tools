@@ -1,6 +1,6 @@
 id: ticket-planning-and-jira-creation
 title: Ticket Planning And Governed Jira Creation
-status: in-progress
+status: complete
 phases:
   - id: 1
     name: Plan Contract And Workflow State
