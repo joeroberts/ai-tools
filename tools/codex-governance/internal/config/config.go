@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"codex-governance/internal/signature"
@@ -16,14 +17,15 @@ import (
 const CurrentFormatVersion = 1
 
 type Config struct {
-	FormatVersion  int            `yaml:"format_version"`
-	Profile        string         `yaml:"profile"`
-	Jira           JiraConfig     `yaml:"jira"`
-	ReviewBudget   ReviewBudget   `yaml:"review_budget"`
-	CI             CIConfig       `yaml:"ci"`
-	Upstream       Upstream       `yaml:"upstream"`
-	Implementation Implementation `yaml:"implementation"`
-	Signing        Signing        `yaml:"signing"`
+	FormatVersion  int             `yaml:"format_version"`
+	Profile        string          `yaml:"profile"`
+	Jira           JiraConfig      `yaml:"jira"`
+	ReviewBudget   ReviewBudget    `yaml:"review_budget"`
+	CI             CIConfig        `yaml:"ci"`
+	Upstream       Upstream        `yaml:"upstream"`
+	Implementation Implementation  `yaml:"implementation"`
+	Signing        Signing         `yaml:"signing"`
+	Roadmap        RoadmapAdoption `yaml:"roadmap"`
 }
 
 type JiraConfig struct {
@@ -64,6 +66,17 @@ type Signing struct {
 	TrustedKeys         []TrustedKey `yaml:"trusted_keys"`
 	OfflineExportMaxAge string       `yaml:"offline_export_max_age"`
 	RepositoryID        string       `yaml:"repository_id"`
+}
+
+// RoadmapAdoption identifies the one repository-owned structured roadmap that
+// governed roadmap-impact declarations may reference. It is deliberately
+// optional so existing repositories can migrate through explicit
+// not-applicable work items; once present, it is entirely fail-closed.
+type RoadmapAdoption struct {
+	CanonicalPath string `yaml:"canonical_path"`
+	ID            string `yaml:"id"`
+	FormatVersion int    `yaml:"format_version"`
+	Enforcement   string `yaml:"enforcement"`
 }
 
 type TrustedKey struct {
@@ -138,6 +151,9 @@ func (c Config) Validate() error {
 	if c.Implementation.LocalCodeEditEnabled && !seenAdapters["local-llm"] {
 		return fmt.Errorf("local code edit requires the local-llm adapter")
 	}
+	if err := c.Roadmap.Validate(); err != nil {
+		return err
+	}
 	if c.Signing.FormatVersion == 0 && len(c.Signing.TrustedKeys) == 0 {
 		return nil
 	}
@@ -155,6 +171,30 @@ func (c Config) Validate() error {
 		return fmt.Errorf("signing.trusted_keys is invalid: %w", err)
 	}
 	return nil
+}
+
+func (r RoadmapAdoption) Validate() error {
+	if r == (RoadmapAdoption{}) {
+		return nil
+	}
+	if r.CanonicalPath == "" || r.ID == "" || r.FormatVersion != 1 || (r.Enforcement != "required" && r.Enforcement != "disabled") {
+		return fmt.Errorf("roadmap adoption requires canonical_path, id, format_version 1, and enforcement required or disabled")
+	}
+	if !validRoadmapPath(r.CanonicalPath) {
+		return fmt.Errorf("roadmap.canonical_path must be a repository-relative canonical path")
+	}
+	if !regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`).MatchString(r.ID) {
+		return fmt.Errorf("roadmap.id is invalid")
+	}
+	return nil
+}
+
+func validRoadmapPath(path string) bool {
+	if filepath.IsAbs(path) || strings.ContainsAny(path, "*?[]") || strings.HasPrefix(path, "~") || strings.Contains(path, "${") {
+		return false
+	}
+	clean := filepath.ToSlash(filepath.Clean(path))
+	return clean == path && clean != "." && !strings.HasPrefix(clean, "../")
 }
 
 func (c Config) AllowsAdapter(adapter string) bool {

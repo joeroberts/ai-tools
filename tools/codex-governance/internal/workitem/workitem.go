@@ -15,15 +15,16 @@ import (
 var digestPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 
 type Item struct {
-	FormatVersion    int      `json:"format_version"`
-	GovernanceStatus string   `json:"governance_status"`
-	Profile          string   `json:"profile"`
-	Source           Source   `json:"source"`
-	Scope            Scope    `json:"scope"`
-	GitRange         GitRange `json:"git_range"`
-	Decision         Decision `json:"decision"`
-	Links            Links    `json:"links"`
-	Handoff          Handoff  `json:"handoff"`
+	FormatVersion    int           `json:"format_version"`
+	GovernanceStatus string        `json:"governance_status"`
+	Profile          string        `json:"profile"`
+	Source           Source        `json:"source"`
+	Scope            Scope         `json:"scope"`
+	GitRange         GitRange      `json:"git_range"`
+	Decision         Decision      `json:"decision"`
+	RoadmapImpact    RoadmapImpact `json:"roadmap_impact"`
+	Links            Links         `json:"links"`
+	Handoff          Handoff       `json:"handoff"`
 }
 
 type Source struct {
@@ -72,6 +73,18 @@ type GitRange struct {
 type Decision struct {
 	ADR                 string `json:"adr"`
 	ADRPreflightPending bool   `json:"adr_preflight_pending,omitempty"`
+}
+
+// RoadmapImpact makes a work item's milestone effect explicit. Later lifecycle
+// gates bind this declaration to configured roadmap state and transition
+// evidence; the contract lives here so planning can reject ambiguity up front.
+type RoadmapImpact struct {
+	Mode          string `json:"mode"`
+	RoadmapID     string `json:"roadmap_id,omitempty"`
+	CanonicalPath string `json:"canonical_path,omitempty"`
+	Phase         string `json:"phase,omitempty"`
+	Transition    string `json:"transition,omitempty"`
+	Reason        string `json:"reason,omitempty"`
 }
 
 type Links struct {
@@ -168,6 +181,9 @@ func (i Item) Validate() []string {
 	if i.Decision.ADRPreflightPending && (!strings.HasPrefix(i.Decision.ADR, "docs/decisions/") || !allowedPath(i.Decision.ADR, i.Scope.AllowedPaths)) {
 		issues = append(issues, "decision.adr_preflight_pending requires an allowed docs/decisions ADR path")
 	}
+	if issue := i.RoadmapImpact.Validate(); issue != "" {
+		issues = append(issues, issue)
+	}
 	if i.Handoff.Status == "" || i.Handoff.CompletedWork == "" || i.Handoff.NextAction == "" {
 		issues = append(issues, "handoff is incomplete")
 	}
@@ -192,6 +208,30 @@ func (i Item) Validate() []string {
 		}
 	}
 	return issues
+}
+
+func (r RoadmapImpact) Validate() string {
+	switch r.Mode {
+	case "required":
+		if r.RoadmapID == "" || r.CanonicalPath == "" || r.Phase == "" || !oneOf(r.Transition, "start", "block", "resume", "complete") || r.Reason != "" || !validRoadmapPath(r.CanonicalPath) {
+			return "roadmap_impact required declaration is incomplete or invalid"
+		}
+	case "not-applicable":
+		if r.RoadmapID != "" || r.CanonicalPath != "" || r.Phase != "" || r.Transition != "" || len(strings.TrimSpace(r.Reason)) < 10 || len(r.Reason) > 240 {
+			return "roadmap_impact not-applicable declaration requires a bounded reason"
+		}
+	default:
+		return "roadmap_impact declaration is required"
+	}
+	return ""
+}
+
+func validRoadmapPath(path string) bool {
+	if filepath.IsAbs(path) || strings.ContainsAny(path, "*?[]") || strings.HasPrefix(path, "~") || strings.Contains(path, "${") {
+		return false
+	}
+	clean := filepath.ToSlash(filepath.Clean(path))
+	return clean == path && clean != "." && !strings.HasPrefix(clean, "../")
 }
 
 func validHTTPURL(value string) bool {

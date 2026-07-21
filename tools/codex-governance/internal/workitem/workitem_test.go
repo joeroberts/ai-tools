@@ -35,3 +35,36 @@ func TestLoadNormalizesLegacySourceProvider(t *testing.T) {
 		t.Fatalf("legacy source = %#v, issues=%v", item.Source, item.Validate())
 	}
 }
+
+func TestRoadmapImpactRequiresAnExplicitDeclaration(t *testing.T) {
+	item, err := Load(filepath.Join("..", "..", "testdata", "work-items", "valid.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	item.RoadmapImpact = RoadmapImpact{}
+	if issues := strings.Join(item.Validate(), "\n"); !strings.Contains(issues, "roadmap_impact declaration is required") {
+		t.Fatalf("missing declaration issues = %q", issues)
+	}
+}
+
+func TestRoadmapImpactRejectsUnboundedNotApplicableReason(t *testing.T) {
+	item, err := Load(filepath.Join("..", "..", "testdata", "work-items", "valid.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	item.RoadmapImpact = RoadmapImpact{Mode: "not-applicable", Reason: "short"}
+	if issues := strings.Join(item.Validate(), "\n"); !strings.Contains(issues, "bounded reason") {
+		t.Fatalf("unbounded reason issues = %q", issues)
+	}
+}
+
+func TestRoadmapImpactRejectsEscapingCanonicalPath(t *testing.T) {
+	item, err := Load(filepath.Join("..", "..", "testdata", "work-items", "valid.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	item.RoadmapImpact = RoadmapImpact{Mode: "required", RoadmapID: "repo-roadmap", CanonicalPath: "../roadmap.yaml", Phase: "phase-1", Transition: "start"}
+	if issues := strings.Join(item.Validate(), "\n"); !strings.Contains(issues, "incomplete or invalid") {
+		t.Fatalf("escaping path issues = %q", issues)
+	}
+}

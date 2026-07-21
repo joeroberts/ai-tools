@@ -85,3 +85,23 @@ func TestPublicationRepositoryIDRequiresConfiguration(t *testing.T) {
 		t.Fatal("PublicationRepositoryID accepted an empty identity")
 	}
 }
+
+func TestRoadmapAdoptionRejectsUnsafeOrIncompleteConfiguration(t *testing.T) {
+	for _, adoption := range []RoadmapAdoption{
+		{CanonicalPath: "/tmp/roadmap.yaml", ID: "roadmap", FormatVersion: 1, Enforcement: "required"},
+		{CanonicalPath: "docs/roadmap.yaml", ID: "roadmap", FormatVersion: 2, Enforcement: "required"},
+		{CanonicalPath: "docs/roadmap.yaml", ID: "roadmap", FormatVersion: 1, Enforcement: "unknown"},
+		{CanonicalPath: "docs/*.yaml", ID: "roadmap", FormatVersion: 1, Enforcement: "required"},
+	} {
+		if err := adoption.Validate(); err == nil {
+			t.Fatalf("RoadmapAdoption.Validate accepted %#v", adoption)
+		}
+	}
+}
+
+func TestRoadmapAdoptionAcceptsPortableRequiredMapping(t *testing.T) {
+	adoption := RoadmapAdoption{CanonicalPath: "governance/roadmaps/program.yaml", ID: "program-v1", FormatVersion: 1, Enforcement: "required"}
+	if err := adoption.Validate(); err != nil {
+		t.Fatalf("RoadmapAdoption.Validate() error = %v", err)
+	}
+}
