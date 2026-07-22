@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -19,23 +20,25 @@ import (
 // one bounded workflow. Mutable consumption and revocation data is deliberately
 // stored separately, keyed by the signed envelope digest.
 type WorkflowAuthorizationPayload struct {
-	FormatVersion      int      `json:"format_version"`
-	RepositoryID       string   `json:"repository_id"`
-	GitHubIssue        string   `json:"github_issue"`
-	StoryKey           string   `json:"story_key"`
-	SubtaskKey         string   `json:"subtask_key"`
-	PlanContractDigest string   `json:"plan_contract_digest"`
-	SourceDigests      []string `json:"source_digests"`
-	BaseSHA            string   `json:"base_sha"`
-	AllowedPaths       []string `json:"allowed_paths"`
-	MaxChangedFiles    int      `json:"max_changed_files"`
-	MaxChangedLines    int      `json:"max_changed_lines"`
-	ReviewCycleLimit   int      `json:"review_cycle_limit"`
-	AllowedOperations  []string `json:"allowed_operations"`
-	Branch             string   `json:"branch"`
-	Remote             string   `json:"remote"`
-	PRTargetBranch     string   `json:"pr_target_branch"`
-	DerivationRules    []string `json:"derivation_rules"`
+	FormatVersion      int       `json:"format_version"`
+	RepositoryID       string    `json:"repository_id"`
+	GitHubIssue        string    `json:"github_issue"`
+	StoryKey           string    `json:"story_key"`
+	SubtaskKey         string    `json:"subtask_key"`
+	PlanContractDigest string    `json:"plan_contract_digest"`
+	SourceDigests      []string  `json:"source_digests"`
+	BaseSHA            string    `json:"base_sha"`
+	AllowedPaths       []string  `json:"allowed_paths"`
+	MaxChangedFiles    int       `json:"max_changed_files"`
+	MaxChangedLines    int       `json:"max_changed_lines"`
+	AcceptanceCriteria []string  `json:"acceptance_criteria"`
+	ReviewCycleLimit   int       `json:"review_cycle_limit"`
+	AllowedOperations  []string  `json:"allowed_operations"`
+	Branch             string    `json:"branch"`
+	Remote             string    `json:"remote"`
+	PRTargetBranch     string    `json:"pr_target_branch"`
+	DerivationRules    []string  `json:"derivation_rules"`
+	ExpiresAt          time.Time `json:"expires_at"`
 }
 
 type SignedWorkflowAuthorization struct {
@@ -61,13 +64,84 @@ type WorkflowAuditEvent struct {
 	At             time.Time `json:"at"`
 }
 
+// WorkflowOperationBinding is the non-secret context that must match a signed
+// workflow authorization before an operation may cross a local or Jira side
+// effect boundary.
+type WorkflowOperationBinding struct {
+	Operation   string
+	StoryKey    string
+	SubtaskKey  string
+	BaseSHA     string
+	Branch      string
+	Remote      string
+	PRTarget    string
+	ReviewCycle int
+}
+
+// ConsumeAuthorizedOperation verifies the live signed authorization against
+// the operation context, then atomically reserves the operation before its
+// side effect. A caller must render its exact preview before invoking this
+// function; a failed or ambiguous side effect remains consumed and blocking,
+// preventing a restart from silently duplicating it.
+func ConsumeAuthorizedOperation(cfg config.Config, authorizationPath, runtimeRoot string, binding WorkflowOperationBinding, preview []byte, now time.Time) (SignedWorkflowAuthorization, error) {
+	if binding.Operation == "" || binding.StoryKey == "" || binding.SubtaskKey == "" || len(preview) == 0 {
+		return SignedWorkflowAuthorization{}, fmt.Errorf("workflow operation binding is incomplete")
+	}
+	authorization, err := LoadSignedWorkflowAuthorization(authorizationPath, cfg, now)
+	if err != nil {
+		return SignedWorkflowAuthorization{}, err
+	}
+	payload := authorization.Payload
+	if payload.RepositoryID != cfg.Signing.RepositoryID || payload.StoryKey != binding.StoryKey || payload.SubtaskKey != binding.SubtaskKey || (binding.BaseSHA != "" && payload.BaseSHA != binding.BaseSHA) || (binding.Branch != "" && payload.Branch != binding.Branch) || (binding.Remote != "" && payload.Remote != binding.Remote) || (binding.PRTarget != "" && payload.PRTargetBranch != binding.PRTarget) || binding.ReviewCycle < 0 || binding.ReviewCycle > payload.ReviewCycleLimit {
+		return SignedWorkflowAuthorization{}, fmt.Errorf("workflow authorization does not match the operation target")
+	}
+	event := WorkflowAuditEvent{Operation: binding.Operation, PreviewDigest: digestBytes(preview), Result: "reserved", At: now.UTC()}
+	if err := ConsumeWorkflowAuthorization(runtimeRoot, authorization, event); err != nil {
+		return SignedWorkflowAuthorization{}, err
+	}
+	return authorization, nil
+}
+
+// CompleteAuthorizedOperation records the deterministic outcome and read-back
+// after a previously reserved operation. Failed and ambiguous operations remain
+// consumed, so recovery requires an explicit reconciliation instead of a retry
+// that could duplicate an external side effect.
+func CompleteAuthorizedOperation(runtimeRoot string, authorization SignedWorkflowAuthorization, operation, result string, readBack []byte, now time.Time) error {
+	if operation == "" || (result != "completed" && result != "failed" && result != "ambiguous") {
+		return fmt.Errorf("workflow authorization completion is invalid")
+	}
+	return mutateWorkflowAuthorizationState(runtimeRoot, authorization.Digest, func(state *WorkflowAuthorizationState) error {
+		for index := len(state.Audit) - 1; index >= 0; index-- {
+			event := &state.Audit[index]
+			if event.Operation != operation {
+				continue
+			}
+			if event.Result != "reserved" {
+				return fmt.Errorf("workflow authorization operation is already completed")
+			}
+			event.Result = result
+			if len(readBack) > 0 {
+				event.ReadBackDigest = digestBytes(readBack)
+			}
+			event.At = now.UTC()
+			return nil
+		}
+		return fmt.Errorf("workflow authorization operation was not reserved")
+	})
+}
+
 func LoadSignedWorkflowAuthorization(path string, cfg config.Config, now time.Time) (SignedWorkflowAuthorization, error) {
 	data, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return SignedWorkflowAuthorization{}, err
 	}
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.DisallowUnknownFields()
 	var envelope signature.Envelope
-	if err := json.Unmarshal(data, &envelope); err != nil {
+	if err := decoder.Decode(&envelope); err != nil {
+		return SignedWorkflowAuthorization{}, fmt.Errorf("parse workflow authorization: %w", err)
+	}
+	if err := requireJSONEOF(decoder); err != nil {
 		return SignedWorkflowAuthorization{}, fmt.Errorf("parse workflow authorization: %w", err)
 	}
 	registry, err := cfg.TrustedKeyRegistry()
@@ -78,10 +152,18 @@ func LoadSignedWorkflowAuthorization(path string, cfg config.Config, now time.Ti
 		return SignedWorkflowAuthorization{}, fmt.Errorf("verify workflow authorization: %w", err)
 	}
 	var payload WorkflowAuthorizationPayload
-	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+	payloadDecoder := json.NewDecoder(strings.NewReader(string(envelope.Payload)))
+	payloadDecoder.DisallowUnknownFields()
+	if err := payloadDecoder.Decode(&payload); err != nil {
 		return SignedWorkflowAuthorization{}, fmt.Errorf("parse workflow authorization payload: %w", err)
 	}
-	if err := validateWorkflowAuthorizationPayload(payload); err != nil {
+	if err := requireJSONEOF(payloadDecoder); err != nil {
+		return SignedWorkflowAuthorization{}, fmt.Errorf("parse workflow authorization payload: %w", err)
+	}
+	if err := validateWorkflowAuthorizationPayload(payload); err != nil || envelope.ExpiresAt == nil || !payload.ExpiresAt.Equal(*envelope.ExpiresAt) {
+		if err == nil {
+			err = fmt.Errorf("workflow authorization expiry is not bound to the signed payload")
+		}
 		return SignedWorkflowAuthorization{}, err
 	}
 	canonical, err := signature.Canonicalize(data)
@@ -89,6 +171,17 @@ func LoadSignedWorkflowAuthorization(path string, cfg config.Config, now time.Ti
 		return SignedWorkflowAuthorization{}, fmt.Errorf("canonicalize workflow authorization: %w", err)
 	}
 	return SignedWorkflowAuthorization{Envelope: envelope, Payload: payload, Digest: signature.Digest(canonical)}, nil
+}
+
+func requireJSONEOF(decoder *json.Decoder) error {
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("multiple JSON values")
+		}
+		return err
+	}
+	return nil
 }
 
 func (a SignedWorkflowAuthorization) Allows(operation string) bool {
@@ -205,10 +298,22 @@ func mutateWorkflowAuthorizationState(runtimeRoot, digest string, mutate func(*W
 		temporary.Close()
 		return err
 	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return err
+	}
 	if err := temporary.Close(); err != nil {
 		return err
 	}
-	return os.Rename(temporaryPath, path)
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return err
+	}
+	directory, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	return directory.Sync()
 }
 
 func workflowAuthorizationStatePath(runtimeRoot, digest string) (string, error) {
@@ -219,7 +324,7 @@ func workflowAuthorizationStatePath(runtimeRoot, digest string) (string, error) 
 }
 
 func validateWorkflowAuthorizationPayload(payload WorkflowAuthorizationPayload) error {
-	if payload.FormatVersion != 1 || payload.RepositoryID == "" || payload.GitHubIssue == "" || payload.StoryKey == "" || payload.SubtaskKey == "" || !validDigest(payload.PlanContractDigest) || len(payload.SourceDigests) != 3 || len(payload.BaseSHA) < 7 || len(payload.AllowedPaths) == 0 || payload.MaxChangedFiles < 1 || payload.MaxChangedLines < 1 || payload.ReviewCycleLimit < 1 || len(payload.AllowedOperations) == 0 || payload.Branch == "" || payload.Remote == "" || payload.PRTargetBranch == "" || len(payload.DerivationRules) == 0 {
+	if payload.FormatVersion != 1 || payload.RepositoryID == "" || payload.GitHubIssue == "" || payload.StoryKey == "" || payload.SubtaskKey == "" || !validDigest(payload.PlanContractDigest) || len(payload.SourceDigests) != 3 || len(payload.BaseSHA) < 7 || len(payload.AllowedPaths) == 0 || payload.MaxChangedFiles < 1 || payload.MaxChangedLines < 1 || len(payload.AcceptanceCriteria) == 0 || payload.ReviewCycleLimit < 1 || len(payload.AllowedOperations) == 0 || payload.Branch == "" || payload.Remote == "" || payload.PRTargetBranch == "" || len(payload.DerivationRules) == 0 || payload.ExpiresAt.IsZero() {
 		return fmt.Errorf("workflow authorization payload is invalid")
 	}
 	seen := map[string]bool{}
@@ -229,12 +334,13 @@ func validateWorkflowAuthorizationPayload(payload WorkflowAuthorizationPayload) 
 		}
 		seen[digest] = true
 	}
-	for _, value := range append(append([]string{}, payload.AllowedPaths...), append(payload.AllowedOperations, payload.DerivationRules...)...) {
+	for _, value := range append(append(append([]string{}, payload.AllowedPaths...), append(payload.AcceptanceCriteria, payload.AllowedOperations...)...), payload.DerivationRules...) {
 		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf("workflow authorization payload is invalid")
 		}
 	}
-	sort.Strings(payload.AllowedPaths)
+	paths := append([]string(nil), payload.AllowedPaths...)
+	sort.Strings(paths)
 	return nil
 }
 
