@@ -13,8 +13,8 @@ jobs:
       run:
         working-directory: tools/codex-governance
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.26.5"
       - name: Validate local governance configuration
@@ -45,7 +45,7 @@ jobs:
             echo "No Jira read or write performed"
           } > governance-artifacts/summary.txt
       - name: Upload redacted governance summary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: governance-summary
           path: tools/codex-governance/governance-artifacts/summary.txt
