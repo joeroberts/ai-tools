@@ -87,8 +87,9 @@ Usage:
   codex-governance implementation rotate-publish-owner --expected-old-key-id ID --signer PATH --approve [--repo-root PATH]
   codex-governance implementation issue-publish --run PATH --signer PATH --output PATH --worktree PATH --remote NAME --target-branch NAME --approve [--adoption-registry PATH --adoption-record ID] [--expires-in DURATION] [--repo-root PATH]
   codex-governance implementation authorize-publish --authorization PATH --run PATH --repo-root PATH
-  codex-governance implementation push --run PATH --authorization PATH --review-evidence PATH --worktree PATH --repo-root PATH [--adoption-registry PATH --adoption-record ID] [--runtime-root PATH] --approve
-  codex-governance implementation create-pr --run PATH --authorization PATH --review-evidence PATH --worktree PATH --title TEXT [--body TEXT] --repo-root PATH [--adoption-registry PATH --adoption-record ID] [--runtime-root PATH] --approve
+  codex-governance implementation push --run PATH --authorization PATH --workflow-authorization PATH --story KEY --review-evidence PATH --worktree PATH --repo-root PATH [--adoption-registry PATH --adoption-record ID] [--runtime-root PATH] --approve
+  codex-governance implementation create-pr --run PATH --authorization PATH --workflow-authorization PATH --story KEY --review-evidence PATH --worktree PATH --title TEXT [--body TEXT] --repo-root PATH [--adoption-registry PATH --adoption-record ID] [--runtime-root PATH] --approve
+  codex-governance implementation merge --run PATH --workflow-authorization PATH --story KEY --repo-root PATH [--runtime-root PATH] --approve
   codex-governance ollama policy init [--runtime-root PATH]
   codex-governance ollama run --model NAME --role ROLE --task-type TYPE --input PATH [--policy PATH]
   codex-governance ollama status --model NAME [--policy PATH]
@@ -1400,8 +1401,8 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 }
 
 func runImplementation(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 || !oneOf(args[0], "preflight", "adopt", "start", "reconcile", "verify", "review", "verification", "remediate", "assess", "evidence", "check", "status", "metrics", "audit", "commit", "authorize-workflow", "bootstrap-technical-owner", "bootstrap-publish-owner", "rotate-publish-owner", "issue-publish", "authorize-publish", "push", "create-pr") {
-		fmt.Fprintln(stderr, "usage: codex-governance implementation preflight|adopt|start|reconcile|verify|review|verification|remediate|assess|evidence|check|status|metrics|audit|commit|authorize-workflow|bootstrap-technical-owner|bootstrap-publish-owner|rotate-publish-owner|issue-publish|authorize-publish|push|create-pr")
+	if len(args) == 0 || !oneOf(args[0], "preflight", "adopt", "start", "reconcile", "verify", "review", "verification", "remediate", "assess", "evidence", "check", "status", "metrics", "audit", "commit", "authorize-workflow", "bootstrap-technical-owner", "bootstrap-publish-owner", "rotate-publish-owner", "issue-publish", "authorize-publish", "push", "create-pr", "merge") {
+		fmt.Fprintln(stderr, "usage: codex-governance implementation preflight|adopt|start|reconcile|verify|review|verification|remediate|assess|evidence|check|status|metrics|audit|commit|authorize-workflow|bootstrap-technical-owner|bootstrap-publish-owner|rotate-publish-owner|issue-publish|authorize-publish|push|create-pr|merge")
 		return 2
 	}
 	if args[0] == "start" {
@@ -1466,6 +1467,9 @@ func runImplementation(args []string, stdout, stderr io.Writer) int {
 	}
 	if args[0] == "create-pr" {
 		return runImplementationCreatePR(args[1:], stdout, stderr)
+	}
+	if args[0] == "merge" {
+		return runImplementationMerge(args[1:], stdout, stderr)
 	}
 	flags := flag.NewFlagSet("implementation preflight", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -2667,6 +2671,24 @@ func firstError(errors ...error) error {
 	return nil
 }
 
+func consumeWorkflowPublicationOperation(cfg config.Config, authorizationPath, runtimeRootPath, operation, storyKey string, run implementation.Run, remote, target string) (implementation.SignedWorkflowAuthorization, error) {
+	if authorizationPath == "" || storyKey == "" || run.WorkItemKey == "" || run.BaseSHA == "" || run.Branch == "" || remote == "" || target == "" {
+		return implementation.SignedWorkflowAuthorization{}, fmt.Errorf("workflow publication binding is incomplete")
+	}
+	preview, err := json.Marshal(struct {
+		Operation string `json:"operation"`
+		RunID     string `json:"run_id"`
+		CommitSHA string `json:"commit_sha"`
+		Branch    string `json:"branch"`
+		Remote    string `json:"remote"`
+		Target    string `json:"target"`
+	}{Operation: operation, RunID: run.ID, CommitSHA: run.CommitSHA, Branch: run.Branch, Remote: remote, Target: target})
+	if err != nil {
+		return implementation.SignedWorkflowAuthorization{}, err
+	}
+	return implementation.ConsumeAuthorizedOperation(cfg, authorizationPath, runtimeRootPath, implementation.WorkflowOperationBinding{Operation: operation, StoryKey: storyKey, SubtaskKey: run.WorkItemKey, BaseSHA: run.BaseSHA, Branch: run.Branch, Remote: remote, PRTarget: target}, preview, time.Now().UTC())
+}
+
 func runImplementationAuthorizePublish(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("implementation authorize-publish", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -2703,6 +2725,8 @@ func runImplementationPush(args []string, stdout, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	runPath := flags.String("run", "", "implementation-run JSON")
 	authorizationPath := flags.String("authorization", "", "externally signed publication authorization JSON")
+	workflowAuthorizationPath := flags.String("workflow-authorization", "", "signed workflow authorization JSON")
+	storyKey := flags.String("story", "", "authorized Jira Story key")
 	reviewEvidencePath := flags.String("review-evidence", "", "passing independent review evidence JSON")
 	worktreePath := flags.String("worktree", "", "disposable worktree")
 	repoRoot := flags.String("repo-root", ".", "repository root")
@@ -2710,7 +2734,7 @@ func runImplementationPush(args []string, stdout, stderr io.Writer) int {
 	adoptionRegistry := flags.String("adoption-registry", "", "owner-local signed adoption registry")
 	adoptionRecord := flags.String("adoption-record", "", "immutable signed adoption record ID")
 	approve := flags.Bool("approve", false, "explicitly execute this already authorized push")
-	if err := flags.Parse(args); err != nil || !*approve || *runPath == "" || *authorizationPath == "" || *reviewEvidencePath == "" || *worktreePath == "" || flags.NArg() != 0 {
+	if err := flags.Parse(args); err != nil || !*approve || *runPath == "" || *authorizationPath == "" || *workflowAuthorizationPath == "" || *storyKey == "" || *reviewEvidencePath == "" || *worktreePath == "" || flags.NArg() != 0 {
 		return 2
 	}
 	run, err := implementation.LoadRun(*runPath)
@@ -2797,12 +2821,23 @@ func runImplementationPush(args []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 	}
+	workflow, err := consumeWorkflowPublicationOperation(cfg, *workflowAuthorizationPath, resolvedRuntimeRoot, "push", *storyKey, publicationRun, authorization.Payload.Remote, authorization.Payload.PRTargetBranch)
+	if err != nil {
+		fmt.Fprintf(stderr, "authorize workflow push: %v\n", err)
+		return 1
+	}
 	if err := implementation.ConsumeSignedAuthorization(resolvedRuntimeRoot, authorization, "push"); err != nil {
+		_ = implementation.CompleteAuthorizedOperation(resolvedRuntimeRoot, workflow, "push", "failed", nil, time.Now().UTC())
 		fmt.Fprintf(stderr, "consume signed push authorization: %v\n", err)
 		return 1
 	}
 	if err := implementation.PushSigned(&publicationRun, authorization, *worktreePath); err != nil {
+		_ = implementation.CompleteAuthorizedOperation(resolvedRuntimeRoot, workflow, "push", "failed", nil, time.Now().UTC())
 		fmt.Fprintf(stderr, "push implementation branch: %v\n", err)
+		return 1
+	}
+	if err := implementation.CompleteAuthorizedOperation(resolvedRuntimeRoot, workflow, "push", "completed", []byte(publicationRun.CommitSHA), time.Now().UTC()); err != nil {
+		fmt.Fprintf(stderr, "record authorized workflow push read-back: %v\n", err)
 		return 1
 	}
 	run.State = publicationRun.State
@@ -2824,6 +2859,8 @@ func runImplementationCreatePR(args []string, stdout, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	runPath := flags.String("run", "", "implementation-run JSON")
 	authorizationPath := flags.String("authorization", "", "externally signed publication authorization JSON")
+	workflowAuthorizationPath := flags.String("workflow-authorization", "", "signed workflow authorization JSON")
+	storyKey := flags.String("story", "", "authorized Jira Story key")
 	reviewEvidencePath := flags.String("review-evidence", "", "passing independent review evidence JSON")
 	worktreePath := flags.String("worktree", "", "disposable worktree")
 	title := flags.String("title", "", "pull request title")
@@ -2833,7 +2870,7 @@ func runImplementationCreatePR(args []string, stdout, stderr io.Writer) int {
 	adoptionRegistry := flags.String("adoption-registry", "", "owner-local signed adoption registry")
 	adoptionRecord := flags.String("adoption-record", "", "immutable signed adoption record ID")
 	approve := flags.Bool("approve", false, "explicitly execute this already authorized pull request creation")
-	if err := flags.Parse(args); err != nil || !*approve || *runPath == "" || *authorizationPath == "" || *reviewEvidencePath == "" || *worktreePath == "" || *title == "" || flags.NArg() != 0 {
+	if err := flags.Parse(args); err != nil || !*approve || *runPath == "" || *authorizationPath == "" || *workflowAuthorizationPath == "" || *storyKey == "" || *reviewEvidencePath == "" || *worktreePath == "" || *title == "" || flags.NArg() != 0 {
 		return 2
 	}
 	run, err := implementation.LoadRun(*runPath)
@@ -2906,12 +2943,23 @@ func runImplementationCreatePR(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "resolve runtime root: %v\n", err)
 		return 2
 	}
+	workflow, err := consumeWorkflowPublicationOperation(cfg, *workflowAuthorizationPath, resolvedRuntimeRoot, "create-pr", *storyKey, publicationRun, authorization.Payload.Remote, authorization.Payload.PRTargetBranch)
+	if err != nil {
+		fmt.Fprintf(stderr, "authorize workflow pull request: %v\n", err)
+		return 1
+	}
 	if err := implementation.ConsumeSignedAuthorization(resolvedRuntimeRoot, authorization, "create-pr"); err != nil {
+		_ = implementation.CompleteAuthorizedOperation(resolvedRuntimeRoot, workflow, "create-pr", "failed", nil, time.Now().UTC())
 		fmt.Fprintf(stderr, "consume signed pull request authorization: %v\n", err)
 		return 1
 	}
 	if err := implementation.CreateSignedPullRequest(&publicationRun, authorization, *worktreePath, *title, *body); err != nil {
+		_ = implementation.CompleteAuthorizedOperation(resolvedRuntimeRoot, workflow, "create-pr", "failed", nil, time.Now().UTC())
 		fmt.Fprintf(stderr, "create pull request: %v\n", err)
+		return 1
+	}
+	if err := implementation.CompleteAuthorizedOperation(resolvedRuntimeRoot, workflow, "create-pr", "completed", []byte(publicationRun.PullRequestURL), time.Now().UTC()); err != nil {
+		fmt.Fprintf(stderr, "record authorized workflow pull request read-back: %v\n", err)
 		return 1
 	}
 	run.State, run.PullRequestURL = publicationRun.State, publicationRun.PullRequestURL
@@ -2928,6 +2976,112 @@ func runImplementationCreatePR(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "PASS pull request created %s\n", run.PullRequestURL)
 	return 0
+}
+
+func runImplementationMerge(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("implementation merge", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	runPath := flags.String("run", "", "implementation-run JSON")
+	workflowAuthorizationPath := flags.String("workflow-authorization", "", "signed workflow authorization JSON")
+	storyKey := flags.String("story", "", "authorized Jira Story key")
+	repoRoot := flags.String("repo-root", ".", "repository root")
+	runtimeRootPath := flags.String("runtime-root", "", "runtime root")
+	approve := flags.Bool("approve", false, "explicitly execute this already authorized merge")
+	if err := flags.Parse(args); err != nil || !*approve || *runPath == "" || *workflowAuthorizationPath == "" || *storyKey == "" || flags.NArg() != 0 {
+		return 2
+	}
+	run, err := implementation.LoadRun(*runPath)
+	if err != nil || run.State != implementation.StatePRCreated || run.PullRequestURL == "" {
+		fmt.Fprintln(stderr, "implementation run is not ready for authorized merge")
+		return 1
+	}
+	cfg, err := config.Load(filepath.Join(*repoRoot, "governance.yml"))
+	if err != nil {
+		fmt.Fprintf(stderr, "load governance config: %v\n", err)
+		return 2
+	}
+	repository, err := cfg.PublicationRepositoryID()
+	if err != nil {
+		fmt.Fprintf(stderr, "read publication repository identity: %v\n", err)
+		return 2
+	}
+	githubRepository, err := implementation.GitHubRepository(repository)
+	if err != nil {
+		fmt.Fprintf(stderr, "resolve GitHub repository: %v\n", err)
+		return 2
+	}
+	evidence, err := readLiveMergeEvidence(githubRepository, run.PullRequestURL)
+	if err != nil {
+		fmt.Fprintf(stderr, "read authoritative merge evidence: %v\n", err)
+		return 1
+	}
+	if err := implementation.ValidateMergeEvidence(evidence, run, 5*time.Minute, time.Now().UTC()); err != nil {
+		fmt.Fprintf(stderr, "validate authoritative merge evidence: %v\n", err)
+		return 1
+	}
+	root, err := runtimeRoot(*runtimeRootPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "resolve runtime root: %v\n", err)
+		return 2
+	}
+	workflow, err := consumeWorkflowPublicationOperation(cfg, *workflowAuthorizationPath, root, "merge", *storyKey, run, "origin", evidence.TargetBranch)
+	if err != nil {
+		fmt.Fprintf(stderr, "authorize workflow merge: %v\n", err)
+		return 1
+	}
+	preview, _ := json.Marshal(evidence)
+	fmt.Fprintf(stdout, "PREVIEW authorized merge:\n%s\n", preview)
+	output, err := exec.Command("gh", "pr", "merge", run.PullRequestURL, "--repo", githubRepository, "--squash", "--delete-branch").CombinedOutput()
+	if err != nil {
+		_ = implementation.CompleteAuthorizedOperation(root, workflow, "merge", "failed", nil, time.Now().UTC())
+		fmt.Fprintf(stderr, "merge authorized pull request: %v: %s\n", err, output)
+		return 1
+	}
+	if err := implementation.CompleteAuthorizedOperation(root, workflow, "merge", "completed", output, time.Now().UTC()); err != nil {
+		fmt.Fprintf(stderr, "record authorized merge read-back: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "PASS merged %s\n", run.PullRequestURL)
+	return 0
+}
+
+func readLiveMergeEvidence(repository, pullRequestURL string) (implementation.MergeEvidence, error) {
+	output, err := exec.Command("gh", "pr", "view", pullRequestURL, "--repo", repository, "--json", "url,headRefName,headRefOid,baseRefName,mergeStateStatus,statusCheckRollup").Output()
+	if err != nil {
+		return implementation.MergeEvidence{}, err
+	}
+	var response struct {
+		URL               string `json:"url"`
+		HeadRefName       string `json:"headRefName"`
+		HeadRefOID        string `json:"headRefOid"`
+		BaseRefName       string `json:"baseRefName"`
+		MergeStateStatus  string `json:"mergeStateStatus"`
+		StatusCheckRollup []struct {
+			Name       string `json:"name"`
+			Status     string `json:"status"`
+			Conclusion string `json:"conclusion"`
+		} `json:"statusCheckRollup"`
+	}
+	if err := json.Unmarshal(output, &response); err != nil {
+		return implementation.MergeEvidence{}, err
+	}
+	protection, err := exec.Command("gh", "api", "repos/"+repository+"/branches/"+response.BaseRefName+"/protection").Output()
+	if err != nil {
+		return implementation.MergeEvidence{}, fmt.Errorf("read branch protection: %w", err)
+	}
+	var branch struct {
+		RequiredStatusChecks struct {
+			Contexts []string `json:"contexts"`
+		} `json:"required_status_checks"`
+	}
+	if err := json.Unmarshal(protection, &branch); err != nil {
+		return implementation.MergeEvidence{}, err
+	}
+	evidence := implementation.MergeEvidence{PullRequestURL: response.URL, HeadSHA: response.HeadRefOID, HeadBranch: response.HeadRefName, TargetBranch: response.BaseRefName, MergeState: response.MergeStateStatus, RequiredChecks: branch.RequiredStatusChecks.Contexts, ObservedAt: time.Now().UTC()}
+	for _, check := range response.StatusCheckRollup {
+		evidence.Checks = append(evidence.Checks, implementation.MergeCheckEvidence{Name: check.Name, Status: check.Status, Conclusion: check.Conclusion})
+	}
+	return evidence, nil
 }
 
 type multiString []string
