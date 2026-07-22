@@ -81,6 +81,7 @@ Usage:
   codex-governance implementation metrics --run PATH
   codex-governance implementation audit --run PATH --output PATH
   codex-governance implementation commit --run PATH --worktree PATH --branch NAME --message TEXT --approve
+  codex-governance implementation authorize-workflow --payload PATH --signer PATH --output PATH --approve [--repo-root PATH]
   codex-governance implementation bootstrap-technical-owner --signer PATH [--repo-root PATH] [--approve]
   codex-governance implementation bootstrap-publish-owner --signer PATH --approve [--repo-root PATH]
   codex-governance implementation issue-publish --run PATH --signer PATH --output PATH --worktree PATH --remote NAME --target-branch NAME --approve [--adoption-registry PATH --adoption-record ID] [--expires-in DURATION] [--repo-root PATH]
@@ -1398,8 +1399,8 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 }
 
 func runImplementation(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 || !oneOf(args[0], "preflight", "adopt", "start", "reconcile", "verify", "review", "verification", "remediate", "assess", "evidence", "check", "status", "metrics", "audit", "commit", "bootstrap-technical-owner", "bootstrap-publish-owner", "issue-publish", "authorize-publish", "push", "create-pr") {
-		fmt.Fprintln(stderr, "usage: codex-governance implementation preflight|adopt|start|reconcile|verify|review|verification|remediate|assess|evidence|check|status|metrics|audit|commit|bootstrap-technical-owner|bootstrap-publish-owner|issue-publish|authorize-publish|push|create-pr")
+	if len(args) == 0 || !oneOf(args[0], "preflight", "adopt", "start", "reconcile", "verify", "review", "verification", "remediate", "assess", "evidence", "check", "status", "metrics", "audit", "commit", "authorize-workflow", "bootstrap-technical-owner", "bootstrap-publish-owner", "issue-publish", "authorize-publish", "push", "create-pr") {
+		fmt.Fprintln(stderr, "usage: codex-governance implementation preflight|adopt|start|reconcile|verify|review|verification|remediate|assess|evidence|check|status|metrics|audit|commit|authorize-workflow|bootstrap-technical-owner|bootstrap-publish-owner|issue-publish|authorize-publish|push|create-pr")
 		return 2
 	}
 	if args[0] == "start" {
@@ -1440,6 +1441,9 @@ func runImplementation(args []string, stdout, stderr io.Writer) int {
 	}
 	if args[0] == "commit" {
 		return runImplementationCommit(args[1:], stdout, stderr)
+	}
+	if args[0] == "authorize-workflow" {
+		return runImplementationAuthorizeWorkflow(args[1:], stdout, stderr)
 	}
 	if args[0] == "bootstrap-technical-owner" {
 		return runImplementationBootstrapTechnicalOwner(args[1:], stdout, stderr)
@@ -2122,6 +2126,125 @@ func runImplementationCommit(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func runImplementationAuthorizeWorkflow(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("implementation authorize-workflow", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	payloadPath := flags.String("payload", "", "owner-approved workflow authorization payload JSON")
+	signerPath := flags.String("signer", "", "owner-only repository-owner signer path")
+	outputPath := flags.String("output", "", "owner-only signed workflow authorization output")
+	repoRoot := flags.String("repo-root", ".", "repository root")
+	approve := flags.Bool("approve", false, "explicitly authorize owner-only workflow signing")
+	if err := flags.Parse(args); err != nil || !*approve || *payloadPath == "" || *signerPath == "" || *outputPath == "" || flags.NArg() != 0 {
+		return 2
+	}
+	if err := requirePathOutsideRepository(*repoRoot, *signerPath, "repository-owner"); err != nil {
+		fmt.Fprintf(stderr, "validate repository-owner signer path: %v\n", err)
+		return 1
+	}
+	if err := requirePathOutsideRepository(*repoRoot, *payloadPath, "workflow authorization payload"); err != nil {
+		fmt.Fprintf(stderr, "validate workflow authorization payload path: %v\n", err)
+		return 1
+	}
+	if err := requireOwnerOnlyDirectory(filepath.Dir(*payloadPath)); err != nil {
+		fmt.Fprintf(stderr, "validate workflow authorization payload directory: %v\n", err)
+		return 1
+	}
+	if err := requirePathOutsideRepository(*repoRoot, *outputPath, "workflow authorization output"); err != nil {
+		fmt.Fprintf(stderr, "validate workflow authorization output path: %v\n", err)
+		return 1
+	}
+	if _, err := os.Stat(*outputPath); err == nil {
+		fmt.Fprintln(stderr, "refusing to overwrite signed workflow authorization")
+		return 1
+	} else if !os.IsNotExist(err) {
+		fmt.Fprintf(stderr, "check workflow authorization output: %v\n", err)
+		return 2
+	}
+	data, err := os.ReadFile(filepath.Clean(*payloadPath))
+	if err != nil {
+		fmt.Fprintf(stderr, "read workflow authorization payload: %v\n", err)
+		return 2
+	}
+	var payload implementation.WorkflowAuthorizationPayload
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&payload); err != nil || requireSingleJSONValue(decoder) != nil {
+		fmt.Fprintln(stderr, "parse workflow authorization payload: expected one known JSON value")
+		return 2
+	}
+	if err := implementation.ValidateWorkflowAuthorizationPayload(payload); err != nil || !payload.ExpiresAt.After(time.Now().UTC()) {
+		fmt.Fprintln(stderr, "workflow authorization payload is invalid or expired")
+		return 1
+	}
+	cfg, err := config.Load(filepath.Join(*repoRoot, "governance.yml"))
+	if err != nil {
+		fmt.Fprintf(stderr, "load governance config: %v\n", err)
+		return 2
+	}
+	if payload.RepositoryID != cfg.Signing.RepositoryID {
+		fmt.Fprintln(stderr, "workflow authorization repository does not match governance config")
+		return 1
+	}
+	key, privateKey, err := signature.LoadLocalRepositoryOwnerSigner(*signerPath)
+	if err != nil || !repositoryOwnerSignerTrusted(cfg, key) {
+		fmt.Fprintln(stderr, "repository-owner signer is unavailable or not trusted by current policy")
+		return 1
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		fmt.Fprintf(stderr, "encode workflow authorization payload: %v\n", err)
+		return 2
+	}
+	envelope, err := signature.Sign(encoded, key.KeyID, key.Role, privateKey, time.Now().UTC(), &payload.ExpiresAt)
+	if err != nil {
+		fmt.Fprintf(stderr, "sign workflow authorization: %v\n", err)
+		return 1
+	}
+	written, err := json.MarshalIndent(envelope, "", "  ")
+	if err != nil {
+		fmt.Fprintf(stderr, "encode signed workflow authorization: %v\n", err)
+		return 2
+	}
+	if err := requireOwnerOnlyDirectory(filepath.Dir(*outputPath)); err != nil {
+		fmt.Fprintf(stderr, "create workflow authorization directory: %v\n", err)
+		return 2
+	}
+	file, err := os.OpenFile(filepath.Clean(*outputPath), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		fmt.Fprintf(stderr, "write workflow authorization: %v\n", err)
+		return 1
+	}
+	_, writeErr := file.Write(append(written, '\n'))
+	syncErr := file.Sync()
+	closeErr := file.Close()
+	if writeErr != nil || syncErr != nil || closeErr != nil {
+		_ = file.Close()
+		_ = os.Remove(filepath.Clean(*outputPath))
+		fmt.Fprintf(stderr, "write workflow authorization: %v\n", firstError(writeErr, syncErr, closeErr))
+		return 1
+	}
+	directory, err := os.Open(filepath.Dir(*outputPath))
+	if err != nil {
+		_ = os.Remove(filepath.Clean(*outputPath))
+		fmt.Fprintf(stderr, "sync workflow authorization directory: %v\n", err)
+		return 1
+	}
+	directorySyncErr := directory.Sync()
+	directoryCloseErr := directory.Close()
+	if directorySyncErr != nil || directoryCloseErr != nil {
+		_ = os.Remove(filepath.Clean(*outputPath))
+		fmt.Fprintf(stderr, "sync workflow authorization directory: %v\n", firstError(directorySyncErr, directoryCloseErr))
+		return 1
+	}
+	if _, err := implementation.LoadSignedWorkflowAuthorization(*outputPath, cfg, time.Now().UTC()); err != nil {
+		_ = os.Remove(filepath.Clean(*outputPath))
+		fmt.Fprintf(stderr, "verify signed workflow authorization: %v\n", err)
+		return 1
+	}
+	fmt.Fprintln(stdout, "PASS signed workflow authorization issued")
+	return 0
+}
+
 func runImplementationBootstrapPublishOwner(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("implementation bootstrap-publish-owner", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -2390,6 +2513,17 @@ func repositoryOwnerSignerTrusted(cfg config.Config, localKey signature.TrustedK
 		}
 	}
 	return false
+}
+
+func requireSingleJSONValue(decoder *json.Decoder) error {
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("multiple JSON values")
+		}
+		return err
+	}
+	return nil
 }
 
 // resolvePublicationSuccessor preserves predecessor-run state while replacing

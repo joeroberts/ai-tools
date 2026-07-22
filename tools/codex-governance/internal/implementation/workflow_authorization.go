@@ -344,6 +344,12 @@ func validateWorkflowAuthorizationPayload(payload WorkflowAuthorizationPayload) 
 	return nil
 }
 
+// ValidateWorkflowAuthorizationPayload exposes the same fail-closed claim
+// validation used by signed authorization loading to owner-only issuers.
+func ValidateWorkflowAuthorizationPayload(payload WorkflowAuthorizationPayload) error {
+	return validateWorkflowAuthorizationPayload(payload)
+}
+
 func validDigest(value string) bool {
 	if !strings.HasPrefix(value, "sha256:") || len(strings.TrimPrefix(value, "sha256:")) != sha256.Size*2 {
 		return false

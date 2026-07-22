@@ -572,6 +572,61 @@ func TestRunIssuePublishBindsSignerTargetAndLineageWithoutRemoteMutation(t *test
 	}
 }
 
+func TestAuthorizeWorkflowIssuesReloadableOwnerSignedEnvelope(t *testing.T) {
+	root := t.TempDir()
+	if Run([]string{"init", "--repo-root", root}, &bytes.Buffer{}, &bytes.Buffer{}) != 0 {
+		t.Fatal("init failed")
+	}
+	signer := filepath.Join(ownerOnlyTestDir(t), "repository-owner.json")
+	if Run([]string{"implementation", "bootstrap-publish-owner", "--repo-root", root, "--signer", signer, "--approve"}, &bytes.Buffer{}, &bytes.Buffer{}) != 0 {
+		t.Fatal("bootstrap signer failed")
+	}
+	cfg, err := config.Load(filepath.Join(root, "governance.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Signing.RepositoryID = "github.test/acme/repo"
+	if err := config.Save(filepath.Join(root, "governance.yml"), cfg); err != nil {
+		t.Fatal(err)
+	}
+	digest := signature.Digest([]byte("fixture"))
+	payload := implementation.WorkflowAuthorizationPayload{FormatVersion: 1, RepositoryID: cfg.Signing.RepositoryID, GitHubIssue: "22", StoryKey: "REK-94", SubtaskKey: "REK-97", PlanContractDigest: digest, SourceDigests: []string{digest, signature.Digest([]byte("source-2")), signature.Digest([]byte("source-3"))}, BaseSHA: "abcdef1", AllowedPaths: []string{"internal/cli"}, MaxChangedFiles: 9, MaxChangedLines: 800, AcceptanceCriteria: []string{"bound authority"}, ReviewCycleLimit: 2, AllowedOperations: []string{"jira-work-start"}, Branch: "codex/issue-22", Remote: "origin", PRTargetBranch: "main", DerivationRules: []string{"commit-sha"}, ExpiresAt: time.Now().UTC().Add(time.Hour)}
+	payloadPath := filepath.Join(ownerOnlyTestDir(t), "payload.json")
+	data, _ := json.Marshal(payload)
+	if err := os.WriteFile(payloadPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(ownerOnlyTestDir(t), "authorization.json")
+	if code := Run([]string{"implementation", "authorize-workflow", "--repo-root", root, "--payload", payloadPath, "--signer", signer, "--output", output, "--approve"}, &bytes.Buffer{}, &bytes.Buffer{}); code != 0 {
+		t.Fatalf("authorize workflow = %d", code)
+	}
+	if _, err := implementation.LoadSignedWorkflowAuthorization(output, cfg, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAuthorizeWorkflowRejectsConcatenatedPayload(t *testing.T) {
+	root := t.TempDir()
+	if Run([]string{"init", "--repo-root", root}, &bytes.Buffer{}, &bytes.Buffer{}) != 0 {
+		t.Fatal("init failed")
+	}
+	signer := filepath.Join(ownerOnlyTestDir(t), "repository-owner.json")
+	if Run([]string{"implementation", "bootstrap-publish-owner", "--repo-root", root, "--signer", signer, "--approve"}, &bytes.Buffer{}, &bytes.Buffer{}) != 0 {
+		t.Fatal("bootstrap signer failed")
+	}
+	payloadPath := filepath.Join(ownerOnlyTestDir(t), "payload.json")
+	if err := os.WriteFile(payloadPath, []byte("{}{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(ownerOnlyTestDir(t), "authorization.json")
+	if code := Run([]string{"implementation", "authorize-workflow", "--repo-root", root, "--payload", payloadPath, "--signer", signer, "--output", output, "--approve"}, &bytes.Buffer{}, &bytes.Buffer{}); code == 0 {
+		t.Fatal("concatenated payload was accepted")
+	}
+	if _, err := os.Stat(output); !os.IsNotExist(err) {
+		t.Fatalf("authorization output exists after rejected payload: %v", err)
+	}
+}
+
 func cliGit(t *testing.T, directory string, args ...string) string {
 	t.Helper()
 	command := exec.Command("git", args...)
