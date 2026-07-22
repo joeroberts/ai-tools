@@ -401,7 +401,15 @@ func loadReviewBinding(path string) (AdoptionReviewEvidence, error) {
 	if err := json.Unmarshal(data, &e); err != nil {
 		return AdoptionReviewEvidence{}, err
 	}
-	return AdoptionReviewEvidence{Reviewer: AssessmentBinding{ExecutorID: e.Reviewer.ExecutorID, AssessmentDigest: e.Reviewer.AssessmentDigest}, Verifier: AssessmentBinding{ExecutorID: e.Verifier.ExecutorID, AssessmentDigest: e.Verifier.AssessmentDigest}, CombinedDigest: digest(data)}, nil
+	reviewer, err := LoadAssessmentEnvelope(e.Reviewer.EnvelopePath)
+	if err != nil {
+		return AdoptionReviewEvidence{}, err
+	}
+	verifier, err := LoadAssessmentEnvelope(e.Verifier.EnvelopePath)
+	if err != nil {
+		return AdoptionReviewEvidence{}, err
+	}
+	return AdoptionReviewEvidence{Reviewer: AssessmentBinding{ExecutorID: reviewer.Provider + ":" + reviewer.ModelID, AssessmentDigest: e.Reviewer.EnvelopeDigest}, Verifier: AssessmentBinding{ExecutorID: verifier.Provider + ":" + verifier.ModelID, AssessmentDigest: e.Verifier.EnvelopeDigest}, CombinedDigest: digest(data)}, nil
 }
 func loadAuditEvidence(path string, run Run) (string, error) {
 	data, err := os.ReadFile(filepath.Clean(path))

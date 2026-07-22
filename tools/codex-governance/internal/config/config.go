@@ -17,15 +17,16 @@ import (
 const CurrentFormatVersion = 1
 
 type Config struct {
-	FormatVersion  int             `yaml:"format_version"`
-	Profile        string          `yaml:"profile"`
-	Jira           JiraConfig      `yaml:"jira"`
-	ReviewBudget   ReviewBudget    `yaml:"review_budget"`
-	CI             CIConfig        `yaml:"ci"`
-	Upstream       Upstream        `yaml:"upstream"`
-	Implementation Implementation  `yaml:"implementation"`
-	Signing        Signing         `yaml:"signing"`
-	Roadmap        RoadmapAdoption `yaml:"roadmap"`
+	FormatVersion  int              `yaml:"format_version"`
+	Profile        string           `yaml:"profile"`
+	Jira           JiraConfig       `yaml:"jira"`
+	ReviewBudget   ReviewBudget     `yaml:"review_budget"`
+	CI             CIConfig         `yaml:"ci"`
+	Upstream       Upstream         `yaml:"upstream"`
+	Implementation Implementation   `yaml:"implementation"`
+	Assessment     AssessmentPolicy `yaml:"assessment,omitempty"`
+	Signing        Signing          `yaml:"signing"`
+	Roadmap        RoadmapAdoption  `yaml:"roadmap"`
 }
 
 type JiraConfig struct {
@@ -57,6 +58,18 @@ type Upstream struct {
 type Implementation struct {
 	AllowedAdapters      []string `yaml:"allowed_adapters"`
 	LocalCodeEditEnabled bool     `yaml:"local_code_edit_enabled"`
+}
+
+// AssessmentPolicy controls the optional frontier-subagent assessment role.
+// Local assessment remains the default; an empty policy disables frontier use.
+type AssessmentPolicy struct {
+	FrontierSubagent FrontierSubagentPolicy `yaml:"frontier_subagent,omitempty"`
+}
+
+type FrontierSubagentPolicy struct {
+	Enabled            bool     `yaml:"enabled"`
+	AllowedModels      []string `yaml:"allowed_models"`
+	MaxReasoningEffort string   `yaml:"max_reasoning_effort"`
 }
 
 // Signing configures the repository's trusted public keys. An omitted section
@@ -151,6 +164,9 @@ func (c Config) Validate() error {
 	if c.Implementation.LocalCodeEditEnabled && !seenAdapters["local-llm"] {
 		return fmt.Errorf("local code edit requires the local-llm adapter")
 	}
+	if err := c.Assessment.FrontierSubagent.Validate(); err != nil {
+		return err
+	}
 	if err := c.Roadmap.Validate(); err != nil {
 		return err
 	}
@@ -171,6 +187,48 @@ func (c Config) Validate() error {
 		return fmt.Errorf("signing.trusted_keys is invalid: %w", err)
 	}
 	return nil
+}
+
+func (p FrontierSubagentPolicy) Validate() error {
+	if !p.Enabled {
+		if len(p.AllowedModels) != 0 || p.MaxReasoningEffort != "" {
+			return fmt.Errorf("assessment.frontier_subagent configuration requires enabled: true")
+		}
+		return nil
+	}
+	if len(p.AllowedModels) == 0 {
+		return fmt.Errorf("assessment.frontier_subagent.allowed_models is required when enabled")
+	}
+	seen := map[string]bool{}
+	for _, model := range p.AllowedModels {
+		if strings.TrimSpace(model) == "" || seen[model] {
+			return fmt.Errorf("assessment.frontier_subagent.allowed_models is invalid")
+		}
+		seen[model] = true
+	}
+	if p.MaxReasoningEffort != "low" && p.MaxReasoningEffort != "medium" && p.MaxReasoningEffort != "high" {
+		return fmt.Errorf("assessment.frontier_subagent.max_reasoning_effort must be low, medium, or high")
+	}
+	return nil
+}
+
+// AllowsFrontierAssessment reports whether a configured frontier provider may
+// use the requested model and effort. It deliberately has no fallback path.
+func (p FrontierSubagentPolicy) AllowsFrontierAssessment(model, effort string) bool {
+	if !p.Enabled || !reasoningEffortAtMost(effort, p.MaxReasoningEffort) {
+		return false
+	}
+	for _, allowed := range p.AllowedModels {
+		if model == allowed {
+			return true
+		}
+	}
+	return false
+}
+
+func reasoningEffortAtMost(value, maximum string) bool {
+	rank := map[string]int{"low": 1, "medium": 2, "high": 3}
+	return rank[value] != 0 && rank[value] <= rank[maximum]
 }
 
 func (r RoadmapAdoption) Validate() error {

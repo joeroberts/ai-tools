@@ -187,19 +187,41 @@ func writePassingReviewEvidence(t *testing.T, diff []byte) string {
 	t.Helper()
 	dir := t.TempDir()
 	paths := []string{filepath.Join(dir, "reviewer.json"), filepath.Join(dir, "verifier.json")}
-	for _, path := range paths {
+	envelopes := make([]string, len(paths))
+	for index, path := range paths {
 		if err := SaveAssessment(path, Assessment{}); err != nil {
 			t.Fatal(err)
 		}
+		rawPath := path + ".raw.valid"
+		if err := writeAssessmentArtifact(rawPath, []byte("NONE")); err != nil {
+			t.Fatal(err)
+		}
+		findings, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := os.ReadFile(rawPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		role := "reviewer"
+		if index == 1 {
+			role = "verifier"
+		}
+		now := time.Now().UTC()
+		envelopes[index] = path + ".envelope.json"
+		if err := SaveAssessmentEnvelope(envelopes[index], AssessmentEnvelope{FormatVersion: 1, Provider: "local", Role: role, ModelName: role + "-model", ModelID: "model-" + role, PolicyDigest: "sha256:policy", DiffDigest: digestBytes(diff), PromptDigest: "sha256:prompt", RawOutputPath: rawPath, RawOutputDigest: digestBytes(raw), FindingsPath: path, FindingsDigest: digestBytes(findings), StartedAt: now, CompletedAt: now}); err != nil {
+			t.Fatal(err)
+		}
 	}
-	data := func(path, executor string) AssessmentRecord {
+	data := func(path string) AssessmentRecord {
 		b, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return AssessmentRecord{ExecutorID: executor, AssessmentPath: path, AssessmentDigest: digestBytes(b)}
+		return AssessmentRecord{EnvelopePath: path, EnvelopeDigest: digestBytes(b)}
 	}
-	evidence := ReviewEvidence{FormatVersion: 1, DiffDigest: digestBytes(diff), Reviewer: data(paths[0], "reviewer"), Verifier: data(paths[1], "verifier")}
+	evidence := ReviewEvidence{FormatVersion: 1, DiffDigest: digestBytes(diff), Reviewer: data(envelopes[0]), Verifier: data(envelopes[1])}
 	path := filepath.Join(dir, "evidence.json")
 	writeJSON(t, path, evidence)
 	return path

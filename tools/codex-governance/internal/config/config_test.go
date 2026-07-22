@@ -106,3 +106,16 @@ func TestRoadmapAdoptionAcceptsPortableRequiredMapping(t *testing.T) {
 		t.Fatalf("RoadmapAdoption.Validate() error = %v", err)
 	}
 }
+
+func TestFrontierSubagentPolicyIsConfigBound(t *testing.T) {
+	policy := FrontierSubagentPolicy{Enabled: true, AllowedModels: []string{"frontier-model"}, MaxReasoningEffort: "high"}
+	if err := policy.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if !policy.AllowsFrontierAssessment("frontier-model", "high") || policy.AllowsFrontierAssessment("frontier-model", "ultra") || policy.AllowsFrontierAssessment("other-model", "low") {
+		t.Fatal("frontier policy did not enforce configured model and effort")
+	}
+	if err := (FrontierSubagentPolicy{AllowedModels: []string{"frontier-model"}}).Validate(); err == nil {
+		t.Fatal("disabled frontier policy accepted configuration")
+	}
+}
