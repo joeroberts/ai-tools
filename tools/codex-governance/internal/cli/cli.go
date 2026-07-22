@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -3087,12 +3088,21 @@ func readRequiredMergeChecks(repository, branch string) ([]string, error) {
 		if err := json.Unmarshal(protection, &legacy); err != nil {
 			return nil, err
 		}
-		return legacy.RequiredStatusChecks.Contexts, nil
+		if len(legacy.RequiredStatusChecks.Contexts) > 0 {
+			return legacy.RequiredStatusChecks.Contexts, nil
+		}
 	}
 	rulesets, err := exec.Command("gh", "api", "repos/"+repository+"/rulesets").Output()
 	if err != nil {
-		return nil, fmt.Errorf("read branch protection and rulesets: %w", err)
+		if protectionErr != nil {
+			return nil, fmt.Errorf("read branch protection (%v) and rulesets: %w", protectionErr, err)
+		}
+		return nil, fmt.Errorf("legacy branch protection has no required status checks and read rulesets: %w", err)
 	}
+	return requiredMergeChecksFromRulesets(rulesets, branch)
+}
+
+func requiredMergeChecksFromRulesets(rulesets []byte, branch string) ([]string, error) {
 	var records []struct {
 		Target      string `json:"target"`
 		Enforcement string `json:"enforcement"`
@@ -3114,7 +3124,11 @@ func readRequiredMergeChecks(repository, branch string) ([]string, error) {
 		return nil, err
 	}
 	for _, record := range records {
-		if record.Target != "branch" || record.Enforcement != "active" || !stringSliceContains(record.Conditions.RefName.Include, branch) && !stringSliceContains(record.Conditions.RefName.Include, "~DEFAULT_BRANCH") {
+		matches, err := rulesetTargetsBranch(record.Conditions.RefName.Include, branch)
+		if err != nil {
+			return nil, err
+		}
+		if record.Target != "branch" || record.Enforcement != "active" || !matches {
 			continue
 		}
 		for _, rule := range record.Rules {
@@ -3131,13 +3145,21 @@ func readRequiredMergeChecks(repository, branch string) ([]string, error) {
 	return nil, fmt.Errorf("no active branch protection or ruleset requires status checks for %s", branch)
 }
 
-func stringSliceContains(values []string, wanted string) bool {
-	for _, value := range values {
-		if value == wanted {
-			return true
+func rulesetTargetsBranch(includes []string, branch string) (bool, error) {
+	fullRef := "refs/heads/" + branch
+	for _, include := range includes {
+		if include == "~DEFAULT_BRANCH" || include == "~ALL" || include == branch {
+			return true, nil
+		}
+		matches, err := path.Match(include, fullRef)
+		if err != nil {
+			return false, fmt.Errorf("match ruleset ref pattern %q: %w", include, err)
+		}
+		if matches {
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 type multiString []string

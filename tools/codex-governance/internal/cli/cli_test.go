@@ -1017,3 +1017,40 @@ func TestRunImplementationAdoptHelpSucceeds(t *testing.T) {
 		t.Fatalf("implementation adopt help = %d", code)
 	}
 }
+
+func TestRequiredMergeChecksFromRulesetsMatchesFullRefsAndPatterns(t *testing.T) {
+	rulesets := []byte(`[
+  {
+    "target": "branch",
+    "enforcement": "active",
+    "conditions": {"ref_name": {"include": ["refs/heads/release/*"]}},
+    "rules": [{"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "release-check"}]}}]
+  },
+  {
+    "target": "branch",
+    "enforcement": "active",
+    "conditions": {"ref_name": {"include": ["refs/heads/main"]}},
+    "rules": [{"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "go"}, {"context": "semantic-version"}]}}]
+  }
+]`)
+	checks, err := requiredMergeChecksFromRulesets(rulesets, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(checks, ","), "go,semantic-version"; got != want {
+		t.Fatalf("checks = %q, want %q", got, want)
+	}
+	checks, err = requiredMergeChecksFromRulesets(rulesets, "release/1.2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(checks, ","), "release-check"; got != want {
+		t.Fatalf("checks = %q, want %q", got, want)
+	}
+}
+
+func TestRulesetTargetsBranchRejectsInvalidPattern(t *testing.T) {
+	if _, err := rulesetTargetsBranch([]string{"refs/heads/["}, "main"); err == nil {
+		t.Fatal("rulesetTargetsBranch accepted malformed pattern")
+	}
+}
