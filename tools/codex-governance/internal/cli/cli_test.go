@@ -714,15 +714,15 @@ func TestRunJiraWorkUpdateRendersEvidenceSummaryNotPath(t *testing.T) {
 	}
 }
 
-func TestRunJiraWorkUpdateApproveRequiresCredentials(t *testing.T) {
+func TestRunJiraWorkUpdateApproveRequiresSignedAuthorization(t *testing.T) {
 	t.Setenv("JIRA_BASE_URL", "")
 	t.Setenv("JIRA_EMAIL", "")
 	t.Setenv("JIRA_API_TOKEN", "")
 	var stderr bytes.Buffer
 	commit := strings.Repeat("a", 40)
 	code := Run([]string{"jira", "work", "update", "--issue", "REK-5", "--kind", "commit", "--commit", commit, "--scope", "Add work records", "--check", "go test ./internal/jira", "--evidence", "/private/evidence.json", "--approve"}, &bytes.Buffer{}, &stderr)
-	if code != 2 || !strings.Contains(stderr.String(), "JIRA_BASE_URL") {
-		t.Fatalf("approve without credentials = %d, stderr=%q", code, stderr.String())
+	if code != 2 || !strings.Contains(stderr.String(), "signed --authorization") {
+		t.Fatalf("approve without authorization = %d, stderr=%q", code, stderr.String())
 	}
 }
 

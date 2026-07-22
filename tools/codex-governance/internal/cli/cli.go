@@ -248,8 +248,8 @@ func runJira(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "jira plan %s dry-run cannot include authorization to create\n", command)
 			return 2
 		}
-	} else if !*approve && *planningAuthorizationPath == "" {
-		fmt.Fprintf(stderr, "jira plan %s requires exactly one of --dry-run or --approve\n", command)
+	} else if *planningAuthorizationPath == "" {
+		fmt.Fprintf(stderr, "jira plan %s requires a signed --authorization\n", command)
 		return 2
 	}
 	if *planningAuthorizationPath != "" && command != "create" {
@@ -413,7 +413,7 @@ func runJiraWork(args []string, stdout, stderr io.Writer) int {
 	impact := flags.String("impact", "", "blocker impact")
 	decision := flags.String("decision-needed", "", "owner decision needed")
 	nextAction := flags.String("next-action", "", "next action")
-	approve := flags.Bool("approve", false, "explicitly authorize the Jira comment write")
+	approve := flags.Bool("approve", false, "request a Jira write; a signed authorization is still required")
 	authorizationPath := flags.String("authorization", "", "signed workflow authorization for this Jira operation")
 	storyKey := flags.String("story", "", "Jira Story key bound by workflow authorization")
 	repoRoot := flags.String("repo-root", ".", "repository root")
@@ -450,8 +450,12 @@ func runJiraWork(args []string, stdout, stderr io.Writer) int {
 	}
 	comment := update.Comment()
 	fmt.Fprintf(stdout, "PREVIEW Jira comment for %s:\n%s\n", update.Issue, comment)
-	if !*approve && *authorizationPath == "" {
-		return 0
+	if *authorizationPath == "" {
+		if !*approve {
+			return 0
+		}
+		fmt.Fprintln(stderr, "jira work update requires a signed --authorization for a write")
+		return 2
 	}
 	if root, err := runtimeRoot(*runtimeRootPath); err == nil {
 		recordOperationLifecycle(root, "jira-work-update", "dispatched")
@@ -1544,12 +1548,11 @@ func runImplementationStart(args []string, stdout, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	runPath := flags.String("run", "", "implementation-run JSON")
 	bundlePath := flags.String("bundle", "", "task-bundle JSON")
-	approve := flags.Bool("approve", false, "explicitly authorize local agent execution")
 	authorizationPath := flags.String("authorization", "", "signed workflow authorization for implementation dispatch")
 	repoRoot := flags.String("repo-root", ".", "repository root")
 	runtimeRootPath := flags.String("runtime-root", "", "runtime root")
 	codexBin := flags.String("codex-bin", "codex", "headless Codex binary")
-	if err := flags.Parse(args); err != nil || (!*approve && *authorizationPath == "") || *runPath == "" || *bundlePath == "" || flags.NArg() != 0 {
+	if err := flags.Parse(args); err != nil || *authorizationPath == "" || *runPath == "" || *bundlePath == "" || flags.NArg() != 0 {
 		return 2
 	}
 	run, err := implementation.LoadRun(*runPath)
@@ -2052,11 +2055,10 @@ func runImplementationCommit(args []string, stdout, stderr io.Writer) int {
 	worktreePath := flags.String("worktree", "", "disposable worktree")
 	branch := flags.String("branch", "", "new codex/* branch")
 	message := flags.String("message", "", "local commit message")
-	approve := flags.Bool("approve", false, "explicitly authorize local commit")
 	authorizationPath := flags.String("authorization", "", "signed workflow authorization for this local commit")
 	repoRoot := flags.String("repo-root", ".", "repository root")
 	runtimeRootPath := flags.String("runtime-root", "", "runtime root")
-	if err := flags.Parse(args); err != nil || (!*approve && *authorizationPath == "") || *runPath == "" || *worktreePath == "" || *branch == "" || *message == "" || (*authorizationPath != "" && *bundlePath == "") || flags.NArg() != 0 {
+	if err := flags.Parse(args); err != nil || *authorizationPath == "" || *runPath == "" || *worktreePath == "" || *branch == "" || *message == "" || *bundlePath == "" || flags.NArg() != 0 {
 		return 2
 	}
 	run, err := implementation.LoadRun(*runPath)
