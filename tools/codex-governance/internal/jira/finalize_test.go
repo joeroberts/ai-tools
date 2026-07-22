@@ -36,6 +36,29 @@ func TestFinalizationVerifyClosedRequiresResolution(t *testing.T) {
 	}
 }
 
+func TestStartTransitionsOnlyToInProgressAndReadsBack(t *testing.T) {
+	status := "To Do"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/rest/api/3/issue/REK-6":
+			_, _ = w.Write([]byte(`{"key":"REK-6","fields":{"parent":{"key":"REK-4"},"status":{"name":"` + status + `","statusCategory":{"key":"indeterminate"}},"resolution":null,"subtasks":[]}}`))
+		case "/rest/api/3/issue/REK-6/transitions":
+			if r.Method == http.MethodGet {
+				_, _ = w.Write([]byte(`{"transitions":[{"id":"21","to":{"name":"In Progress","statusCategory":{"key":"indeterminate"}}}]}`))
+				return
+			}
+			status = "In Progress"
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	state, err := (FinalizationClient{BaseURL: server.URL}).Start("REK-6", "REK-4")
+	if err != nil || state.Status != "In Progress" {
+		t.Fatalf("Start() = %#v, %v", state, err)
+	}
+}
+
 func finalizationServer(t *testing.T, incomplete bool) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

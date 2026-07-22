@@ -133,6 +133,32 @@ func (c FinalizationClient) VerifyClosed(issue string) error {
 	return nil
 }
 
+// Start transitions the named subtask to exactly In Progress and reads it back.
+func (c FinalizationClient) Start(subtask, story string) (IssueState, error) {
+	state, err := c.readIssue(subtask)
+	if err != nil {
+		return IssueState{}, err
+	}
+	if state.Parent != story || state.Status != "To Do" {
+		return IssueState{}, fmt.Errorf("Jira subtask %s is not a To Do child of Story %s", subtask, story)
+	}
+	transition, err := c.statusTransition(subtask, "In Progress")
+	if err != nil {
+		return IssueState{}, err
+	}
+	if err := c.Transition(subtask, transition); err != nil {
+		return IssueState{}, err
+	}
+	state, err = c.readIssue(subtask)
+	if err != nil || state.Status != "In Progress" {
+		if err == nil {
+			err = fmt.Errorf("Jira subtask %s did not transition to In Progress", subtask)
+		}
+		return IssueState{}, err
+	}
+	return state, nil
+}
+
 func (c FinalizationClient) readIssue(key string) (IssueState, error) {
 	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(c.BaseURL, "/")+"/rest/api/3/issue/"+key+"?fields=parent,status,resolution,subtasks", nil)
 	if err != nil {
@@ -199,6 +225,10 @@ func (c FinalizationClient) readIssue(key string) (IssueState, error) {
 }
 
 func (c FinalizationClient) doneTransition(issue string) (string, error) {
+	return c.statusTransition(issue, "")
+}
+
+func (c FinalizationClient) statusTransition(issue, status string) (string, error) {
 	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(c.BaseURL, "/")+"/rest/api/3/issue/"+issue+"/transitions", nil)
 	if err != nil {
 		return "", err
@@ -216,6 +246,7 @@ func (c FinalizationClient) doneTransition(issue string) (string, error) {
 		Transitions []struct {
 			ID string `json:"id"`
 			To struct {
+				Name     string `json:"name"`
 				Category struct {
 					Key string `json:"key"`
 				} `json:"statusCategory"`
@@ -226,11 +257,11 @@ func (c FinalizationClient) doneTransition(issue string) (string, error) {
 		return "", fmt.Errorf("decode Jira transitions for %s: %w", issue, err)
 	}
 	for _, transition := range payload.Transitions {
-		if transition.To.Category.Key == "done" && transition.ID != "" {
+		if transition.ID != "" && ((status == "" && transition.To.Category.Key == "done") || transition.To.Name == status) {
 			return transition.ID, nil
 		}
 	}
-	return "", fmt.Errorf("Jira issue %s has no available transition to a done status", issue)
+	return "", fmt.Errorf("Jira issue %s has no available transition to %q", issue, status)
 }
 
 func (c FinalizationClient) client() *http.Client {

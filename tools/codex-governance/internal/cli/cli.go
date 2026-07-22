@@ -178,6 +178,8 @@ func runJira(args []string, stdout, stderr io.Writer) int {
 	workflowPath := flags.String("workflow", "", "persisted ticket-plan workflow state")
 	contractPath := flags.String("contract", "", "persisted ticket-plan authority contract")
 	approvedBy := flags.String("approved-by", "", "stakeholder approving the ticket plan")
+	planningAuthorizationPath := flags.String("authorization", "", "signed planning authorization for Jira creation")
+	runtimeRootPath := flags.String("runtime-root", "", "runtime root")
 	if err := flags.Parse(args[2:]); err != nil || *path == "" || flags.NArg() != 0 {
 		return 2
 	}
@@ -241,8 +243,17 @@ func runJira(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "FAIL workflow state is not approved for this exact plan")
 		return 1
 	}
-	if *dryRun == *approve {
+	if *dryRun {
+		if *approve || *planningAuthorizationPath != "" {
+			fmt.Fprintf(stderr, "jira plan %s dry-run cannot include authorization to create\n", command)
+			return 2
+		}
+	} else if !*approve && *planningAuthorizationPath == "" {
 		fmt.Fprintf(stderr, "jira plan %s requires exactly one of --dry-run or --approve\n", command)
+		return 2
+	}
+	if *planningAuthorizationPath != "" && command != "create" {
+		fmt.Fprintf(stderr, "jira plan %s does not support planning authorization\n", command)
 		return 2
 	}
 	cfg, err := config.Load(filepath.Join(*repoRoot, "governance.yml"))
@@ -314,6 +325,31 @@ func runJira(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "digest ticket plan: %v\n", err)
 		return 2
 	}
+	var planningAuthorization implementation.SignedPlanningAuthorization
+	var planningAuthorizationRoot string
+	if *planningAuthorizationPath != "" {
+		root, err := runtimeRoot(*runtimeRootPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "resolve runtime root: %v\n", err)
+			return 2
+		}
+		preview, err := json.Marshal(struct {
+			PlanDigest       string `json:"plan_digest"`
+			JiraProject      string `json:"jira_project"`
+			ExpectedSubtasks int    `json:"expected_subtasks"`
+		}{PlanDigest: digest, JiraProject: cfg.Jira.Project, ExpectedSubtasks: len(plan.Subtasks)})
+		if err != nil {
+			fmt.Fprintf(stderr, "render Jira plan preview: %v\n", err)
+			return 2
+		}
+		fmt.Fprintf(stdout, "PREVIEW Jira plan creation:\n%s\n", preview)
+		planningAuthorization, err = implementation.ConsumeAuthorizedPlanningOperation(cfg, *planningAuthorizationPath, root, "jira-plan-create", digest, cfg.Jira.Project, len(plan.Subtasks), preview, time.Now().UTC())
+		if err != nil {
+			fmt.Fprintf(stderr, "authorize Jira plan creation: %v\n", err)
+			return 1
+		}
+		planningAuthorizationRoot = root
+	}
 	creation := jiraPublicationRecord{PlanDigest: digest, Status: "creating"}
 	if err := writeJiraPublicationRecord(*resultPath, creation); err != nil {
 		fmt.Fprintf(stderr, "write Jira publication record: %v\n", err)
@@ -327,12 +363,22 @@ func runJira(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "update Jira publication record: %v\n", writeErr)
 		}
 		fmt.Fprintf(stderr, "create Jira issues: %v\n", err)
+		if planningAuthorizationRoot != "" {
+			_ = implementation.CompleteAuthorizedPlanningOperation(planningAuthorizationRoot, planningAuthorization, "jira-plan-create", "failed", nil, time.Now().UTC())
+		}
 		return 1
 	}
 	creation.Status = "complete"
 	if err := writeJiraPublicationRecord(*resultPath, creation); err != nil {
 		fmt.Fprintf(stderr, "update Jira publication record: %v\n", err)
 		return 2
+	}
+	if planningAuthorizationRoot != "" {
+		readBack, err := json.Marshal(creation)
+		if err != nil || implementation.CompleteAuthorizedPlanningOperation(planningAuthorizationRoot, planningAuthorization, "jira-plan-create", "completed", readBack, time.Now().UTC()) != nil {
+			fmt.Fprintln(stderr, "record authorized Jira plan creation read-back failed; operation remains blocking")
+			return 1
+		}
 	}
 	fmt.Fprintf(stdout, "PASS created Story %s and %d subtasks\n", story.Key, len(subtasks))
 	return 0
@@ -347,12 +393,15 @@ func (v *stringValues) Set(value string) error {
 }
 
 func runJiraWork(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 || (args[0] != "update" && args[0] != "finalize") {
-		fmt.Fprintln(stderr, "usage: codex-governance jira work update|finalize")
+	if len(args) == 0 || (args[0] != "update" && args[0] != "start" && args[0] != "finalize") {
+		fmt.Fprintln(stderr, "usage: codex-governance jira work update|start|finalize")
 		return 2
 	}
 	if args[0] == "finalize" {
 		return runJiraWorkFinalize(args[1:], stdout, stderr)
+	}
+	if args[0] == "start" {
+		return runJiraWorkStart(args[1:], stdout, stderr)
 	}
 	flags := flag.NewFlagSet("jira work update", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -365,6 +414,9 @@ func runJiraWork(args []string, stdout, stderr io.Writer) int {
 	decision := flags.String("decision-needed", "", "owner decision needed")
 	nextAction := flags.String("next-action", "", "next action")
 	approve := flags.Bool("approve", false, "explicitly authorize the Jira comment write")
+	authorizationPath := flags.String("authorization", "", "signed workflow authorization for this Jira operation")
+	storyKey := flags.String("story", "", "Jira Story key bound by workflow authorization")
+	repoRoot := flags.String("repo-root", ".", "repository root")
 	runtimeRootPath := flags.String("runtime-root", "", "runtime root")
 	evidenceSummary := flags.String("evidence-summary", "", "owner-local JSON evidence summary")
 	var checks, evidence stringValues
@@ -397,8 +449,8 @@ func runJiraWork(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	comment := update.Comment()
-	if !*approve {
-		fmt.Fprintf(stdout, "PREVIEW Jira comment for %s:\n%s\n", update.Issue, comment)
+	fmt.Fprintf(stdout, "PREVIEW Jira comment for %s:\n%s\n", update.Issue, comment)
+	if !*approve && *authorizationPath == "" {
 		return 0
 	}
 	if root, err := runtimeRoot(*runtimeRootPath); err == nil {
@@ -406,12 +458,39 @@ func runJiraWork(args []string, stdout, stderr io.Writer) int {
 	}
 	baseURL, email, token := os.Getenv("JIRA_BASE_URL"), os.Getenv("JIRA_EMAIL"), os.Getenv("JIRA_API_TOKEN")
 	if baseURL == "" || email == "" || token == "" {
-		fmt.Fprintln(stderr, "jira work update requires JIRA_BASE_URL, JIRA_EMAIL, and JIRA_API_TOKEN with --approve")
+		fmt.Fprintln(stderr, "jira work update requires JIRA_BASE_URL, JIRA_EMAIL, and JIRA_API_TOKEN for an authorized write")
 		return 2
+	}
+	var authorization implementation.SignedWorkflowAuthorization
+	var authorizationRoot string
+	if *authorizationPath != "" {
+		if *storyKey == "" {
+			fmt.Fprintln(stderr, "jira work update with --authorization requires --story")
+			return 2
+		}
+		cfg, err := config.Load(filepath.Join(*repoRoot, "governance.yml"))
+		if err != nil {
+			fmt.Fprintf(stderr, "load governance config: %v\n", err)
+			return 2
+		}
+		root, err := runtimeRoot(*runtimeRootPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "resolve runtime root: %v\n", err)
+			return 2
+		}
+		authorization, err = implementation.ConsumeAuthorizedOperation(cfg, *authorizationPath, root, implementation.WorkflowOperationBinding{Operation: "jira-work-update", StoryKey: *storyKey, SubtaskKey: update.Issue}, []byte(comment), time.Now().UTC())
+		if err != nil {
+			fmt.Fprintf(stderr, "authorize Jira work update: %v\n", err)
+			return 1
+		}
+		authorizationRoot = root
 	}
 	client := jira.WorkClient{BaseURL: baseURL, Email: email, Token: token}
 	created, err := client.AddComment(update.Issue, comment)
 	if err != nil {
+		if authorizationRoot != "" {
+			_ = implementation.CompleteAuthorizedOperation(authorizationRoot, authorization, "jira-work-update", "failed", nil, time.Now().UTC())
+		}
 		if root, rootErr := runtimeRoot(*runtimeRootPath); rootErr == nil {
 			recordOperationLifecycle(root, "jira-work-update", "failed")
 		}
@@ -420,17 +499,79 @@ func runJiraWork(args []string, stdout, stderr io.Writer) int {
 	}
 	readBack, err := client.ReadComment(update.Issue, created.ID)
 	if err != nil {
+		if authorizationRoot != "" {
+			_ = implementation.CompleteAuthorizedOperation(authorizationRoot, authorization, "jira-work-update", "ambiguous", nil, time.Now().UTC())
+		}
 		fmt.Fprintf(stderr, "read back Jira work update %s: %v\n", created.ID, err)
 		return 1
 	}
 	if readBack.ID != created.ID || readBack.Body != comment {
+		if authorizationRoot != "" {
+			_ = implementation.CompleteAuthorizedOperation(authorizationRoot, authorization, "jira-work-update", "ambiguous", nil, time.Now().UTC())
+		}
 		fmt.Fprintf(stderr, "read back Jira work update %s did not match the approved preview\n", created.ID)
 		return 1
+	}
+	if authorizationRoot != "" {
+		readBackBytes, err := json.Marshal(readBack)
+		if err != nil || implementation.CompleteAuthorizedOperation(authorizationRoot, authorization, "jira-work-update", "completed", readBackBytes, time.Now().UTC()) != nil {
+			fmt.Fprintln(stderr, "record authorized Jira work update read-back failed; operation remains blocking")
+			return 1
+		}
 	}
 	if root, err := runtimeRoot(*runtimeRootPath); err == nil {
 		recordOperationLifecycle(root, "jira-work-update", "completed")
 	}
 	fmt.Fprintf(stdout, "PASS recorded %s work update on %s (comment %s) and verified read-back\n", update.Kind, update.Issue, created.ID)
+	return 0
+}
+
+func runJiraWorkStart(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("jira work start", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	issue := flags.String("issue", "", "Jira subtask key")
+	story := flags.String("story", "", "Jira Story key")
+	authorizationPath := flags.String("authorization", "", "signed workflow authorization")
+	repoRoot := flags.String("repo-root", ".", "repository root")
+	runtimeRootPath := flags.String("runtime-root", "", "runtime root")
+	if err := flags.Parse(args); err != nil || *issue == "" || *story == "" || *authorizationPath == "" || flags.NArg() != 0 {
+		return 2
+	}
+	preview, _ := json.Marshal(struct{ Issue, Story, Status string }{*issue, *story, "In Progress"})
+	fmt.Fprintf(stdout, "PREVIEW Jira work start:\n%s\n", preview)
+	cfg, err := config.Load(filepath.Join(*repoRoot, "governance.yml"))
+	if err != nil {
+		fmt.Fprintf(stderr, "load governance config: %v\n", err)
+		return 2
+	}
+	root, err := runtimeRoot(*runtimeRootPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "resolve runtime root: %v\n", err)
+		return 2
+	}
+	authorization, err := implementation.ConsumeAuthorizedOperation(cfg, *authorizationPath, root, implementation.WorkflowOperationBinding{Operation: "jira-work-start", StoryKey: *story, SubtaskKey: *issue}, preview, time.Now().UTC())
+	if err != nil {
+		fmt.Fprintf(stderr, "authorize Jira work start: %v\n", err)
+		return 1
+	}
+	baseURL, email, token := os.Getenv("JIRA_BASE_URL"), os.Getenv("JIRA_EMAIL"), os.Getenv("JIRA_API_TOKEN")
+	if baseURL == "" || email == "" || token == "" {
+		_ = implementation.CompleteAuthorizedOperation(root, authorization, "jira-work-start", "failed", nil, time.Now().UTC())
+		fmt.Fprintln(stderr, "jira work start requires JIRA_BASE_URL, JIRA_EMAIL, and JIRA_API_TOKEN")
+		return 2
+	}
+	state, err := (jira.FinalizationClient{BaseURL: baseURL, Email: email, Token: token}).Start(*issue, *story)
+	if err != nil {
+		_ = implementation.CompleteAuthorizedOperation(root, authorization, "jira-work-start", "failed", nil, time.Now().UTC())
+		fmt.Fprintf(stderr, "start Jira work: %v\n", err)
+		return 1
+	}
+	readBack, err := json.Marshal(state)
+	if err != nil || implementation.CompleteAuthorizedOperation(root, authorization, "jira-work-start", "completed", readBack, time.Now().UTC()) != nil {
+		fmt.Fprintln(stderr, "record authorized Jira work start read-back failed; operation remains blocking")
+		return 1
+	}
+	fmt.Fprintf(stdout, "PASS transitioned %s to In Progress and verified read-back\n", *issue)
 	return 0
 }
 
@@ -1404,10 +1545,11 @@ func runImplementationStart(args []string, stdout, stderr io.Writer) int {
 	runPath := flags.String("run", "", "implementation-run JSON")
 	bundlePath := flags.String("bundle", "", "task-bundle JSON")
 	approve := flags.Bool("approve", false, "explicitly authorize local agent execution")
+	authorizationPath := flags.String("authorization", "", "signed workflow authorization for implementation dispatch")
 	repoRoot := flags.String("repo-root", ".", "repository root")
 	runtimeRootPath := flags.String("runtime-root", "", "runtime root")
 	codexBin := flags.String("codex-bin", "codex", "headless Codex binary")
-	if err := flags.Parse(args); err != nil || !*approve || *runPath == "" || *bundlePath == "" || flags.NArg() != 0 {
+	if err := flags.Parse(args); err != nil || (!*approve && *authorizationPath == "") || *runPath == "" || *bundlePath == "" || flags.NArg() != 0 {
 		return 2
 	}
 	run, err := implementation.LoadRun(*runPath)
@@ -1434,8 +1576,38 @@ func runImplementationStart(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "resolve runtime root: %v\n", err)
 		return 2
 	}
+	var dispatchAuthorization implementation.SignedWorkflowAuthorization
+	if *authorizationPath != "" {
+		preview, err := json.Marshal(struct {
+			RunID        string `json:"run_id"`
+			WorkItem     string `json:"work_item"`
+			BundleDigest string `json:"bundle_digest"`
+			Adapter      string `json:"adapter"`
+		}{RunID: run.ID, WorkItem: run.WorkItemKey, BundleDigest: run.TaskBundleDigest, Adapter: run.Adapter})
+		if err != nil {
+			fmt.Fprintf(stderr, "render implementation dispatch preview: %v\n", err)
+			return 2
+		}
+		fmt.Fprintf(stdout, "PREVIEW implementation dispatch:\n%s\n", preview)
+		dispatchAuthorization, err = implementation.ConsumeAuthorizedOperation(cfg, *authorizationPath, runtimeRoot, implementation.WorkflowOperationBinding{Operation: "implementation-start", StoryKey: bundle.WorkItem.Source.StoryKey, SubtaskKey: run.WorkItemKey, BaseSHA: run.BaseSHA}, preview, time.Now().UTC())
+		if err != nil {
+			fmt.Fprintf(stderr, "authorize implementation dispatch: %v\n", err)
+			return 1
+		}
+	}
 	recordImplementationLifecycle(runtimeRoot, run, "dispatched")
 	diagnostics, startErr := implementation.StartHeadless(&run, bundle, *repoRoot, runtimeRoot, *codexBin)
+	if *authorizationPath != "" {
+		result, marshalErr := json.Marshal(run)
+		outcome := "completed"
+		if startErr != nil || run.State == implementation.StateEscalated {
+			outcome = "failed"
+		}
+		if marshalErr != nil || implementation.CompleteAuthorizedOperation(runtimeRoot, dispatchAuthorization, "implementation-start", outcome, result, time.Now().UTC()) != nil {
+			fmt.Fprintln(stderr, "record authorized implementation dispatch read-back failed; operation remains blocking")
+			return 1
+		}
+	}
 	if err := implementation.SaveRun(*runPath, run); err != nil {
 		fmt.Fprintf(stderr, "save implementation run: %v\n", err)
 		return 2
@@ -1563,7 +1735,11 @@ func runImplementationAssessment(kind string, args []string, stdout, stderr io.W
 	flags.SetOutput(stderr)
 	runPath := flags.String("run", "", "implementation-run JSON")
 	assessmentPath := flags.String("assessment", "", "owner-only assessment JSON")
-	if err := flags.Parse(args); err != nil || *runPath == "" || *assessmentPath == "" || flags.NArg() != 0 {
+	bundlePath := flags.String("bundle", "", "task-bundle JSON required with --authorization")
+	authorizationPath := flags.String("authorization", "", "signed workflow authorization for review progression")
+	repoRoot := flags.String("repo-root", ".", "repository root")
+	runtimeRootPath := flags.String("runtime-root", "", "runtime root")
+	if err := flags.Parse(args); err != nil || *runPath == "" || *assessmentPath == "" || (*authorizationPath != "" && *bundlePath == "") || flags.NArg() != 0 {
 		return 2
 	}
 	run, err := implementation.LoadRun(*runPath)
@@ -1576,18 +1752,75 @@ func runImplementationAssessment(kind string, args []string, stdout, stderr io.W
 		fmt.Fprintf(stderr, "load assessment: %v\n", err)
 		return 2
 	}
+	var authorization implementation.SignedWorkflowAuthorization
+	var authorizationRoot string
+	operation := kind + "-assessment-0"
+	cycle := run.ReviewCycles
+	if assessmentHasActionableFinding(assessment) {
+		cycle++
+		operation = fmt.Sprintf("%s-assessment-%d", kind, cycle)
+	}
+	if *authorizationPath != "" {
+		bundle, err := implementation.LoadTaskBundle(*bundlePath)
+		if err != nil {
+			fmt.Fprintf(stderr, "load task bundle: %v\n", err)
+			return 2
+		}
+		cfg, err := config.Load(filepath.Join(*repoRoot, "governance.yml"))
+		if err != nil {
+			fmt.Fprintf(stderr, "load governance config: %v\n", err)
+			return 2
+		}
+		root, err := runtimeRoot(*runtimeRootPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "resolve runtime root: %v\n", err)
+			return 2
+		}
+		assessmentData, err := os.ReadFile(filepath.Clean(*assessmentPath))
+		if err != nil {
+			fmt.Fprintf(stderr, "read assessment for authorization: %v\n", err)
+			return 2
+		}
+		preview, err := json.Marshal(struct {
+			RunID            string `json:"run_id"`
+			PriorState       string `json:"prior_state"`
+			Operation        string `json:"operation"`
+			AssessmentDigest string `json:"assessment_digest"`
+		}{RunID: run.ID, PriorState: run.State, Operation: operation, AssessmentDigest: signature.Digest(assessmentData)})
+		if err != nil {
+			fmt.Fprintf(stderr, "render assessment progression preview: %v\n", err)
+			return 2
+		}
+		fmt.Fprintf(stdout, "PREVIEW %s progression:\n%s\n", kind, preview)
+		authorization, err = implementation.ConsumeAuthorizedOperation(cfg, *authorizationPath, root, implementation.WorkflowOperationBinding{Operation: operation, StoryKey: bundle.WorkItem.Source.StoryKey, SubtaskKey: run.WorkItemKey, BaseSHA: run.BaseSHA, ReviewCycle: cycle}, preview, time.Now().UTC())
+		if err != nil {
+			fmt.Fprintf(stderr, "authorize %s progression: %v\n", kind, err)
+			return 1
+		}
+		authorizationRoot = root
+	}
 	if kind == "review" {
 		err = implementation.ApplyReview(&run, assessment)
 	} else {
 		err = implementation.ApplyVerification(&run, assessment)
 	}
 	if err != nil {
+		if authorizationRoot != "" {
+			_ = implementation.CompleteAuthorizedOperation(authorizationRoot, authorization, operation, "failed", nil, time.Now().UTC())
+		}
 		fmt.Fprintf(stderr, "apply %s: %v\n", kind, err)
 		return 1
 	}
 	if err := implementation.SaveRun(*runPath, run); err != nil {
 		fmt.Fprintf(stderr, "save implementation run: %v\n", err)
 		return 2
+	}
+	if authorizationRoot != "" {
+		readBack, err := json.Marshal(run)
+		if err != nil || implementation.CompleteAuthorizedOperation(authorizationRoot, authorization, operation, "completed", readBack, time.Now().UTC()) != nil {
+			fmt.Fprintln(stderr, "record authorized assessment progression read-back failed; operation remains blocking")
+			return 1
+		}
 	}
 	fmt.Fprintf(stdout, "PASS implementation state %s\n", run.State)
 	return 0
@@ -1623,6 +1856,15 @@ func runImplementationRemediate(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stdout, "PASS remediation is bound to named findings")
 	return 0
+}
+
+func assessmentHasActionableFinding(assessment implementation.Assessment) bool {
+	for _, finding := range assessment.Findings {
+		if finding.Severity == "blocking" || finding.Severity == "important" {
+			return true
+		}
+	}
+	return false
 }
 
 func runImplementationAssess(args []string, stdout, stderr io.Writer) int {
@@ -1806,11 +2048,15 @@ func runImplementationCommit(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("implementation commit", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	runPath := flags.String("run", "", "implementation-run JSON")
+	bundlePath := flags.String("bundle", "", "task-bundle JSON required with --authorization")
 	worktreePath := flags.String("worktree", "", "disposable worktree")
 	branch := flags.String("branch", "", "new codex/* branch")
 	message := flags.String("message", "", "local commit message")
 	approve := flags.Bool("approve", false, "explicitly authorize local commit")
-	if err := flags.Parse(args); err != nil || !*approve || *runPath == "" || *worktreePath == "" || *branch == "" || *message == "" || flags.NArg() != 0 {
+	authorizationPath := flags.String("authorization", "", "signed workflow authorization for this local commit")
+	repoRoot := flags.String("repo-root", ".", "repository root")
+	runtimeRootPath := flags.String("runtime-root", "", "runtime root")
+	if err := flags.Parse(args); err != nil || (!*approve && *authorizationPath == "") || *runPath == "" || *worktreePath == "" || *branch == "" || *message == "" || (*authorizationPath != "" && *bundlePath == "") || flags.NArg() != 0 {
 		return 2
 	}
 	run, err := implementation.LoadRun(*runPath)
@@ -1818,13 +2064,57 @@ func runImplementationCommit(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "load implementation run: %v\n", err)
 		return 2
 	}
+	var authorization implementation.SignedWorkflowAuthorization
+	var authorizationRoot string
+	if *authorizationPath != "" {
+		bundle, err := implementation.LoadTaskBundle(*bundlePath)
+		if err != nil {
+			fmt.Fprintf(stderr, "load task bundle: %v\n", err)
+			return 2
+		}
+		cfg, err := config.Load(filepath.Join(*repoRoot, "governance.yml"))
+		if err != nil {
+			fmt.Fprintf(stderr, "load governance config: %v\n", err)
+			return 2
+		}
+		root, err := runtimeRoot(*runtimeRootPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "resolve runtime root: %v\n", err)
+			return 2
+		}
+		preview, err := json.Marshal(struct {
+			RunID   string `json:"run_id"`
+			Branch  string `json:"branch"`
+			Message string `json:"message"`
+		}{RunID: run.ID, Branch: *branch, Message: *message})
+		if err != nil {
+			fmt.Fprintf(stderr, "render local commit preview: %v\n", err)
+			return 2
+		}
+		fmt.Fprintf(stdout, "PREVIEW local commit:\n%s\n", preview)
+		authorization, err = implementation.ConsumeAuthorizedOperation(cfg, *authorizationPath, root, implementation.WorkflowOperationBinding{Operation: "local-commit", StoryKey: bundle.WorkItem.Source.StoryKey, SubtaskKey: run.WorkItemKey, BaseSHA: run.BaseSHA, Branch: *branch}, preview, time.Now().UTC())
+		if err != nil {
+			fmt.Fprintf(stderr, "authorize local commit: %v\n", err)
+			return 1
+		}
+		authorizationRoot = root
+	}
 	if err := implementation.Commit(&run, *worktreePath, *branch, *message); err != nil {
+		if authorizationRoot != "" {
+			_ = implementation.CompleteAuthorizedOperation(authorizationRoot, authorization, "local-commit", "failed", nil, time.Now().UTC())
+		}
 		fmt.Fprintf(stderr, "create local commit: %v\n", err)
 		return 1
 	}
 	if err := implementation.SaveRun(*runPath, run); err != nil {
 		fmt.Fprintf(stderr, "save implementation run: %v\n", err)
 		return 2
+	}
+	if authorizationRoot != "" {
+		if err := implementation.CompleteAuthorizedOperation(authorizationRoot, authorization, "local-commit", "completed", []byte(run.CommitSHA), time.Now().UTC()); err != nil {
+			fmt.Fprintf(stderr, "record authorized local commit read-back: %v\n", err)
+			return 1
+		}
 	}
 	fmt.Fprintf(stdout, "PASS local commit %s\n", run.CommitSHA)
 	return 0
