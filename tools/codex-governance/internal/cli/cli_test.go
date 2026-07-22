@@ -627,6 +627,39 @@ func TestAuthorizeWorkflowRejectsConcatenatedPayload(t *testing.T) {
 	}
 }
 
+func TestRotatePublishOwnerReplacesExpectedTrustedKey(t *testing.T) {
+	root := t.TempDir()
+	if Run([]string{"init", "--repo-root", root}, &bytes.Buffer{}, &bytes.Buffer{}) != 0 {
+		t.Fatal("init failed")
+	}
+	first := filepath.Join(ownerOnlyTestDir(t), "first.json")
+	if Run([]string{"implementation", "bootstrap-publish-owner", "--repo-root", root, "--signer", first, "--approve"}, &bytes.Buffer{}, &bytes.Buffer{}) != 0 {
+		t.Fatal("bootstrap signer failed")
+	}
+	cfg, err := config.Load(filepath.Join(root, "governance.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldKeyID := ""
+	for _, key := range cfg.Signing.TrustedKeys {
+		if key.Role == "repository-owner" {
+			oldKeyID = key.KeyID
+		}
+	}
+	replacement := filepath.Join(ownerOnlyTestDir(t), "replacement.json")
+	if code := Run([]string{"implementation", "rotate-publish-owner", "--repo-root", root, "--expected-old-key-id", oldKeyID, "--signer", replacement, "--approve"}, &bytes.Buffer{}, &bytes.Buffer{}); code != 0 {
+		t.Fatalf("rotate publish owner = %d", code)
+	}
+	cfg, err = config.Load(filepath.Join(root, "governance.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, _, err := signature.LoadLocalRepositoryOwnerSigner(replacement)
+	if err != nil || key.KeyID == oldKeyID || !repositoryOwnerSignerTrusted(cfg, key) {
+		t.Fatalf("replacement signer was not trusted: key=%q err=%v", key.KeyID, err)
+	}
+}
+
 func cliGit(t *testing.T, directory string, args ...string) string {
 	t.Helper()
 	command := exec.Command("git", args...)
