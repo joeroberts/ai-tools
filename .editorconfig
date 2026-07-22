@@ -10,5 +10,13 @@ trim_trailing_whitespace = true
 indent_style = tab
 
 [*.{png,jpg,jpeg,gif,webp,pdf}]
+charset = unset
+end_of_line = unset
+trim_trailing_whitespace = unset
+insert_final_newline = unset
+
+[**/generated/**]
+charset = unset
+end_of_line = unset
 trim_trailing_whitespace = unset
 insert_final_newline = unset

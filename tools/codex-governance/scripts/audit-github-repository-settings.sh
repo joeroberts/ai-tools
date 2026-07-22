@@ -38,6 +38,12 @@ if ! rulesets=$(get "repos/$repo/rulesets"); then
   echo "audit_status=drift reason=rulesets_unavailable"
   exit 1
 fi
+ruleset_id=$(jq -r '[.[] | select(.target == "branch" and .enforcement == "active")][0].id // empty' <<<"$rulesets")
+ruleset=""
+if [[ -n $ruleset_id ]] && ! ruleset=$(get "repos/$repo/rulesets/$ruleset_id"); then
+	echo "audit_status=drift reason=main_ruleset_unavailable"
+	exit 1
+fi
 
 bool() {
   jq -r "$1 | if . == true then \"enabled\" elif . == false then \"disabled\" else \"unavailable\" end" <<<"$repository"
@@ -50,9 +56,43 @@ if [[ $actual_checks != "$expected_checks" ]]; then
 	checks_status=drift
 fi
 
-echo "audit_status=$([[ $checks_status == aligned ]] && echo aligned || echo drift)"
+controls_status=$checks_status
+if [[ $(jq -r 'if type == "array" then length else 0 end' <<<"$rulesets") -lt 1 ]]; then
+	controls_status=drift
+fi
+ruleset_checks=""
+if [[ -z $ruleset ]]; then
+	controls_status=drift
+else
+	ruleset_checks=$(jq -r '[.rules[]? | select(.type == "required_status_checks") | .parameters.required_status_checks[]?.context] | unique | .[]?' <<<"$ruleset")
+	if [[ $ruleset_checks != "$expected_checks" ]]; then
+		controls_status=drift
+	fi
+	for rule in pull_request non_fast_forward deletion; do
+		if ! jq -e --arg rule "$rule" '.rules[]? | select(.type == $rule)' <<<"$ruleset" >/dev/null; then
+			controls_status=drift
+		fi
+	done
+fi
+for expectation in \
+	".allow_squash_merge:true" \
+	".allow_merge_commit:false" \
+	".allow_rebase_merge:false" \
+	".delete_branch_on_merge:true" \
+	".allow_auto_merge:false" \
+	".security_and_analysis.secret_scanning.status:enabled" \
+	".security_and_analysis.secret_scanning_push_protection.status:enabled"; do
+	path=${expectation%%:*}
+	expected=${expectation#*:}
+	if [[ $(jq -r "$path" <<<"$repository") != "$expected" ]]; then
+		controls_status=drift
+	fi
+done
+
+echo "audit_status=$([[ $controls_status == aligned ]] && echo aligned || echo drift)"
 echo "required_checks=$checks_status"
 echo "ruleset_count=$(jq -r 'if type == "array" then length else 0 end' <<<"$rulesets")"
+echo "ruleset_required_checks=$([[ $ruleset_checks == "$expected_checks" ]] && echo aligned || echo drift)"
 echo "squash_merge=$(bool '.allow_squash_merge')"
 echo "merge_commits=$(bool '.allow_merge_commit')"
 echo "rebase_merge=$(bool '.allow_rebase_merge')"
@@ -60,6 +100,6 @@ echo "delete_branch_on_merge=$(bool '.delete_branch_on_merge')"
 echo "auto_merge=$(bool '.allow_auto_merge')"
 echo "secret_scanning=$(bool '.security_and_analysis.secret_scanning.status == "enabled"')"
 echo "push_protection=$(bool '.security_and_analysis.secret_scanning_push_protection.status == "enabled"')"
-if [[ $checks_status == drift ]]; then
+if [[ $controls_status == drift ]]; then
 	exit 1
 fi

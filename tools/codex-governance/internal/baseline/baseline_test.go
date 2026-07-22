@@ -25,6 +25,18 @@ func TestCheck(t *testing.T) {
 			want:   "dependabot configuration is malformed YAML",
 		},
 		{
+			name:   "empty bug form",
+			mutate: func(root string) { write(t, root, ".github/ISSUE_TEMPLATE/bug_report.yml", "name: Bug\nbody: []\n") },
+			want:   "bug-report template must define name and body",
+		},
+		{
+			name: "commented ownership",
+			mutate: func(root string) {
+				write(t, root, ".github/CODEOWNERS", "# * @joeroberts\n# /tools/ @joeroberts\n")
+			},
+			want: "CODEOWNERS does not cover * @joeroberts",
+		},
+		{
 			name: "permission expansion",
 			mutate: func(root string) {
 				value := strings.Replace(dependabot, "    groups:\n      go:", "    permissions:\n      contents: write\n    groups:\n      go:", 1)
@@ -79,7 +91,7 @@ func fixture(t *testing.T) string {
 	write(t, root, ".github/dependabot.yml", dependabot)
 	write(t, root, "SECURITY.md", "private vulnerability reporting\nDo not include details in a public issue\n")
 	write(t, root, ".github/pull_request_template.md", "## Scope\n## Validation\n## Tracking\n## Security considerations\n")
-	write(t, root, ".github/ISSUE_TEMPLATE/bug_report.yml", "name: Bug\nbody: []\n")
+	write(t, root, ".github/ISSUE_TEMPLATE/bug_report.yml", "name: Bug\nbody:\n  - type: textarea\n    id: problem\n")
 	write(t, root, ".github/ISSUE_TEMPLATE/config.yml", "contact_links:\n  - url: https://github.com/joeroberts/ai-tools/security/advisories/new\n")
 	write(t, root, ".gitattributes", "* text=auto\n")
 	write(t, root, ".editorconfig", "root = true\nend_of_line = lf\ninsert_final_newline = true\n")

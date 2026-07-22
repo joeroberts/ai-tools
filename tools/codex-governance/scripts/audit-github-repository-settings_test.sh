@@ -20,9 +20,18 @@ case "$endpoint" in
     printf '%s\n' '{"allow_squash_merge":true,"allow_merge_commit":false,"allow_rebase_merge":false,"delete_branch_on_merge":true,"allow_auto_merge":false,"security_and_analysis":{"secret_scanning":{"status":"enabled"},"secret_scanning_push_protection":{"status":"enabled"}},"private_note":"secret-value"}'
     ;;
   repos/example/repo/branches/main/protection)
-    printf '%s\n' '{"required_status_checks":{"contexts":["go","advisory","unexpected-check"]}}'
+    if [[ ${GH_MODE:-} == aligned ]]; then
+      printf '%s\n' '{"required_status_checks":{"contexts":["go","advisory","semantic-version"]}}'
+    else
+      printf '%s\n' '{"required_status_checks":{"contexts":["go","advisory","unexpected-check"]}}'
+    fi
     ;;
-  repos/example/repo/rulesets) printf '%s\n' '[]' ;;
+  repos/example/repo/rulesets)
+    if [[ ${GH_MODE:-} == aligned ]]; then printf '%s\n' '[{"id":7,"target":"branch","enforcement":"active"}]'; else printf '%s\n' '[]'; fi
+    ;;
+  repos/example/repo/rulesets/7)
+    printf '%s\n' '{"rules":[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"go"},{"context":"advisory"},{"context":"semantic-version"}]}},{"type":"pull_request"},{"type":"non_fast_forward"},{"type":"deletion"}]}'
+    ;;
   *) exit 1 ;;
 esac
 EOF
@@ -58,3 +67,7 @@ if [[ $missing_status -ne 1 ]]; then
   exit 1
 fi
 grep -qx 'audit_status=drift reason=main_protection_unavailable' "$temp/missing-output"
+
+PATH="$temp/bin:$PATH" GH_LOG="$temp/gh-aligned.log" GH_MODE=aligned "$script" --repo example/repo >"$temp/aligned-output"
+grep -qx 'audit_status=aligned' "$temp/aligned-output"
+grep -qx 'ruleset_required_checks=aligned' "$temp/aligned-output"
