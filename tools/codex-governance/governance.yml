@@ -36,10 +36,10 @@ signing:
           role: export-issuer
           algorithm: ed25519
           public_key: hQWB+oognVrOvQzpmY7cYU5DmyJ3I3QDm89zI7WGMXM=
-        - key_id: sha256:8d89b947abd59
+        - key_id: sha256:1e6c793b7c078
           role: repository-owner
           algorithm: ed25519
-          public_key: d+m21Pp2KWzUUdvXNKRtdkIBQCuNkNyX+hwmPBw/kbs=
+          public_key: hAquvOn/0y9Gs1EFy4wB6Fe47HsuUcu52sAg8WSCGYY=
         - key_id: sha256:1bedcdd81ed85
           role: technical-owner
           algorithm: ed25519
