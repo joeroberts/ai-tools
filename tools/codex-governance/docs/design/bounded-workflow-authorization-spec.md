@@ -5,13 +5,14 @@
 The versioned signed payload contains repository identity, GitHub source issue,
 Story and Subtask keys, plan-contract and source digests, base SHA, paths,
 budget, acceptance criteria, remediation limit, permitted operations, branch,
-remote, PR target, expiry, consumption and revocation state, and derivation
-rules for commit SHA, evidence digest, checks, and PR URL.
+remote, PR target, expiry, and derivation rules for commit SHA, evidence
+digest, checks, and PR URL.
 
 Each attempted operation appends a privacy-safe audit event containing the
-authorization digest, preview digest, result, and read-back digest. Consumption
-is atomic and operation-specific; restart reconciliation must not duplicate a
-side effect.
+authorization digest, preview digest, result, and read-back digest. Durable
+mutable state, keyed by the authorization digest, records operation-specific
+consumption and revocation. Consumption is atomic; restart reconciliation must
+not duplicate a side effect or alter the signed payload.
 
 ## Allowed Paths
 
@@ -66,7 +67,7 @@ the decomposition, but must preserve every source-derived value verbatim.
         "components": ["authorization-contract"]
       },
       "dependencies": [],
-      "adr": "No ADR needed: This is a docs-only task."
+      "adr": "docs/decisions/0004-bounded-workflow-authorization.md"
     }
   ]
 }

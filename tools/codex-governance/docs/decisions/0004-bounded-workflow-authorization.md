@@ -2,11 +2,15 @@
 
 ## Decision
 
-Use one signed, owner-approved authorization for the normal lifecycle of one
-approved ticket-plan subtask. The authorization binds the repository identity,
-contract digest, source digests, Jira keys, base revision, allowed paths,
-budget, branch, remote, review limit, expiry, and deterministic derivation
-rules. It is immutable, single-use per operation, revocable, and audited.
+Use one immutable, signed, owner-approved authorization for the normal
+lifecycle of one approved ticket-plan subtask. The authorization binds the
+repository identity, contract digest, source digests, Jira keys, base revision,
+allowed paths, budget, branch, remote, review limit, expiry, and deterministic
+derivation rules.
+
+Durable mutable state, keyed by the authorization digest, records each
+operation's atomic consumption and any revocation. That state and its
+privacy-safe audit events cannot alter the signed authorization claims.
 
 Previews remain mandatory before Jira and GitHub writes. A matching live
 authorization makes that preview informational; it never permits an
