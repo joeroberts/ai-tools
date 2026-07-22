@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"codex-governance/internal/ollama"
 )
@@ -16,6 +18,8 @@ import (
 // the measured 32K runtime context while retaining the complete diff across
 // deterministic chunks.
 const maxAssessmentPromptBytes = 24 * 1024
+
+const maxAssessmentAttempts = 3
 
 type AssessmentRequest struct {
 	Role       string
@@ -61,24 +65,45 @@ func GenerateAssessment(request AssessmentRequest) (Assessment, error) {
 }
 
 func generateAssessmentForDiff(request AssessmentRequest, diff string, run func(*http.Client, ollama.Policy, ollama.Request) (string, error)) (Assessment, error) {
+	modelID, err := localAssessmentModelID(request.Policy, request.Model)
+	if err != nil {
+		return Assessment{}, err
+	}
 	prompts, err := assessmentPrompts(request.Role, request.Bundle, diff)
 	if err != nil {
 		return Assessment{}, err
 	}
+	startedAt := time.Now().UTC()
 	var combined Assessment
+	rawOutputs := make([]string, 0, len(prompts))
 	think := false
 	for index, prompt := range prompts {
-		output, err := run(ollama.Client(request.Policy), request.Policy, ollama.Request{Model: request.Model, Role: request.Role, TaskType: "implementation-review", Input: []byte(prompt), Think: &think})
-		if err != nil {
-			return Assessment{}, fmt.Errorf("assess diff chunk %d of %d: %w", index+1, len(prompts), err)
-		}
-		assessment, err := parseAssessmentForChunk([]byte(output), diffChunk(prompt))
-		if err != nil {
-			rawPath, saveErr := SaveRawAssessment(request.OutputPath, []byte(output))
-			if saveErr != nil {
-				return Assessment{}, fmt.Errorf("parse diff chunk %d of %d: %w (save raw response: %v)", index+1, len(prompts), err, saveErr)
+		var assessment Assessment
+		var output string
+		accepted := false
+		candidatePrompt := prompt
+		for attempt := 1; attempt <= maxAssessmentAttempts; attempt++ {
+			output, err = run(ollama.Client(request.Policy), request.Policy, ollama.Request{Model: request.Model, Role: request.Role, TaskType: "implementation-review", Input: []byte(candidatePrompt), Think: &think})
+			if err != nil {
+				return Assessment{}, fmt.Errorf("assess diff chunk %d of %d attempt %d: %w", index+1, len(prompts), attempt, err)
 			}
-			return Assessment{}, fmt.Errorf("parse diff chunk %d of %d: %w (raw response saved to %s)", index+1, len(prompts), err, rawPath)
+			assessment, err = parseAssessmentForChunk([]byte(output), diffChunk(prompt))
+			if err == nil {
+				accepted = true
+				rawOutputs = append(rawOutputs, output)
+				break
+			}
+			rawPath, saveErr := saveRawAssessmentAttempt(request.OutputPath, attempt, []byte(output))
+			if saveErr != nil {
+				return Assessment{}, fmt.Errorf("parse diff chunk %d of %d attempt %d: %w (save raw response: %v)", index+1, len(prompts), attempt, err, saveErr)
+			}
+			if attempt == maxAssessmentAttempts {
+				return Assessment{}, fmt.Errorf("parse diff chunk %d of %d exhausted %d attempts: %w (raw response saved to %s)", index+1, len(prompts), maxAssessmentAttempts, err, rawPath)
+			}
+			candidatePrompt = prompt + "\n\nCORRECTION REQUIRED: Your previous response was invalid: " + err.Error() + ". Return only the required line protocol or NONE."
+		}
+		if !accepted {
+			return Assessment{}, fmt.Errorf("assessment retry state is invalid")
 		}
 		for findingIndex := range assessment.Findings {
 			assessment.Findings[findingIndex].ID = fmt.Sprintf("C%d-%s", index+1, assessment.Findings[findingIndex].ID)
@@ -88,7 +113,58 @@ func generateAssessmentForDiff(request AssessmentRequest, diff string, run func(
 	if err := SaveAssessment(request.OutputPath, combined); err != nil {
 		return Assessment{}, err
 	}
+	rawPath := request.OutputPath + ".raw.valid"
+	rawData := []byte(strings.Join(rawOutputs, "\n--- assessment chunk ---\n"))
+	if err := writeAssessmentArtifact(rawPath, rawData); err != nil {
+		return Assessment{}, err
+	}
+	findings, err := os.ReadFile(filepath.Clean(request.OutputPath))
+	if err != nil {
+		return Assessment{}, err
+	}
+	promptData := []byte(strings.Join(prompts, "\n--- assessment prompt ---\n"))
+	envelope := AssessmentEnvelope{
+		FormatVersion: 1, Provider: "local", Role: request.Role, ModelName: request.Model, ModelID: modelID,
+		PolicyDigest: request.Policy.Fingerprint, DiffDigest: digestBytes([]byte(diff)), PromptDigest: digestBytes(promptData),
+		RawOutputPath: rawPath, RawOutputDigest: digestBytes(rawData), FindingsPath: request.OutputPath, FindingsDigest: digestBytes(findings),
+		StartedAt: startedAt, CompletedAt: time.Now().UTC(),
+	}
+	if err := SaveAssessmentEnvelope(request.OutputPath+".envelope.json", envelope); err != nil {
+		return Assessment{}, err
+	}
 	return combined, nil
+}
+
+func saveRawAssessmentAttempt(outputPath string, attempt int, response []byte) (string, error) {
+	if attempt == 1 {
+		return SaveRawAssessment(outputPath, response)
+	}
+	path := fmt.Sprintf("%s.raw.%d", outputPath, attempt)
+	if err := writeAssessmentArtifact(path, response); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func localAssessmentModelID(policy ollama.Policy, model string) (string, error) {
+	for _, configured := range policy.Models {
+		if configured.Name == model && configured.ID != "" {
+			return configured.ID, nil
+		}
+	}
+	return "", fmt.Errorf("assessment model is not allowlisted with an immutable ID")
+}
+
+func writeAssessmentArtifact(path string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	if _, err := os.Stat(filepath.Clean(path)); err == nil {
+		return fmt.Errorf("refusing to overwrite assessment artifact")
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return os.WriteFile(filepath.Clean(path), data, 0o600)
 }
 
 func workingDiff(worktree string) (string, error) {

@@ -120,6 +120,16 @@ make build
 go run ./cmd/codex-governance --help
 ```
 
+### Frontier assessment policy
+
+Local policy-approved models remain the default assessment provider. A
+frontier subagent is available only when `governance.yml` explicitly enables
+`assessment.frontier_subagent`, allowlists its model identity, and sets a
+maximum reasoning effort. The authorization for an individual assessment must
+then bind that configured model, its role, and the exact diff. There is no
+fallback from a local assessment to a frontier provider, and no external review
+adapter is supported. This repository’s configured maximum is `high`.
+
 ## Installation
 
 Add Go's configured binary directory to `PATH`, then install the CLI:

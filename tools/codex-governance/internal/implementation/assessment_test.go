@@ -167,7 +167,7 @@ func TestGenerateAssessmentForDiffAggregatesChunkFindings(t *testing.T) {
 	bundle := assessmentTestBundle()
 	diff := testDiffSection("first", 14000) + testDiffSection("second", 14000)
 	output := filepath.Join(t.TempDir(), "assessment.json")
-	request := AssessmentRequest{Role: "reviewer", Model: "local-model", Policy: ollama.Policy{Endpoint: "http://127.0.0.1:11434", RequestTimeoutSeconds: 60}, Bundle: bundle, OutputPath: output}
+	request := AssessmentRequest{Role: "reviewer", Model: "local-model", Policy: assessmentTestPolicy(), Bundle: bundle, OutputPath: output}
 	calls := 0
 	assessment, err := generateAssessmentForDiff(request, diff, func(_ *http.Client, _ ollama.Policy, received ollama.Request) (string, error) {
 		calls++
@@ -191,11 +191,14 @@ func TestGenerateAssessmentForDiffAggregatesChunkFindings(t *testing.T) {
 	if _, err := LoadAssessment(output); err != nil {
 		t.Fatalf("saved aggregate assessment: %v", err)
 	}
+	if _, err := LoadAssessmentEnvelope(output + ".envelope.json"); err != nil {
+		t.Fatalf("saved provenance envelope: %v", err)
+	}
 }
 
 func TestGenerateAssessmentForDiffSavesMalformedResponse(t *testing.T) {
 	output := filepath.Join(t.TempDir(), "assessment.json")
-	request := AssessmentRequest{Role: "reviewer", Model: "local-model", Policy: ollama.Policy{Endpoint: "http://127.0.0.1:11434", RequestTimeoutSeconds: 60}, Bundle: assessmentTestBundle(), OutputPath: output}
+	request := AssessmentRequest{Role: "reviewer", Model: "local-model", Policy: assessmentTestPolicy(), Bundle: assessmentTestBundle(), OutputPath: output}
 	_, err := generateAssessmentForDiff(request, "diff --git a/file b/file\n", func(_ *http.Client, _ ollama.Policy, _ ollama.Request) (string, error) {
 		return "invalid assessment response", nil
 	})
@@ -213,8 +216,34 @@ func TestGenerateAssessmentForDiffSavesMalformedResponse(t *testing.T) {
 	}
 }
 
+func TestGenerateAssessmentForDiffRetriesMalformedResponse(t *testing.T) {
+	output := filepath.Join(t.TempDir(), "assessment.json")
+	request := AssessmentRequest{Role: "reviewer", Model: "local-model", Policy: assessmentTestPolicy(), Bundle: assessmentTestBundle(), OutputPath: output}
+	calls := 0
+	assessment, err := generateAssessmentForDiff(request, "diff --git a/file b/file\n", func(_ *http.Client, _ ollama.Policy, _ ollama.Request) (string, error) {
+		calls++
+		if calls == 1 {
+			return "invalid assessment response", nil
+		}
+		return "NONE", nil
+	})
+	if err != nil || calls != 2 || len(assessment.Findings) != 0 {
+		t.Fatalf("generateAssessmentForDiff retry = %#v, calls = %d, error = %v", assessment, calls, err)
+	}
+	if _, err := os.Stat(output + ".raw"); err != nil {
+		t.Fatalf("first malformed attempt was not preserved: %v", err)
+	}
+	if _, err := LoadAssessmentEnvelope(output + ".envelope.json"); err != nil {
+		t.Fatalf("retry did not produce provenance envelope: %v", err)
+	}
+}
+
 func assessmentTestBundle() TaskBundle {
 	return TaskBundle{WorkItem: workitem.Item{Source: workitem.Source{SubtaskKey: "REK-3"}, Scope: workitem.Scope{Phase: "Jira planning", ChangeClass: "high-risk", AllowedPaths: []string{"internal/implementation"}, NonGoals: []string{"no Jira writes"}, TechnicalAcceptanceCriteria: []string{"require evidence"}, ValidationPlan: []string{"make test"}}}, AllowedPaths: []string{"internal/implementation"}, Commands: []string{"make test"}, ADR: "no ADR", Guidance: "review guidance", SourceEvidence: jira.OfflineExportEvidence{EnvelopeDigest: "sha256:export", IssuerKeyID: "issuer", CapturedAt: "2026-07-14T00:00:00Z"}}
+}
+
+func assessmentTestPolicy() ollama.Policy {
+	return ollama.Policy{Endpoint: "http://127.0.0.1:11434", RequestTimeoutSeconds: 60, Fingerprint: "sha256:test-policy", Models: []ollama.Model{{Name: "local-model", ID: "sha256:local-model"}}}
 }
 
 func testDiffSection(name string, bodyBytes int) string {
