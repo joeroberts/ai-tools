@@ -70,4 +70,4 @@ The total review budget is 6 changed files, 450 changed lines, and synchronous p
 
 No ADR needed: this is a bounded reliability correction. Persistent ownership,
 restart recovery, and durable process identity belong to future feature
-enhancement GitHub issue #55.
+enhancement GitHub issue #111.

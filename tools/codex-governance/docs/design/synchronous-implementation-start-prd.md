@@ -3,8 +3,8 @@
 ## Status
 
 This is the product source for the bounded headless execution correction.
-GitHub issue #55 separately tracks a persistent supervisor as a future feature
-enhancement.
+GitHub issue #111 separately tracks a durable execution refactor as a future
+feature enhancement.
 
 ## Problem
 
@@ -38,6 +38,6 @@ returning control to the caller.
 
 ## Non-Goals
 
-- Implementing the persistent supervisor described by GitHub issue #55.
+- Implementing the durable execution architecture described by GitHub issue #111.
 - Surviving termination of the launching CLI or its host.
 - Adding automatic retry, redispatch, or remote mutation behavior.

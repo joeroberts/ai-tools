@@ -1,6 +1,7 @@
 package implementation
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,6 +11,8 @@ import (
 	"syscall"
 	"time"
 )
+
+const supervisorWaitTimeout = 15 * time.Minute
 
 // SupervisorRecord is the durable, owner-only lifecycle record for one
 // headless Codex child. It deliberately contains no prompt or result body.
@@ -115,7 +118,9 @@ func launchSupervisor(run *Run, bundle TaskBundle, workDir, runtimeRoot, binary 
 		_ = out.Close()
 		return nil, err
 	}
-	command := exec.Command(binary, "--ask-for-approval", "never", "exec", "--ephemeral", "--sandbox", "workspace-write", "--output-schema", schema, "--output-last-message", result, headlessPrompt(bundle))
+	waitContext, cancel := context.WithTimeout(context.Background(), supervisorWaitTimeout)
+	defer cancel()
+	command := exec.CommandContext(waitContext, binary, "--ask-for-approval", "never", "exec", "--ephemeral", "--sandbox", "workspace-write", "--output-schema", schema, "--output-last-message", result, headlessPrompt(bundle))
 	command.Dir, command.Stdout, command.Stderr = filepath.Clean(workDir), out, errout
 	if err := command.Start(); err != nil {
 		_ = out.Close()
@@ -141,6 +146,29 @@ func launchSupervisor(run *Run, bundle TaskBundle, workDir, runtimeRoot, binary 
 	run.TaskID, run.ProcessID, run.ResultRef, run.SupervisorRef = fmt.Sprintf("supervisor-%d", record.PID), record.PID, result, path
 	if err := run.Transition(StateRunning); err != nil {
 		return []string{stdout, stderr}, err
+	}
+	// Keep the invoking implementation command alive until its child has
+	// exited. This is deliberately foreground ownership, not detached
+	// supervision: terminal hosts may reap a child after its launcher returns.
+	waitErr := command.Wait()
+	if waitContext.Err() == context.DeadlineExceeded {
+		record.State, record.Failure = "failed", "foreground wait timed out"
+		if err := writeSupervisor(path, record); err != nil {
+			return []string{stdout, stderr}, err
+		}
+		if err := run.Transition(StateEscalated); err != nil {
+			return []string{stdout, stderr}, err
+		}
+		return []string{stdout, stderr}, fmt.Errorf("headless Codex foreground wait timed out after %s", supervisorWaitTimeout)
+	}
+	if err := reconcileSupervisor(run); err != nil {
+		return []string{stdout, stderr}, err
+	}
+	if run.State == StateEscalated {
+		if waitErr != nil {
+			return []string{stdout, stderr}, fmt.Errorf("headless Codex exited without a valid result: %w", waitErr)
+		}
+		return []string{stdout, stderr}, fmt.Errorf("headless Codex exited without a valid result")
 	}
 	return []string{stdout, stderr}, nil
 }
