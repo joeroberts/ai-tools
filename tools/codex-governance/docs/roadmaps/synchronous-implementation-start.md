@@ -10,5 +10,5 @@ success and failure coverage.
 ## Delivery Order
 
 Complete this bounded fix before retrying governed headless implementation for
-`REK-26`. Persistent detached supervision remains a future feature enhancement
-tracked by GitHub issue #55.
+`REK-26`. Durable detached execution remains a future feature enhancement
+tracked by GitHub issue #111.
