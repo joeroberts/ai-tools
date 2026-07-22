@@ -92,7 +92,7 @@ func ConsumeAuthorizedOperation(cfg config.Config, authorizationPath, runtimeRoo
 		return SignedWorkflowAuthorization{}, err
 	}
 	payload := authorization.Payload
-	if payload.RepositoryID != cfg.Signing.RepositoryID || payload.StoryKey != binding.StoryKey || payload.SubtaskKey != binding.SubtaskKey || (binding.BaseSHA != "" && payload.BaseSHA != binding.BaseSHA) || (binding.Branch != "" && payload.Branch != binding.Branch) || (binding.Remote != "" && payload.Remote != binding.Remote) || (binding.PRTarget != "" && payload.PRTargetBranch != binding.PRTarget) || binding.ReviewCycle < 0 || binding.ReviewCycle > payload.ReviewCycleLimit {
+	if !authorization.Allows(binding.Operation) || payload.RepositoryID != cfg.Signing.RepositoryID || payload.StoryKey != binding.StoryKey || payload.SubtaskKey != binding.SubtaskKey || (binding.BaseSHA != "" && payload.BaseSHA != binding.BaseSHA) || (binding.Branch != "" && payload.Branch != binding.Branch) || (binding.Remote != "" && payload.Remote != binding.Remote) || (binding.PRTarget != "" && payload.PRTargetBranch != binding.PRTarget) || binding.ReviewCycle < 0 || binding.ReviewCycle > payload.ReviewCycleLimit {
 		return SignedWorkflowAuthorization{}, fmt.Errorf("workflow authorization does not match the operation target")
 	}
 	event := WorkflowAuditEvent{Operation: binding.Operation, PreviewDigest: digestBytes(preview), Result: "reserved", At: now.UTC()}

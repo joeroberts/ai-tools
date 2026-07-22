@@ -128,6 +128,14 @@ func TestConsumeAuthorizedOperationBindsJiraTargetAndPreventsReplay(t *testing.T
 	}
 }
 
+func TestConsumeAuthorizedOperationRejectsOperationAbsentFromAuthorization(t *testing.T) {
+	_, root := signedWorkflowAuthorization(t, time.Now().UTC().Add(time.Hour))
+	_, err := ConsumeAuthorizedOperation(mustConfig(t, root), filepath.Join(root, "authorization.json"), filepath.Join(root, "runtime"), WorkflowOperationBinding{Operation: "push", StoryKey: "REK-94", SubtaskKey: "REK-95", BaseSHA: "abcdef1", Branch: "codex/issue-22", Remote: "origin", PRTarget: "main"}, []byte("preview"), time.Now())
+	if err == nil {
+		t.Fatal("operation absent from workflow authorization was accepted")
+	}
+}
+
 func TestCompleteAuthorizedOperationRecordsReadBackAndFailsClosed(t *testing.T) {
 	authorization, root := signedWorkflowAuthorization(t, time.Now().UTC().Add(time.Hour))
 	cfg := mustConfig(t, root)
