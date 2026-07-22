@@ -1,0 +1,11 @@
+# Ownership routes sensitive changes for review; it does not grant repository access.
+# The repository owner remains accountable for every path in this public repository.
+* @joeroberts
+
+/tools/ @joeroberts
+/integrations/codex/ @joeroberts
+/.github/ @joeroberts
+/governance.yml @joeroberts
+/SECURITY.md @joeroberts
+/.gitattributes @joeroberts
+/.editorconfig @joeroberts

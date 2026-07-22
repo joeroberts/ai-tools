@@ -1,0 +1,36 @@
+name: Repository baseline
+
+on:
+  pull_request:
+    paths:
+      - '.github/CODEOWNERS'
+      - '.github/dependabot.yml'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/pull_request_template.md'
+      - '.github/workflows/repository-baseline.yml'
+      - '.editorconfig'
+      - '.gitattributes'
+      - 'SECURITY.md'
+      - 'tools/codex-governance/internal/baseline/**'
+      - 'tools/codex-governance/internal/cli/**'
+      - 'tools/codex-governance/docs/design/**'
+
+permissions:
+  contents: read
+
+jobs:
+  repository-baseline:
+    name: repository-baseline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+          cache: true
+          cache-dependency-path: tools/codex-governance/go.sum
+      - name: Validate checked-in baseline
+        working-directory: tools/codex-governance
+        run: go run ./cmd/codex-governance repository baseline check --repo-root ../..

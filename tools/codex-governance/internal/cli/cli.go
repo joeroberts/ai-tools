@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"codex-governance/internal/agentplan"
+	"codex-governance/internal/baseline"
 	"codex-governance/internal/config"
 	"codex-governance/internal/implementation"
 	"codex-governance/internal/initializer"
@@ -46,6 +47,7 @@ const usage = `codex-governance
 Usage:
   codex-governance init [--repo-root PATH]
   codex-governance config check [--repo-root PATH]
+  codex-governance repository baseline check [--repo-root PATH]
   codex-governance validate-work-item --work-item PATH --offline-export PATH [--repo-root PATH] [--runtime-root PATH] [--base-sha SHA --head-sha SHA] [--warn]
   codex-governance roadmap status --roadmap PATH [--format table|markdown|json]
   codex-governance roadmap check --roadmap PATH
@@ -104,6 +106,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 	if args[0] == "config" {
 		return runConfig(args[1:], stdout, stderr)
+	}
+	if args[0] == "repository" {
+		return runRepository(args[1:], stdout, stderr)
 	}
 	if args[0] == "validate-work-item" {
 		return runValidateWorkItem(args[1:], stdout, stderr)
@@ -843,6 +848,28 @@ func runConfig(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprintln(stdout, "governance.yml is valid")
+	return 0
+}
+
+func runRepository(args []string, stdout, stderr io.Writer) int {
+	if len(args) < 2 || args[0] != "baseline" || args[1] != "check" {
+		fmt.Fprintln(stderr, "usage: codex-governance repository baseline check [--repo-root PATH]")
+		return 2
+	}
+	flags := flag.NewFlagSet("repository baseline check", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	root := flags.String("repo-root", ".", "repository root")
+	if err := flags.Parse(args[2:]); err != nil || flags.NArg() != 0 {
+		return 2
+	}
+	issues := baseline.Check(*root)
+	if len(issues) != 0 {
+		for _, issue := range issues {
+			fmt.Fprintln(stderr, issue)
+		}
+		return 1
+	}
+	fmt.Fprintln(stdout, "PASS repository baseline is valid")
 	return 0
 }
 
