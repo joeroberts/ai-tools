@@ -31,6 +31,22 @@ func TestRunHelp(t *testing.T) {
 	}
 }
 
+func TestRunRepositoryBaselineReportsViolations(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"repository", "baseline", "check", "--repo-root", t.TempDir()}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("Run() returned %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "missing required baseline file .github/CODEOWNERS") {
+		t.Fatalf("Run() stderr = %q", stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("Run() stdout = %q, want empty", stdout.String())
+	}
+}
+
 func TestImplementationCheckRequiresCompletionTransitionEvidence(t *testing.T) {
 	runPath := filepath.Join(t.TempDir(), "run.json")
 	run := implementation.Run{FormatVersion: implementation.FormatVersion, ID: "run-check", WorkItemKey: "REK-74", Adapter: "test", State: implementation.StatePreflight, TaskBundleDigest: "sha256:fixture", RoadmapImpact: workitem.RoadmapImpact{Mode: "required", RoadmapID: "program", CanonicalPath: "roadmaps/program.yaml", Phase: "1", Transition: "complete"}}
