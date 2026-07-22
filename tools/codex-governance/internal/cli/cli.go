@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -3065,23 +3066,100 @@ func readLiveMergeEvidence(repository, pullRequestURL string) (implementation.Me
 	if err := json.Unmarshal(output, &response); err != nil {
 		return implementation.MergeEvidence{}, err
 	}
-	protection, err := exec.Command("gh", "api", "repos/"+repository+"/branches/"+response.BaseRefName+"/protection").Output()
+	requiredChecks, err := readRequiredMergeChecks(repository, response.BaseRefName)
 	if err != nil {
-		return implementation.MergeEvidence{}, fmt.Errorf("read branch protection: %w", err)
-	}
-	var branch struct {
-		RequiredStatusChecks struct {
-			Contexts []string `json:"contexts"`
-		} `json:"required_status_checks"`
-	}
-	if err := json.Unmarshal(protection, &branch); err != nil {
 		return implementation.MergeEvidence{}, err
 	}
-	evidence := implementation.MergeEvidence{PullRequestURL: response.URL, HeadSHA: response.HeadRefOID, HeadBranch: response.HeadRefName, TargetBranch: response.BaseRefName, MergeState: response.MergeStateStatus, RequiredChecks: branch.RequiredStatusChecks.Contexts, ObservedAt: time.Now().UTC()}
+	evidence := implementation.MergeEvidence{PullRequestURL: response.URL, HeadSHA: response.HeadRefOID, HeadBranch: response.HeadRefName, TargetBranch: response.BaseRefName, MergeState: response.MergeStateStatus, RequiredChecks: requiredChecks, ObservedAt: time.Now().UTC()}
 	for _, check := range response.StatusCheckRollup {
 		evidence.Checks = append(evidence.Checks, implementation.MergeCheckEvidence{Name: check.Name, Status: check.Status, Conclusion: check.Conclusion})
 	}
 	return evidence, nil
+}
+
+func readRequiredMergeChecks(repository, branch string) ([]string, error) {
+	protection, protectionErr := exec.Command("gh", "api", "repos/"+repository+"/branches/"+branch+"/protection").Output()
+	if protectionErr == nil {
+		var legacy struct {
+			RequiredStatusChecks struct {
+				Contexts []string `json:"contexts"`
+			} `json:"required_status_checks"`
+		}
+		if err := json.Unmarshal(protection, &legacy); err != nil {
+			return nil, err
+		}
+		if len(legacy.RequiredStatusChecks.Contexts) > 0 {
+			return legacy.RequiredStatusChecks.Contexts, nil
+		}
+	}
+	rulesets, err := exec.Command("gh", "api", "repos/"+repository+"/rulesets").Output()
+	if err != nil {
+		if protectionErr != nil {
+			return nil, fmt.Errorf("read branch protection (%v) and rulesets: %w", protectionErr, err)
+		}
+		return nil, fmt.Errorf("legacy branch protection has no required status checks and read rulesets: %w", err)
+	}
+	return requiredMergeChecksFromRulesets(rulesets, branch)
+}
+
+func requiredMergeChecksFromRulesets(rulesets []byte, branch string) ([]string, error) {
+	var records []struct {
+		Target      string `json:"target"`
+		Enforcement string `json:"enforcement"`
+		Conditions  struct {
+			RefName struct {
+				Include []string `json:"include"`
+			} `json:"ref_name"`
+		} `json:"conditions"`
+		Rules []struct {
+			Type       string `json:"type"`
+			Parameters struct {
+				RequiredStatusChecks []struct {
+					Context string `json:"context"`
+				} `json:"required_status_checks"`
+			} `json:"parameters"`
+		} `json:"rules"`
+	}
+	if err := json.Unmarshal(rulesets, &records); err != nil {
+		return nil, err
+	}
+	for _, record := range records {
+		matches, err := rulesetTargetsBranch(record.Conditions.RefName.Include, branch)
+		if err != nil {
+			return nil, err
+		}
+		if record.Target != "branch" || record.Enforcement != "active" || !matches {
+			continue
+		}
+		for _, rule := range record.Rules {
+			if rule.Type != "required_status_checks" {
+				continue
+			}
+			checks := make([]string, 0, len(rule.Parameters.RequiredStatusChecks))
+			for _, check := range rule.Parameters.RequiredStatusChecks {
+				checks = append(checks, check.Context)
+			}
+			return checks, nil
+		}
+	}
+	return nil, fmt.Errorf("no active branch protection or ruleset requires status checks for %s", branch)
+}
+
+func rulesetTargetsBranch(includes []string, branch string) (bool, error) {
+	fullRef := "refs/heads/" + branch
+	for _, include := range includes {
+		if include == "~DEFAULT_BRANCH" || include == "~ALL" || include == branch {
+			return true, nil
+		}
+		matches, err := path.Match(include, fullRef)
+		if err != nil {
+			return false, fmt.Errorf("match ruleset ref pattern %q: %w", include, err)
+		}
+		if matches {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 type multiString []string
