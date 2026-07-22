@@ -84,6 +84,7 @@ Usage:
   codex-governance implementation authorize-workflow --payload PATH --signer PATH --output PATH --approve [--repo-root PATH]
   codex-governance implementation bootstrap-technical-owner --signer PATH [--repo-root PATH] [--approve]
   codex-governance implementation bootstrap-publish-owner --signer PATH --approve [--repo-root PATH]
+  codex-governance implementation rotate-publish-owner --expected-old-key-id ID --signer PATH --approve [--repo-root PATH]
   codex-governance implementation issue-publish --run PATH --signer PATH --output PATH --worktree PATH --remote NAME --target-branch NAME --approve [--adoption-registry PATH --adoption-record ID] [--expires-in DURATION] [--repo-root PATH]
   codex-governance implementation authorize-publish --authorization PATH --run PATH --repo-root PATH
   codex-governance implementation push --run PATH --authorization PATH --review-evidence PATH --worktree PATH --repo-root PATH [--adoption-registry PATH --adoption-record ID] [--runtime-root PATH] --approve
@@ -1399,8 +1400,8 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 }
 
 func runImplementation(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 || !oneOf(args[0], "preflight", "adopt", "start", "reconcile", "verify", "review", "verification", "remediate", "assess", "evidence", "check", "status", "metrics", "audit", "commit", "authorize-workflow", "bootstrap-technical-owner", "bootstrap-publish-owner", "issue-publish", "authorize-publish", "push", "create-pr") {
-		fmt.Fprintln(stderr, "usage: codex-governance implementation preflight|adopt|start|reconcile|verify|review|verification|remediate|assess|evidence|check|status|metrics|audit|commit|authorize-workflow|bootstrap-technical-owner|bootstrap-publish-owner|issue-publish|authorize-publish|push|create-pr")
+	if len(args) == 0 || !oneOf(args[0], "preflight", "adopt", "start", "reconcile", "verify", "review", "verification", "remediate", "assess", "evidence", "check", "status", "metrics", "audit", "commit", "authorize-workflow", "bootstrap-technical-owner", "bootstrap-publish-owner", "rotate-publish-owner", "issue-publish", "authorize-publish", "push", "create-pr") {
+		fmt.Fprintln(stderr, "usage: codex-governance implementation preflight|adopt|start|reconcile|verify|review|verification|remediate|assess|evidence|check|status|metrics|audit|commit|authorize-workflow|bootstrap-technical-owner|bootstrap-publish-owner|rotate-publish-owner|issue-publish|authorize-publish|push|create-pr")
 		return 2
 	}
 	if args[0] == "start" {
@@ -1450,6 +1451,9 @@ func runImplementation(args []string, stdout, stderr io.Writer) int {
 	}
 	if args[0] == "bootstrap-publish-owner" {
 		return runImplementationBootstrapPublishOwner(args[1:], stdout, stderr)
+	}
+	if args[0] == "rotate-publish-owner" {
+		return runImplementationRotatePublishOwner(args[1:], stdout, stderr)
 	}
 	if args[0] == "issue-publish" {
 		return runImplementationIssuePublish(args[1:], stdout, stderr)
@@ -2285,6 +2289,66 @@ func runImplementationBootstrapPublishOwner(args []string, stdout, stderr io.Wri
 		return 1
 	}
 	fmt.Fprintf(stdout, "PASS bootstrapped repository-owner signer %s\n", key.KeyID)
+	return 0
+}
+
+func runImplementationRotatePublishOwner(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("implementation rotate-publish-owner", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	oldKeyID := flags.String("expected-old-key-id", "", "currently trusted repository-owner key ID")
+	signerPath := flags.String("signer", "", "new owner-only repository-owner signer path")
+	repoRoot := flags.String("repo-root", ".", "repository root")
+	approve := flags.Bool("approve", false, "explicitly authorize repository-owner signer rotation")
+	if err := flags.Parse(args); err != nil || *oldKeyID == "" || *signerPath == "" || !*approve || flags.NArg() != 0 {
+		return 2
+	}
+	if err := requirePathOutsideRepository(*repoRoot, *signerPath, "repository-owner"); err != nil {
+		fmt.Fprintf(stderr, "validate replacement repository-owner signer path: %v\n", err)
+		return 1
+	}
+	configPath := filepath.Join(*repoRoot, "governance.yml")
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load governance config: %v\n", err)
+		return 2
+	}
+	originalCfg := cfg
+	originalCfg.Signing.TrustedKeys = append([]config.TrustedKey(nil), cfg.Signing.TrustedKeys...)
+	oldIndex := -1
+	for index, key := range cfg.Signing.TrustedKeys {
+		if key.Role != "repository-owner" {
+			continue
+		}
+		if key.KeyID != *oldKeyID || oldIndex >= 0 {
+			fmt.Fprintln(stderr, "repository-owner trust does not match the expected single key")
+			return 1
+		}
+		oldIndex = index
+	}
+	if oldIndex < 0 {
+		fmt.Fprintln(stderr, "repository-owner trust does not match the expected single key")
+		return 1
+	}
+	key, err := signature.CreateLocalRepositoryOwnerSigner(*signerPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "create replacement repository-owner signer: %v\n", err)
+		return 1
+	}
+	cfg.Signing.TrustedKeys = append([]config.TrustedKey(nil), originalCfg.Signing.TrustedKeys...)
+	cfg.Signing.TrustedKeys[oldIndex] = config.TrustedKey{KeyID: key.KeyID, Role: key.Role, Algorithm: key.Algorithm, PublicKey: key.PublicKey}
+	if err := config.Save(configPath, cfg); err != nil {
+		_ = os.Remove(filepath.Clean(*signerPath))
+		fmt.Fprintf(stderr, "save rotated governance config: %v\n", err)
+		return 1
+	}
+	loaded, _, err := signature.LoadLocalRepositoryOwnerSigner(*signerPath)
+	if err != nil || !repositoryOwnerSignerTrusted(cfg, loaded) {
+		_ = config.Save(configPath, originalCfg)
+		_ = os.Remove(filepath.Clean(*signerPath))
+		fmt.Fprintln(stderr, "verify replacement repository-owner signer failed; prior trust restored")
+		return 1
+	}
+	fmt.Fprintf(stdout, "PASS rotated repository-owner signer %s; previous key is no longer trusted\n", key.KeyID)
 	return 0
 }
 
