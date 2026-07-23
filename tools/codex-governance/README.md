@@ -118,7 +118,6 @@ make fmt
 make vet
 make test
 make build
-go run ./cmd/codex-governance --help
 ```
 
 ### Adopting-repository frontier assessment policy
