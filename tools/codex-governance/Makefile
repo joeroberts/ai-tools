@@ -1,8 +1,4 @@
-.PHONY: build install uninstall test vet fmt smoke-ticket-plan smoke-implementation-agent ollama-inventory unload-reviewer-model unload-verifier-model load-reviewer-model load-verifier-model install-hooks review-gate
-
-OLLAMA_POLICY ?= $(HOME)/.codex-governance-runtime/policy.yaml
-REVIEWER_MODEL ?= gemma4:12b-mlx
-VERIFIER_MODEL ?= devstral:24b
+.PHONY: build install uninstall test vet fmt
 
 GO_BIN_DIR := $(shell go env GOBIN)
 ifeq ($(GO_BIN_DIR),)
@@ -26,33 +22,3 @@ vet:
 
 fmt:
 	gofmt -w $$(find cmd internal -name '*.go')
-
-smoke-ticket-plan:
-	go run ./cmd/codex-governance jira plan validate --plan testdata/ticket-plans/valid/plan.json --repo-root .
-	go test ./internal/cli -run TestRunJiraPlanCreateDryRunUsesApprovedWorkflowWithoutWritingRecord -count=1
-
-smoke-implementation-agent:
-	go test ./internal/implementation ./internal/cli -count=1
-
-ollama-inventory:
-	@test -n "$(POLICY)" || (echo "set POLICY to the owner-only Ollama policy file" >&2; exit 2)
-	go run ./cmd/codex-governance ollama inventory --policy "$(POLICY)"
-
-unload-reviewer-model:
-	go run ./cmd/codex-governance ollama stop --model "$(REVIEWER_MODEL)" --policy "$(OLLAMA_POLICY)"
-
-unload-verifier-model:
-	go run ./cmd/codex-governance ollama stop --model "$(VERIFIER_MODEL)" --policy "$(OLLAMA_POLICY)"
-
-load-reviewer-model:
-	go run ./cmd/codex-governance ollama load --model "$(REVIEWER_MODEL)" --policy "$(OLLAMA_POLICY)"
-
-load-verifier-model:
-	go run ./cmd/codex-governance ollama load --model "$(VERIFIER_MODEL)" --policy "$(OLLAMA_POLICY)"
-
-install-hooks:
-	git config core.hooksPath .githooks
-
-review-gate:
-	@test -n "$(EVIDENCE)" || (echo "set EVIDENCE to the reviewer/verifier evidence file" >&2; exit 2)
-	go run ./cmd/codex-governance implementation evidence check --evidence "$(EVIDENCE)" --worktree . --staged

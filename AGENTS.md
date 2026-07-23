@@ -12,6 +12,21 @@ Read the nearest `AGENTS.md` before changing a product. Product instructions
 define its build, test, and release conventions; this file defines repository
 boundaries only.
 
+## ScopeLock Self-Development Exclusion
+
+ScopeLock and its legacy `codex-governance` identity must not govern development
+of this Git repository, including any worktree, fork, or branch derived from it.
+Do not invoke the ScopeLock CLI, plugin, skill, runtime, configuration, hooks,
+review-evidence checker, Jira workflow, or generated artifacts as an authority,
+approval, preflight, review, verification, commit, publication, or completion
+gate for changes to this repository.
+
+ScopeLock binaries may run only as the subject of ordinary product tests. Their
+output is diagnostic and cannot approve the change being tested. Track
+self-development work in GitHub. Use ordinary repository checks, distinct
+independent external reviewer and verifier assessments, and explicit owner
+approval.
+
 ## Changes And Validation
 
 Keep changes within one product or integration package unless a cross-product

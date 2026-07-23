@@ -37,8 +37,7 @@
     "validation_plan": [
       "Run focused declared-slice and three-source end-to-end planning tests.",
       "Run make test, make vet, make build, and git diff --check.",
-      "Obtain independent exact-diff reviewer and verifier evidence from distinct fixed-role executors.",
-      "Run make review-gate for the exact staged diff."
+      "Obtain independent exact-diff reviewer and verifier assessments from distinct fixed-role external executors."
     ],
     "file_classification": {
       "generated_paths": [],
