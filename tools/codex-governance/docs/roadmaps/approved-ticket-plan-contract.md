@@ -35,9 +35,8 @@ all fail before plan acceptance.
 ## Validation Gates
 
 Every phase runs focused tests, `make test`, `make vet`, `make build`, and
-`git diff --check`. Each governed commit requires independent exact-diff
-reviewer and verifier evidence from distinct executors plus a passing
-`make review-gate`.
+`git diff --check`. Each commit requires independent exact-diff reviewer and
+verifier assessments from distinct external executors.
 
 After Phase 3, run an end-to-end three-source planning fixture and confirm that
 the manager catalog renders each source body once while trace records retain the

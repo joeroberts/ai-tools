@@ -20,6 +20,18 @@ provider/model evaluation records qualify a specific, versioned code-editing
 configuration for a defined task scope; they do not guarantee safety for every
 repository or task.
 
+## Self-Development Boundary
+
+This Git repository does not use `codex-governance` or ScopeLock to govern its
+own development. The CLI, plugin, skill, runtime, Jira workflow, repository
+configuration, hooks, and generated review evidence are not authorities or
+gates for changes to this repository. Running the product in tests is
+diagnostic only.
+
+Self-development uses GitHub for tracking, ordinary repository checks, distinct
+independent external reviewer and verifier assessments, and explicit owner
+approval.
+
 ## Files
 
 - `cmd/codex-governance/`: CLI entry point.
@@ -89,28 +101,17 @@ pull request and current Jira hierarchy. It previews the merged-PR record and
 the Subtask-then-Story transition order; `--approve` records the PR, performs
 those transitions, and verifies each ticket is done with a resolution.
 
-## Verification And Advisory CI
+## Verification And CI
 
-Run the governed local smoke check with:
-
-```bash
-make smoke-ticket-plan
-```
-
-It validates the checked-in plan fixture and exercises the approved-workflow
-publication dry run. It does not contact Jira, dispatch a model, read
-credentials, or create a publication record. The `Governance Advisory` GitHub
-Actions workflow runs this check with tests, vet, build, whitespace, and
-roadmap validation. It has read-only repository permissions and is advisory;
-it receives no Jira credentials or model prompts.
+Repository CI uses ordinary formatting, vet, test, and build checks. It does
+not run ScopeLock as a self-development authority.
 
 ## Development
 
 Before committing or publishing a change, obtain independent reviewer and
-verifier assessments for the exact diff. Both must pass before the commit,
-push, or pull-request gate can proceed. The tracked hooks use the evidence
-file supplied through `CODEX_GOVERNANCE_REVIEW_EVIDENCE`; install them with
-`make install-hooks`.
+verifier assessments for the exact diff. Both must be external to
+`codex-governance`/ScopeLock and distinct from the implementer and from each
+other. ScopeLock-generated evidence is not accepted for self-development.
 
 ```bash
 make fmt
@@ -120,15 +121,16 @@ make build
 go run ./cmd/codex-governance --help
 ```
 
-### Frontier assessment policy
+### Adopting-repository frontier assessment policy
 
-Local policy-approved models remain the default assessment provider. A
-frontier subagent is available only when `governance.yml` explicitly enables
+In an adopting repository, local policy-approved models remain the default
+assessment provider. A frontier subagent is available only when that
+repository's `governance.yml` explicitly enables
 `assessment.frontier_subagent`, allowlists its model identity, and sets a
 maximum reasoning effort. The authorization for an individual assessment must
 then bind that configured model, its role, and the exact diff. There is no
 fallback from a local assessment to a frontier provider, and no external review
-adapter is supported. This repository’s configured maximum is `high`.
+adapter is supported.
 
 ## Installation
 
@@ -153,15 +155,6 @@ Remove the installed binary with:
 
 ```bash
 make uninstall
-```
-
-View the implementation roadmap locally:
-
-```bash
-go run ./cmd/codex-governance roadmap status \
-  --roadmap docs/roadmaps/go-cli-migration.yaml
-go run ./cmd/codex-governance roadmap check \
-  --roadmap docs/roadmaps/go-cli-migration.yaml
 ```
 
 Phase 3 supports read-only validation from a normalized work item and a signed

@@ -46,8 +46,7 @@ persistent-supervisor boundary. See
 
 Run focused package tests, `make test`, `make vet`, `make build`, and
 `git diff --check`. Before commit, obtain passing independent exact-diff
-reviewer and verifier evidence from distinct executors and run
-`make review-gate`.
+reviewer and verifier assessments from distinct external executors.
 
 ## Completion Record
 

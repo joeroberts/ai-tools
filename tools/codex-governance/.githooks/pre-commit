@@ -1,5 +1,0 @@
-#!/bin/sh
-set -eu
-
-: "${CODEX_GOVERNANCE_REVIEW_EVIDENCE:?set CODEX_GOVERNANCE_REVIEW_EVIDENCE to a passing review-evidence JSON file}"
-make review-gate EVIDENCE="$CODEX_GOVERNANCE_REVIEW_EVIDENCE"

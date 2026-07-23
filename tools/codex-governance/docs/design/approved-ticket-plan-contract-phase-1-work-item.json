@@ -43,8 +43,7 @@
     "validation_plan": [
       "Run focused contract schema and persistence tests.",
       "Run make test, make vet, make build, and git diff --check.",
-      "Obtain independent exact-diff reviewer and verifier evidence from distinct executors.",
-      "Run make review-gate for the exact staged diff."
+      "Obtain independent exact-diff reviewer and verifier assessments from distinct external executors."
     ],
     "file_classification": {
       "generated_paths": [],

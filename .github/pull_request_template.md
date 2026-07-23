@@ -9,12 +9,11 @@ List commands, tests, or manual checks run and their results.
 
 ## Tracking
 
-Link the GitHub issue and, when this is governed implementation work, the Jira
-Story and primary Subtask.
+Link the GitHub issue.
 
-## Governance and release impact
+## Validation and release impact
 
-Describe any governance/configuration impact and select the applicable release
+Describe any validation/configuration impact and select the applicable release
 label. State `N/A` when neither applies.
 
 ## Security considerations

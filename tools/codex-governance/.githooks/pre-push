@@ -1,5 +1,0 @@
-#!/bin/sh
-set -eu
-
-: "${CODEX_GOVERNANCE_REVIEW_EVIDENCE:?set CODEX_GOVERNANCE_REVIEW_EVIDENCE to a passing review-evidence JSON file}"
-go run ./cmd/codex-governance implementation evidence check --evidence "$CODEX_GOVERNANCE_REVIEW_EVIDENCE" --worktree . --diff-range HEAD^..HEAD

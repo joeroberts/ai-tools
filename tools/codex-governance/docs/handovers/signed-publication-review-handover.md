@@ -68,7 +68,7 @@ reviewer/verifier plan generation. Do not manually edit that output file.
 5. Obtain a fresh signed offline export for the created subtask.
 6. Create the implementation run and task bundle, then run independent
    reviewer and verifier assessments against the exact current diff.
-7. Run `make review-gate EVIDENCE=/absolute/path/review-evidence.json`.
+7. Confirm distinct external reviewer and verifier assessments pass.
 8. Only after all gates pass may the branch be committed, pushed, or proposed
    as a PR.
 
